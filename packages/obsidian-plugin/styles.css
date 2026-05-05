@@ -15,6 +15,15 @@ body.oak-mode-active .view-header .view-actions {
   display: none !important;
 }
 
+/* (3) The oak views still need to be real ItemViews — they have
+       leaf identity, persist across reloads, and play nicely with
+       file-explorer-style toggling. But their tab/header chrome is
+       redundant inside oak mode, so drop it. */
+body.oak-mode-active .workspace-leaf-content[data-type="oak-home"] .view-header,
+body.oak-mode-active .workspace-leaf-content[data-type="oak-sidebar"] .view-header {
+  display: none !important;
+}
+
 /* oak sidebar */
 
 .oak-sidebar {
