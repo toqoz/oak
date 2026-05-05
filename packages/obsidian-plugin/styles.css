@@ -109,7 +109,8 @@ body.oak-mode-active input.oak-page-title {
   margin: 0;
   padding: 1em 4rem 0.5em;
   box-sizing: border-box;
-  font-size: 2.2em;
+  /* 24px — quiet, closer to body text than a heading. */
+  font-size: 1.5rem;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text-normal);
