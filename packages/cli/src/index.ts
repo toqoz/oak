@@ -24,13 +24,17 @@
 import { resolve } from "node:path";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import {
+  acceptAgentTask,
   addMount,
+  agentContext,
+  AgentError,
   buildGraph,
   checkpoint,
   ensureGitRepo,
   getBacklinks,
   getTwoHopLinks,
   gitStatus,
+  listAgentTasks,
   listMountStatus,
   mountDoctor,
   parseVault,
@@ -38,7 +42,10 @@ import {
   publish,
   PublishError,
   recentCommits,
+  rejectAgentTask,
+  reviewAgentTask,
   snapshot,
+  startAgentTask,
   validateVault,
   writeIndex,
 } from "@oak/core";
@@ -65,6 +72,13 @@ Commands:
   mount add <id> <path>      Mount an external directory at _external/<id>
   mount list                 Show configured mounts and their health
   mount doctor               Report broken / overlapping mounts
+
+  agent start <task>         Snapshot, checkpoint, and create a worktree
+  agent list                 Show active agent tasks
+  agent diff <task>          Show diff + validation for an agent task
+  agent accept <task>        Merge the agent worktree into main, clean up
+  agent reject <task>        Discard the agent worktree and branch
+  agent context [--focus ID] LLM-policy-filtered vault snapshot (JSON)
 
 Common options:
   --vault <path>             Vault root (default: current directory)
@@ -108,6 +122,8 @@ async function main(argv: string[]): Promise<number> {
       return await cmdTwoHop(vaultPath, parsed.positional, json);
     case "mount":
       return await cmdMount(vaultPath, parsed.positional, parsed.flags, json);
+    case "agent":
+      return await cmdAgent(vaultPath, parsed.positional, parsed.flags, json);
     case "publish":
       return await cmdPublish(vaultPath, parsed.flags, json);
     case "snapshot":
@@ -603,6 +619,196 @@ async function cmdMountDoctor(
     }
   }
   return errors.length > 0 ? 1 : 0;
+}
+
+async function cmdAgent(
+  vaultPath: string,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const sub = positional[0];
+  if (!sub) {
+    process.stderr.write(
+      "Missing agent subcommand. Try `oak agent start|list|diff|accept|reject|context`.\n",
+    );
+    return 1;
+  }
+  const args = positional.slice(1);
+  try {
+    switch (sub) {
+      case "start":
+        return await cmdAgentStart(vaultPath, args, json);
+      case "list":
+        return await cmdAgentList(vaultPath, json);
+      case "diff":
+        return await cmdAgentDiff(vaultPath, args, flags, json);
+      case "accept":
+        return await cmdAgentAccept(vaultPath, args, flags, json);
+      case "reject":
+        return await cmdAgentReject(vaultPath, args, json);
+      case "context":
+        return await cmdAgentContext(vaultPath, flags, json);
+      default:
+        process.stderr.write(`Unknown agent subcommand: ${sub}\n`);
+        return 1;
+    }
+  } catch (err) {
+    if (err instanceof AgentError) {
+      process.stderr.write(`oak agent: ${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+}
+
+async function cmdAgentStart(
+  vaultPath: string,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const taskId = args[0];
+  if (!taskId) {
+    process.stderr.write("Usage: oak agent start <task-id>\n");
+    return 1;
+  }
+  const result = await startAgentTask(vaultPath, { taskId });
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
+  process.stdout.write(`Started agent task \`${result.taskId}\`\n`);
+  process.stdout.write(`  branch:        ${result.branch}\n`);
+  process.stdout.write(`  worktree:      ${result.worktreePath}\n`);
+  process.stdout.write(`  base commit:   ${result.baseCommit.slice(0, 12)}\n`);
+  if (result.preCheckpoint) {
+    process.stdout.write(`  checkpoint:    ${result.preCheckpoint.slice(0, 7)}\n`);
+  }
+  return 0;
+}
+
+async function cmdAgentList(
+  vaultPath: string,
+  json: boolean,
+): Promise<number> {
+  const tasks = await listAgentTasks(vaultPath);
+  if (json) {
+    process.stdout.write(JSON.stringify(tasks, null, 2) + "\n");
+    return 0;
+  }
+  if (tasks.length === 0) {
+    process.stdout.write("(no active agent tasks)\n");
+    return 0;
+  }
+  for (const t of tasks) {
+    process.stdout.write(`- ${t.taskId}\n    branch:   ${t.branch}\n    worktree: ${t.worktreePath}\n`);
+  }
+  return 0;
+}
+
+async function cmdAgentDiff(
+  vaultPath: string,
+  args: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const taskId = args[0];
+  if (!taskId) {
+    process.stderr.write("Usage: oak agent diff <task-id>\n");
+    return 1;
+  }
+  const result = await reviewAgentTask(vaultPath, taskId);
+  const omitDiff = getBool(flags, "summary");
+  if (json) {
+    process.stdout.write(
+      JSON.stringify(
+        omitDiff ? { ...result, diff: undefined } : result,
+        null,
+        2,
+      ) + "\n",
+    );
+    return 0;
+  }
+  process.stdout.write(`agent task \`${result.taskId}\` (${result.branch})\n`);
+  process.stdout.write(
+    `  base ${result.base.slice(0, 12)}…  head ${result.head.slice(0, 12)}…\n`,
+  );
+  process.stdout.write(`  changed files (${result.changedFiles.length}):\n`);
+  for (const f of result.changedFiles) {
+    process.stdout.write(`    ${f.status}\t${f.path}\n`);
+  }
+  const errs = result.validation.errors.length;
+  const warns = result.validation.warnings.length;
+  process.stdout.write(`  validation: ${errs} error(s), ${warns} warning(s)\n`);
+  if (!omitDiff && result.diff.length > 0) {
+    process.stdout.write("\n");
+    process.stdout.write(result.diff);
+    if (!result.diff.endsWith("\n")) process.stdout.write("\n");
+  }
+  return errs > 0 ? 1 : 0;
+}
+
+async function cmdAgentAccept(
+  vaultPath: string,
+  args: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const taskId = args[0];
+  if (!taskId) {
+    process.stderr.write("Usage: oak agent accept <task-id>\n");
+    return 1;
+  }
+  const skipValidation = getBool(flags, "skip-validation");
+  const result = await acceptAgentTask(vaultPath, taskId, { skipValidation });
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
+  process.stdout.write(
+    `Merged agent task \`${result.taskId}\` -> ${result.mergeCommit.slice(0, 7)}\n`,
+  );
+  return 0;
+}
+
+async function cmdAgentReject(
+  vaultPath: string,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const taskId = args[0];
+  if (!taskId) {
+    process.stderr.write("Usage: oak agent reject <task-id>\n");
+    return 1;
+  }
+  const result = await rejectAgentTask(vaultPath, taskId);
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
+  process.stdout.write(
+    `Rejected agent task \`${result.taskId}\` (branch ${result.branch} discarded)\n`,
+  );
+  return 0;
+}
+
+async function cmdAgentContext(
+  vaultPath: string,
+  flags: Record<string, string | boolean>,
+  _json: boolean,
+): Promise<number> {
+  const focus = getString(flags, "focus");
+  const focusIds = focus
+    ? focus.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const vault = await parseVault(vaultPath);
+  const graph = buildGraph(vault);
+  const ctx = agentContext(vault, graph, {
+    ...(focusIds.length > 0 ? { focusIds } : {}),
+  });
+  // Always machine-readable: this output is meant to feed an LLM.
+  process.stdout.write(JSON.stringify(ctx, null, 2) + "\n");
+  return 0;
 }
 
 main(process.argv.slice(2)).then(
