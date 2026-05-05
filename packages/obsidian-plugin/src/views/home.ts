@@ -35,6 +35,7 @@ export class OakHomeView extends ItemView {
     private state: VaultState,
     private app2: App,
     private openFile: OakOpenFile,
+    private exitOakMode: () => Promise<void> | void,
   ) {
     super(leaf);
   }
@@ -159,6 +160,20 @@ export class OakHomeView extends ItemView {
 
     this.renderGitSection(root);
     this.renderExternalSection(root);
+    this.renderExitFooter(root);
+  }
+
+  private renderExitFooter(parent: HTMLElement): void {
+    const footer = parent.createDiv({ cls: "oak-home-exit" });
+    const link = footer.createEl("a", {
+      cls: "oak-home-exit-link",
+      text: "Exit oak mode",
+      href: "#",
+    });
+    link.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.exitOakMode();
+    });
   }
 
   private renderGitSection(parent: HTMLElement): void {

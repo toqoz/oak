@@ -6,8 +6,15 @@
    tab bar, but they keep the same class names. Selecting on the
    class alone catches them wherever they live. */
 
-/* Ribbon icons (any position) — keep only oak's own. */
-body.oak-mode-active .side-dock-ribbon-action:not(.oak-ribbon-icon) {
+/* Hide the entire workspace ribbon dock in oak mode. The user
+   exits oak mode via the link at the bottom of the home view (or
+   the command palette). */
+body.oak-mode-active .workspace-ribbon {
+  display: none !important;
+}
+/* Ribbon items relocated outside of `.workspace-ribbon` (e.g. by
+   plugins like Cmdr) stay covered by the class-only rule. */
+body.oak-mode-active .side-dock-ribbon-action {
   display: none !important;
 }
 
@@ -193,4 +200,24 @@ body.oak-mode-active {
   margin: 0.3em 0 0;
   font-size: 0.95em;
   opacity: 0.85;
+}
+
+.oak-home-exit {
+  margin-top: 6em;
+  padding-top: 2em;
+  border-top: 1px solid var(--background-modifier-border);
+  text-align: center;
+  padding-bottom: 4em;
+}
+
+.oak-home-exit-link {
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-size: 0.9em;
+  letter-spacing: 0.04em;
+}
+.oak-home-exit-link:hover {
+  color: var(--text-normal);
+  text-decoration: underline;
 }

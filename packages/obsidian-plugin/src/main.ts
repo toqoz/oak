@@ -60,7 +60,13 @@ export default class OakPlugin extends Plugin {
       return view;
     });
     this.registerView(VIEW_TYPE_OAK_HOME, (leaf: WorkspaceLeaf) => {
-      return new OakHomeView(leaf, this.state, this.app, openFile);
+      return new OakHomeView(
+        leaf,
+        this.state,
+        this.app,
+        openFile,
+        () => this.toggleOakMode(),
+      );
     });
     // Single "oak mode" entry — toggles between the focused oak
     // surfaces (home in main, sidebar on the right, file explorer
