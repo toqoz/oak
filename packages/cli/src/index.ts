@@ -32,6 +32,8 @@ import {
   mountDoctor,
   parseVault,
   partitionIssues,
+  publish,
+  PublishError,
   validateVault,
   writeIndex,
 } from "@oak/core";
@@ -51,7 +53,7 @@ Commands:
   status                     Show pending vault changes (stub in v1)
   backlinks <page>           List incoming links for a page
   twohop <page>              List two-hop neighbours for a page
-  publish                    Render publishable pages (Phase 3, not yet)
+  publish [--base-url U]     Render public/unlisted pages to public-site/
   checkpoint <msg>           Tag the vault state via git (Phase 4, not yet)
   mount add <id> <path>      Mount an external directory at _external/<id>
   mount list                 Show configured mounts and their health
@@ -100,6 +102,7 @@ async function main(argv: string[]): Promise<number> {
     case "mount":
       return await cmdMount(vaultPath, parsed.positional, parsed.flags, json);
     case "publish":
+      return await cmdPublish(vaultPath, parsed.flags, json);
     case "checkpoint":
       process.stderr.write(
         `\`oak ${parsed.command}\` is not implemented yet.\n`,
@@ -316,6 +319,59 @@ async function cmdTwoHop(
     process.stdout.write(`- ${title}  [score=${h.score}]  via: ${via}\n`);
   }
   return 0;
+}
+
+async function cmdPublish(
+  vaultPath: string,
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const vault = await parseVault(vaultPath);
+  const graph = buildGraph(vault);
+  const issues = validateVault(vault, graph);
+
+  const baseUrl = getString(flags, "base-url");
+  const outputDir = getString(flags, "output");
+  const dryRun = getBool(flags, "dry-run");
+
+  try {
+    const stats = await publish(vault, graph, issues, {
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+      ...(outputDir !== undefined ? { outputDir } : {}),
+      dryRun,
+    });
+    if (json) {
+      process.stdout.write(JSON.stringify(stats, null, 2) + "\n");
+      return 0;
+    }
+    process.stdout.write(
+      `${dryRun ? "(dry-run) " : ""}Published to ${stats.outputDir}\n`,
+    );
+    process.stdout.write(`  baseUrl:        ${stats.baseUrl}\n`);
+    process.stdout.write(`  pages:          ${stats.pages.length}\n`);
+    process.stdout.write(`  assets:         ${stats.assets.length}\n`);
+    process.stdout.write(`  removed pages:  ${stats.removedPages.length}\n`);
+    process.stdout.write(`  removed assets: ${stats.removedAssets.length}\n`);
+    process.stdout.write(`  manifest:       ${stats.manifestPath}\n`);
+    return 0;
+  } catch (err) {
+    if (err instanceof PublishError) {
+      if (json) {
+        process.stdout.write(
+          JSON.stringify({ blocked: true, errors: err.issues }, null, 2) +
+            "\n",
+        );
+      } else {
+        process.stderr.write(`publish blocked:\n`);
+        for (const i of err.issues) {
+          const where = i.filePath ? ` (${i.filePath})` : "";
+          process.stderr.write(`  [${i.code}] ${i.message}${where}\n`);
+        }
+      }
+      return 1;
+    }
+    throw err;
+  }
 }
 
 async function cmdMount(
