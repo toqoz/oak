@@ -30,6 +30,7 @@ import {
   AgentError,
   buildGraph,
   checkpoint,
+  createPage,
   ensureGitRepo,
   getBacklinks,
   getTwoHopLinks,
@@ -48,6 +49,8 @@ import {
   startAgentTask,
   validateVault,
   writeIndex,
+  type LlmPolicy,
+  type Visibility,
 } from "@oak/core";
 
 import { getBool, getString, parseArgs } from "./args.js";
@@ -60,6 +63,7 @@ Usage:
 
 Commands:
   init                       Initialize a vault in the current directory
+  new <title> [...]          Create a new page with well-formed frontmatter
   index                      Parse the vault and write .oak/index.sqlite
   validate                   Run vault validation; exits non-zero on errors
   status                     Show pending vault changes (stub in v1)
@@ -110,6 +114,8 @@ async function main(argv: string[]): Promise<number> {
   switch (parsed.command) {
     case "init":
       return await cmdInit(vaultPath);
+    case "new":
+      return await cmdNew(vaultPath, parsed.positional, parsed.flags, json);
     case "index":
       return await cmdIndex(vaultPath, json);
     case "validate":
@@ -170,6 +176,82 @@ async function cmdInit(vaultPath: string): Promise<number> {
     process.stdout.write(`  git: .gitignore updated\n`);
   }
   return 0;
+}
+
+function parseVisibilityFlag(s: string | undefined): Visibility | undefined {
+  if (s === undefined) return undefined;
+  if (s === "public" || s === "unlisted" || s === "private") return s;
+  throw new Error(
+    `--visibility must be one of public, unlisted, private (got \`${s}\`)`,
+  );
+}
+
+function parseLlmFlag(s: string | undefined): LlmPolicy | undefined {
+  if (s === undefined) return undefined;
+  if (s === "allow" || s === "deny" || s === "summary-only") return s;
+  throw new Error(
+    `--llm must be one of allow, deny, summary-only (got \`${s}\`)`,
+  );
+}
+
+async function cmdNew(
+  vaultPath: string,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  // Title can be passed as either a single argument ("My Page") or
+  // multiple bare words; we re-join so `oak new my page` works.
+  const title = positional.join(" ").trim();
+  if (!title) {
+    process.stderr.write(
+      "Usage: oak new <title> [--visibility V] [--slug S] [--alias A,B] [--llm P] [--at PATH]\n",
+    );
+    return 1;
+  }
+  let visibility: Visibility | undefined;
+  let llm: LlmPolicy | undefined;
+  try {
+    visibility = parseVisibilityFlag(getString(flags, "visibility"));
+    llm = parseLlmFlag(getString(flags, "llm"));
+  } catch (err) {
+    process.stderr.write(`oak new: ${(err as Error).message}\n`);
+    return 1;
+  }
+  const slug = getString(flags, "slug");
+  const at = getString(flags, "at");
+  const aliasesRaw = getString(flags, "alias") ?? getString(flags, "aliases");
+  const aliases = aliasesRaw
+    ? aliasesRaw.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
+    : [];
+
+  try {
+    const result = await createPage(vaultPath, {
+      title,
+      ...(visibility ? { visibility } : {}),
+      ...(llm ? { llm } : {}),
+      ...(slug ? { slug } : {}),
+      ...(at ? { at } : {}),
+      aliases,
+    });
+    if (json) {
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+      return 0;
+    }
+    process.stdout.write(`Created ${result.vaultRelPath}\n`);
+    process.stdout.write(`  id:         ${result.id}\n`);
+    process.stdout.write(`  title:      ${result.title}\n`);
+    process.stdout.write(`  visibility: ${result.visibility}\n`);
+    process.stdout.write(`  slug:       ${result.slug}\n`);
+    process.stdout.write(`  llm:        ${result.llm}\n`);
+    if (result.aliases.length > 0) {
+      process.stdout.write(`  aliases:    ${result.aliases.join(", ")}\n`);
+    }
+    return 0;
+  } catch (err) {
+    process.stderr.write(`oak new: ${(err as Error).message}\n`);
+    return 1;
+  }
 }
 
 async function cmdIndex(vaultPath: string, json: boolean): Promise<number> {
