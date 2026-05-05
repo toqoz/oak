@@ -52,6 +52,12 @@ export default class OakPlugin extends Plugin {
   // replaces the current page instead of stacking new tabs.
   // Cmd/Ctrl-click bypasses reuse and opens a fresh tab.
   private browseLeaf: WorkspaceLeaf | null = null;
+  // Last redlink target the user clicked plus when. Used by the
+  // vault.on("create") fallback to detect a file that Obsidian
+  // auto-created in response to the click and roll it back into a
+  // ghost view.
+  private lastRedlinkTarget: string | null = null;
+  private lastRedlinkClickAt = 0;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -163,6 +169,37 @@ export default class OakPlugin extends Plugin {
       "click",
       (ev) => this.maybeInterceptRedlinkClick(ev),
       { capture: true },
+    );
+    this.registerDomEvent(
+      document,
+      "mousedown",
+      (ev) => this.maybeInterceptRedlinkClick(ev),
+      { capture: true },
+    );
+
+    // Fallback: Live Preview registers its click handler inside
+    // CodeMirror, where document-level capture doesn't always reach
+    // first. If a file gets auto-created for the target the user
+    // just clicked, undo the create and route into the Ghost View
+    // after the fact.
+    this.registerEvent(
+      this.app.vault.on("create", (file) => {
+        if (!(file instanceof TFile)) return;
+        if (file.extension !== "md") return;
+        if (!document.body.classList.contains("oak-mode-active")) return;
+        if (!this.lastRedlinkTarget) return;
+        const ageMs = Date.now() - this.lastRedlinkClickAt;
+        if (ageMs > 800) return;
+        // Match the basename to the click target. Obsidian uses the
+        // raw target as the basename for redlink-creates.
+        const target = this.lastRedlinkTarget;
+        if (file.basename !== target) return;
+        // Guard: only act on empty (or just-created) files; refuse
+        // to delete anything that's already got content.
+        if (file.stat.size > 0) return;
+        this.lastRedlinkTarget = null;
+        void this.rollbackAutoCreatedRedlink(file, target);
+      }),
     );
 
     this.addCommand({
@@ -305,23 +342,52 @@ export default class OakPlugin extends Plugin {
     return alive;
   }
 
-  // Intercept clicks on Obsidian's `.internal-link.is-unresolved`
-  // anchors while oak mode is active. Instead of letting Obsidian
-  // create the file (its default), route into the Ghost View so the
-  // user keeps reading mode for the would-be page.
+  // Intercept clicks on internal-link surfaces (reading mode and
+  // live preview) while oak mode is active. If the target doesn't
+  // resolve to an existing file, route into the Ghost View instead
+  // of letting Obsidian create the file as a side effect.
+  //
+  // The selector intentionally casts a wide net (different surfaces
+  // use different classes; some don't expose `data-href` at all) and
+  // we filter by metadataCache resolution to confirm the target is
+  // actually unresolved.
   private maybeInterceptRedlinkClick(ev: MouseEvent): void {
     if (!document.body.classList.contains("oak-mode-active")) return;
     const t = ev.target as HTMLElement | null;
     if (!t) return;
-    const link = t.closest<HTMLElement>(".internal-link");
+
+    const link = t.closest<HTMLElement>(
+      "a.internal-link, span.cm-hmd-internal-link, [data-href]",
+    );
     if (!link) return;
-    if (!link.classList.contains("is-unresolved")) return;
+
     const href =
-      link.getAttribute("data-href") ?? link.textContent ?? "";
-    const target = href.trim();
+      link.getAttribute("data-href") ??
+      link.getAttribute("href") ??
+      link.textContent ??
+      "";
+    const target = href.split("#")[0]!.split("|")[0]!.trim();
     if (target.length === 0) return;
+
+    const sourcePath =
+      this.app.workspace.getActiveFile()?.path ?? "";
+    const file = this.app.metadataCache.getFirstLinkpathDest(
+      target,
+      sourcePath,
+    );
+    if (file) return; // resolved — let Obsidian handle normally
+
+    // Even if our preventDefault doesn't cleanly stop Obsidian's
+    // own click handler (Live Preview registers in CodeMirror, not
+    // on the document), record the target so the create-event
+    // fallback below can roll the auto-created file back into a
+    // ghost view.
+    this.lastRedlinkTarget = target;
+    this.lastRedlinkClickAt = Date.now();
+
     ev.preventDefault();
     ev.stopPropagation();
+    ev.stopImmediatePropagation();
     void this.openGhostView(target, ev.metaKey || ev.ctrlKey);
   }
 
@@ -371,6 +437,24 @@ export default class OakPlugin extends Plugin {
         `oak: failed to create page — ${(err as Error).message}`,
       );
     }
+  }
+
+  // Roll back a file Obsidian auto-created in response to a redlink
+  // click that bypassed our capture-phase preventDefault. Delete the
+  // empty file and switch to the Ghost View for the same target,
+  // preserving the read-only / red state.
+  private async rollbackAutoCreatedRedlink(
+    file: TFile,
+    target: string,
+  ): Promise<void> {
+    try {
+      // Trash via vault.trash if available; otherwise hard delete.
+      await this.app.vault.delete(file);
+    } catch (err) {
+      console.warn("oak: failed to delete auto-created redlink file", err);
+    }
+    await this.openGhostView(target, false);
+    this.state.scheduleRefresh();
   }
 
   // Toggle "oak mode": one gesture switches between the focused oak
