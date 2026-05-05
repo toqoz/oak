@@ -1,3 +1,12 @@
+/* oak mode — hide every ribbon clickable icon except oak's own.
+   Toggling oak mode adds / removes the body class. The selector
+   targets the workspace ribbon specifically so right-pane / status
+   bar clickable icons aren't affected. */
+body.oak-mode-active .workspace-ribbon .clickable-icon:not(.oak-ribbon-icon),
+body.oak-mode-active .workspace-ribbon .side-dock-ribbon-action:not(.oak-ribbon-icon) {
+  display: none !important;
+}
+
 /* oak sidebar */
 
 .oak-sidebar {

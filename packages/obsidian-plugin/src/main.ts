@@ -66,9 +66,12 @@ export default class OakPlugin extends Plugin {
     // surfaces (home in main, sidebar on the right, file explorer
     // hidden) and the regular Obsidian layout (file explorer
     // restored, oak leaves closed).
-    this.addRibbonIcon("trees", "Toggle oak mode", () => {
+    const ribbon = this.addRibbonIcon("trees", "Toggle oak mode", () => {
       void this.toggleOakMode();
     });
+    // Tag our ribbon icon so the oak-mode CSS can hide everything
+    // else without hiding ours.
+    ribbon.addClass("oak-ribbon-icon");
 
     this.registerEvent(
       this.app.vault.on("modify", () => this.state.scheduleRefresh()),
@@ -150,6 +153,9 @@ export default class OakPlugin extends Plugin {
     if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
     this.state?.dispose();
+    // Clear the body class so disabling the plugin (or reloading) can
+    // never leave other ribbon icons hidden.
+    document.body.removeClass("oak-mode-active");
   }
 
   async loadSettings(): Promise<void> {
@@ -232,12 +238,14 @@ export default class OakPlugin extends Plugin {
       for (const leaf of sidebarLeaves) leaf.detach();
       for (const leaf of homeLeaves) leaf.detach();
       this.app.workspace.leftSplit.expand();
+      document.body.removeClass("oak-mode-active");
       return;
     }
 
     await this.activateSidebar();
     await this.activateHome();
     this.app.workspace.leftSplit.collapse();
+    document.body.addClass("oak-mode-active");
   }
 
   private async activateSidebar(): Promise<void> {
