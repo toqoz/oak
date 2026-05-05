@@ -1,0 +1,22 @@
+{
+  "name": "@oak/obsidian-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oak: local-file-first knowledge graph for Obsidian",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@oak/core": "workspace:*",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "obsidian": "^1.5.0",
+    "vitest": "^1.4.0"
+  }
+}

@@ -1,0 +1,78 @@
+/* oak sidebar */
+
+.oak-sidebar {
+  font-size: 13px;
+  padding: 0.5em 0.75em;
+}
+
+.oak-sidebar h3 {
+  margin: 0.75em 0 0.25em;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.65;
+}
+
+.oak-sidebar h4 {
+  margin: 0.5em 0 0.25em;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.oak-sidebar .oak-section {
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.oak-sidebar .oak-block {
+  margin: 0.4em 0;
+}
+
+.oak-sidebar .oak-meta,
+.oak-sidebar .oak-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.oak-sidebar .oak-meta li,
+.oak-sidebar .oak-list li {
+  padding: 0.15em 0;
+}
+
+.oak-sidebar .oak-link {
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--text-accent);
+}
+.oak-sidebar .oak-link:hover {
+  text-decoration: underline;
+}
+
+.oak-sidebar .oak-context {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 0.5em;
+}
+
+.oak-sidebar .oak-redlink {
+  color: var(--text-error);
+  text-decoration: underline dotted;
+}
+
+.oak-sidebar .oak-external {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.oak-sidebar .oak-error {
+  color: var(--text-error);
+}
+
+.oak-sidebar .oak-muted {
+  opacity: 0.6;
+  font-size: 12px;
+  margin: 0.2em 0;
+}
