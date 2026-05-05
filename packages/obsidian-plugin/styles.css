@@ -1,9 +1,17 @@
-/* oak mode — hide every ribbon clickable icon except oak's own.
-   Toggling oak mode adds / removes the body class. The selector
-   targets the workspace ribbon specifically so right-pane / status
-   bar clickable icons aren't affected. */
+/* oak mode — quiet the chrome.
+   Toggling oak mode adds / removes the body class. */
+
+/* (1) Hide every ribbon clickable icon except oak's own. The oak
+       ribbon button alone is enough to exit oak mode. */
 body.oak-mode-active .workspace-ribbon .clickable-icon:not(.oak-ribbon-icon),
 body.oak-mode-active .workspace-ribbon .side-dock-ribbon-action:not(.oak-ribbon-icon) {
+  display: none !important;
+}
+
+/* (2) Hide per-view action icons (top-right of each tab header).
+       The user can still switch modes via the command palette,
+       and the ribbon-only oak button is enough to leave oak mode. */
+body.oak-mode-active .view-header .view-actions {
   display: none !important;
 }
 
