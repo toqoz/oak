@@ -33,3 +33,12 @@ export type {
   MountStatus,
   AddMountOptions,
 } from "./mount.js";
+export {
+  extractAssetRefs,
+  isAssetTarget,
+  pageEmbedRefs,
+  ASSET_EXTENSIONS,
+} from "./assets.js";
+export type { AssetRef } from "./assets.js";
+export { renderPage, renderPageDocument, rewriteBody } from "./render.js";
+export type { RenderContext } from "./render.js";

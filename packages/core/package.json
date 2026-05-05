@@ -20,9 +20,11 @@
   "dependencies": {
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.0",
+    "markdown-it": "^14.1.0",
     "ulid": "^2.3.0"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9"
+    "@types/js-yaml": "^4.0.9",
+    "@types/markdown-it": "^14.1.2"
   }
 }

@@ -2,6 +2,7 @@
 // and link resolution. Used by `oak validate` and as a publish gate.
 
 import type { Graph, Issue, Vault } from "./types.js";
+import { isAssetTarget } from "./assets.js";
 
 function publicLike(visibility: string): boolean {
   return visibility === "public" || visibility === "unlisted";
@@ -86,8 +87,12 @@ export function validateVault(vault: Vault, graph: Graph): Issue[] {
           filePath: page.filePath,
         });
       } else if (r.status === "unresolved" && link.isEmbed) {
-        // Embeds must resolve; otherwise the rendered page would have
-        // a missing transclusion target.
+        // Asset embeds (image/svg/etc.) are resolved at publish time
+        // against the filesystem, not via the page link tables — so
+        // they're not "unresolved embeds" in the validation sense.
+        if (isAssetTarget(link.target)) continue;
+        // Page embeds must resolve; otherwise the rendered page would
+        // have a missing transclusion target.
         issues.push({
           severity: "error",
           code: "unresolved-embed",
