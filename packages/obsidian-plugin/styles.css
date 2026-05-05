@@ -69,6 +69,12 @@ body.oak-mode-active .mod-right-split .workspace-tab-header-container {
   display: none !important;
 }
 
+/* Status bar (bottom-of-window strip with word counts and plugin
+   indicators) is more chrome than signal in oak mode. Hide it. */
+body.oak-mode-active .status-bar {
+  display: none !important;
+}
+
 /* Obsidian's built-in Properties view (.metadata-container) is
    replaced by oak's structured form in the sidebar (id read-only,
    visibility / llm validated by select). Hiding the default avoids
