@@ -75,12 +75,12 @@ body.oak-mode-active .inline-title {
 }
 body.oak-mode-active input.oak-page-title {
   display: block;
-  /* Title inherits the leaf's `.view-content` side padding (4rem),
-     so width:100% with zero own padding lines its left/right edge
-     up exactly with the body content below. */
   width: 100%;
+  /* Same horizontal gutter as `.cm-content` / `.markdown-preview-view`,
+     so title and body line up. The title sits inside `.cm-scroller`
+     (or `.markdown-preview-view`) — the scrollbar is unaffected. */
   margin: 1.2em 0 0.5em;
-  padding: 0;
+  padding: 0 4rem;
   box-sizing: border-box;
   font-size: 2.2em;
   font-weight: 700;
@@ -121,11 +121,17 @@ body.oak-mode-active .oak-tab-title-override::before {
 }
 
 /* Pane content gets generous breathing room on the sides.
-   We turn off Obsidian's "readable line length" narrowing
-   (`--file-line-width: 100%`) so the body fills its container,
-   then put 4rem of side padding on the markdown leaf's
-   `.view-content`. Both the body and our injected title share
-   that gutter, so their left/right edges line up by construction. */
+   `--file-line-width: 100%` turns off Obsidian's readable-line
+   narrowing so body fills its container.
+   Padding is *inside* the scroll container (on `.cm-content` /
+   `.markdown-preview-view`) so the scrollbar — which lives on
+   `.cm-scroller` (or on `.markdown-preview-view` in reading mode)
+   — sits flush with the right edge of the pane and runs the full
+   pane height.
+   The inline title is injected as a sibling of `.cm-content`
+   inside `.cm-scroller`, so it shares the same scroll surface;
+   it picks up the same 4rem horizontal padding via its own
+   declaration below. */
 body.oak-mode-active .oak-home {
   max-width: none;
   padding: 2em 4em;
@@ -133,18 +139,15 @@ body.oak-mode-active .oak-home {
 body.oak-mode-active {
   --file-line-width: 100%;
 }
-body.oak-mode-active
-  .workspace-leaf-content[data-type="markdown"]
-  > .view-content {
+body.oak-mode-active .cm-content {
   padding-inline: 4rem !important;
 }
-/* CodeMirror's scroller and Obsidian's preview container both add
-   their own horizontal padding by default. Strip it in oak mode so
-   the body's left/right edges sit flush with the view-content
-   gutter (and therefore with the title above). */
-body.oak-mode-active .cm-scroller,
-body.oak-mode-active .markdown-preview-view,
-body.oak-mode-active .markdown-preview-section {
+body.oak-mode-active .markdown-preview-view {
+  padding-inline: 4rem !important;
+}
+/* The scrollers themselves stay edge-to-edge so the scrollbar
+   tracks the full pane height. */
+body.oak-mode-active .cm-scroller {
   padding-inline: 0 !important;
 }
 

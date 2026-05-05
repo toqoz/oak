@@ -320,9 +320,8 @@ export default class OakPlugin extends Plugin {
         ? fmTitleRaw.trim()
         : null;
 
-    const existingInput = view.contentEl.querySelector<HTMLInputElement>(
-      ":scope > input.oak-page-title",
-    );
+    const existingInput =
+      view.contentEl.querySelector<HTMLInputElement>("input.oak-page-title");
     // `titleEl` is a runtime property on Obsidian's View base class
     // (the tab header text element). Not in the public types but
     // present at runtime on every view that owns a tab.
@@ -330,19 +329,30 @@ export default class OakPlugin extends Plugin {
       .titleEl;
 
     if (oakMode && fmTitle) {
+      // Inject the title *inside* the scroll container so the
+      // scrollbar runs the full pane height and so the title
+      // scrolls with the content.
+      const target = this.findTitleInjectionTarget(view);
       let input = existingInput;
-      if (!input) {
+      if (!input || (target && input.parentElement !== target)) {
+        // Mode switch (source <-> preview) recreates the scroll
+        // container; drop a stale input and inject into the new one.
+        if (input) input.remove();
         input = document.createElement("input");
         input.classList.add("oak-page-title");
         input.type = "text";
         input.spellcheck = false;
-        view.contentEl.prepend(input);
-        this.attachInlineTitleEditing(view, input);
+        if (target) {
+          target.prepend(input);
+          this.attachInlineTitleEditing(view, input);
+        }
       }
-      // Don't clobber what the user is typing. We only push the
-      // canonical value when the input isn't focused.
-      if (input.value !== fmTitle && document.activeElement !== input) {
-        input.value = fmTitle;
+      if (input) {
+        // Don't clobber what the user is typing. We only push the
+        // canonical value when the input isn't focused.
+        if (input.value !== fmTitle && document.activeElement !== input) {
+          input.value = fmTitle;
+        }
       }
 
       if (tabTitleEl) {
@@ -356,6 +366,21 @@ export default class OakPlugin extends Plugin {
         tabTitleEl.classList.remove("oak-tab-title-override");
       }
     }
+  }
+
+  // Figure out which DOM node the inline title belongs in, depending
+  // on the current view mode.
+  //   source / live-preview: `.cm-scroller` (sibling of `.cm-content`)
+  //   reading view:          `.markdown-preview-view` (the scroller)
+  // Returns null if neither is present yet (the next layout-change
+  // will retry).
+  private findTitleInjectionTarget(view: MarkdownView): HTMLElement | null {
+    const cmScroller = view.contentEl.querySelector<HTMLElement>(".cm-scroller");
+    if (cmScroller) return cmScroller;
+    const preview = view.contentEl.querySelector<HTMLElement>(
+      ".markdown-preview-view",
+    );
+    return preview ?? null;
   }
 
   private attachInlineTitleEditing(
