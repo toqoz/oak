@@ -1,14 +1,13 @@
-// Oak sidebar view.
+// Oak sidebar view — per-file context.
 //
-// Mirrors directive §13's "Sidebar" layout exactly:
+//   Page   — type, visibility, publish status
+//   Links  — outbound (with unresolved inline), backlinks, 2-hop
 //
-//   Page    — type, visibility, publish status
-//   Links   — outbound (with unresolved inline), backlinks, 2-hop
-//   Git     — snapshot status
-//   External — mount info
+// Vault-wide info (git status, mounts) lives in the home view since
+// it doesn't change with the active file.
 //
 // No "Red Links Panel": unresolved targets render inline as part of
-// the outbound list.
+// the outbound list (per directive §4).
 
 import {
   ItemView,
@@ -23,17 +22,8 @@ import {
   summarizePage,
   type OutboundEntry,
 } from "../format.js";
-import {
-  gitStatus,
-  recentCommits,
-  listMountStatus,
-  type GitStatus,
-  type CommitRecord,
-  type MountStatus,
-  type OakPage,
-} from "@oak/core";
+import type { OakPage } from "@oak/core";
 import type { VaultSnapshot, VaultState } from "../state.js";
-import { vaultRoot } from "../paths.js";
 import type { OakOpenFile } from "../open-file.js";
 
 export const VIEW_TYPE_OAK = "oak-sidebar";
@@ -41,8 +31,6 @@ export const VIEW_TYPE_OAK = "oak-sidebar";
 export class OakSidebarView extends ItemView {
   private unsubscribe: (() => void) | null = null;
   private currentPage: OakPage | null = null;
-  private gitInfo: { status: GitStatus; recent: CommitRecord[] } | null = null;
-  private mounts: MountStatus[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -69,7 +57,6 @@ export class OakSidebarView extends ItemView {
     this.unsubscribe = this.state.subscribe((snap) => {
       void this.render(snap);
     });
-    void this.refreshGitAndMounts();
   }
 
   override async onClose(): Promise<void> {
@@ -90,22 +77,6 @@ export class OakSidebarView extends ItemView {
       if (page.relPath === file.path) return page;
     }
     return null;
-  }
-
-  async refreshGitAndMounts(): Promise<void> {
-    try {
-      const root = vaultRoot(this.app2);
-      const [status, recent, mounts] = await Promise.all([
-        gitStatus(root),
-        recentCommits(root, 3),
-        listMountStatus(root),
-      ]);
-      this.gitInfo = { status, recent };
-      this.mounts = mounts;
-      void this.render(this.state.current());
-    } catch (err) {
-      console.error("oak: failed to read git/mounts", err);
-    }
   }
 
   private async render(snap: VaultSnapshot | null): Promise<void> {
@@ -129,8 +100,6 @@ export class OakSidebarView extends ItemView {
 
     this.renderPageSection(root, snap);
     this.renderLinksSection(root, snap);
-    this.renderGitSection(root);
-    this.renderExternalSection(root);
   }
 
   private activeFile(): TFile | null {
@@ -276,63 +245,6 @@ export class OakSidebarView extends ItemView {
           text: `${entry.label} (invalid: ${entry.reason})`,
         });
         return;
-    }
-  }
-
-  private renderGitSection(parent: HTMLElement): void {
-    const section = parent.createDiv({ cls: "oak-section" });
-    section.createEl("h3", { text: "Git" });
-    if (!this.gitInfo) {
-      section.createEl("p", { cls: "oak-muted", text: "(loading)" });
-      return;
-    }
-    const { status, recent } = this.gitInfo;
-    if (!status.initialized) {
-      section.createEl("p", {
-        cls: "oak-muted",
-        text: "No git repo yet — run `oak init` or any oak command.",
-      });
-      return;
-    }
-    section.createEl("p", {
-      text: `${status.branch ?? "(detached)"}: ${status.dirty ? "dirty" : "clean"} (staged ${status.staged.length}, unstaged ${status.unstaged.length}, untracked ${status.untracked.length})`,
-    });
-    if (recent.length > 0) {
-      const ul = section.createEl("ul", { cls: "oak-list" });
-      for (const c of recent) {
-        ul.createEl("li", {
-          cls: "oak-context",
-          text: `${c.shortHash}  ${c.subject}`,
-        });
-      }
-    }
-  }
-
-  private renderExternalSection(parent: HTMLElement): void {
-    const section = parent.createDiv({ cls: "oak-section" });
-    section.createEl("h3", { text: "External" });
-    if (this.mounts.length === 0) {
-      section.createEl("p", {
-        cls: "oak-muted",
-        text: "(no mounts configured)",
-      });
-      return;
-    }
-    const ul = section.createEl("ul", { cls: "oak-list" });
-    for (const m of this.mounts) {
-      const li = ul.createEl("li");
-      li.createEl("strong", { text: m.entry.id });
-      li.createEl("div", {
-        cls: "oak-context",
-        text: `${m.entry.linkPath} → ${m.entry.targetPath}`,
-      });
-      const ok = m.linkExists && m.targetExists;
-      li.createEl("div", {
-        cls: ok ? "oak-context" : "oak-error",
-        text: ok
-          ? "ok"
-          : `${m.linkExists ? "" : "link missing "}${m.targetExists ? "" : "target missing"}`.trim(),
-      });
     }
   }
 

@@ -6,19 +6,28 @@
 
 import { ItemView, TFile, WorkspaceLeaf, type App } from "obsidian";
 import {
+  gitStatus,
   homeViewModel,
+  listMountStatus,
+  recentCommits,
+  type CommitRecord,
+  type GitStatus,
   type HomeEntry,
   type HomeViewModel,
+  type MountStatus,
 } from "@oak/core";
 
 import type { VaultSnapshot, VaultState } from "../state.js";
 import type { OakOpenFile } from "../open-file.js";
+import { vaultRoot } from "../paths.js";
 
 export const VIEW_TYPE_OAK_HOME = "oak-home";
 
 export class OakHomeView extends ItemView {
   private unsubscribe: (() => void) | null = null;
   private model: HomeViewModel | null = null;
+  private gitInfo: { status: GitStatus; recent: CommitRecord[] } | null = null;
+  private mounts: MountStatus[] = [];
   private rendering = false;
 
   constructor(
@@ -56,19 +65,40 @@ export class OakHomeView extends ItemView {
   private async refresh(snap: VaultSnapshot | null): Promise<void> {
     if (!snap) {
       this.model = null;
+      this.gitInfo = null;
+      this.mounts = [];
       this.render();
       return;
     }
     if (this.rendering) return;
     this.rendering = true;
     try {
-      this.model = await homeViewModel(snap.vault, snap.graph, {
-        recentLimit: 10,
-        hubLimit: 10,
-      });
+      const [model] = await Promise.all([
+        homeViewModel(snap.vault, snap.graph, {
+          recentLimit: 10,
+          hubLimit: 10,
+        }),
+        this.refreshGitAndMounts(),
+      ]);
+      this.model = model;
       this.render();
     } finally {
       this.rendering = false;
+    }
+  }
+
+  private async refreshGitAndMounts(): Promise<void> {
+    try {
+      const root = vaultRoot(this.app2);
+      const [status, recent, mounts] = await Promise.all([
+        gitStatus(root),
+        recentCommits(root, 3),
+        listMountStatus(root),
+      ]);
+      this.gitInfo = { status, recent };
+      this.mounts = mounts;
+    } catch (err) {
+      console.warn("oak: failed to read git/mounts", err);
     }
   }
 
@@ -125,6 +155,66 @@ export class OakHomeView extends ItemView {
       const sec = root.createDiv({ cls: "oak-home-section" });
       sec.createEl("h2", { text: `${v[0]!.toUpperCase()}${v.slice(1)} (${list.length})` });
       this.renderEntryList(sec, list);
+    }
+
+    this.renderGitSection(root);
+    this.renderExternalSection(root);
+  }
+
+  private renderGitSection(parent: HTMLElement): void {
+    const sec = parent.createDiv({ cls: "oak-home-section" });
+    sec.createEl("h2", { text: "Git" });
+    if (!this.gitInfo) {
+      sec.createEl("p", { cls: "oak-home-meta", text: "(loading)" });
+      return;
+    }
+    const { status, recent } = this.gitInfo;
+    if (!status.initialized) {
+      sec.createEl("p", {
+        cls: "oak-home-meta",
+        text: "No git repo yet — any oak command will initialise one.",
+      });
+      return;
+    }
+    sec.createEl("p", {
+      text: `${status.branch ?? "(detached)"}: ${status.dirty ? "dirty" : "clean"} (staged ${status.staged.length}, unstaged ${status.unstaged.length}, untracked ${status.untracked.length})`,
+    });
+    if (recent.length > 0) {
+      const ul = sec.createEl("ul", { cls: "oak-home-list" });
+      for (const c of recent) {
+        ul.createEl("li", {
+          cls: "oak-home-meta",
+          text: `${c.shortHash}  ${c.subject}`,
+        });
+      }
+    }
+  }
+
+  private renderExternalSection(parent: HTMLElement): void {
+    const sec = parent.createDiv({ cls: "oak-home-section" });
+    sec.createEl("h2", { text: "External" });
+    if (this.mounts.length === 0) {
+      sec.createEl("p", {
+        cls: "oak-home-meta",
+        text: "(no mounts configured)",
+      });
+      return;
+    }
+    const ul = sec.createEl("ul", { cls: "oak-home-list" });
+    for (const m of this.mounts) {
+      const li = ul.createEl("li");
+      li.createEl("strong", { text: m.entry.id });
+      li.createEl("div", {
+        cls: "oak-home-meta",
+        text: `${m.entry.linkPath} → ${m.entry.targetPath}`,
+      });
+      const ok = m.linkExists && m.targetExists;
+      li.createEl("div", {
+        cls: ok ? "oak-home-meta" : "oak-error",
+        text: ok
+          ? "ok"
+          : `${m.linkExists ? "" : "link missing "}${m.targetExists ? "" : "target missing"}`.trim(),
+      });
     }
   }
 
