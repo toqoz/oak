@@ -53,12 +53,12 @@ export default class OakPlugin extends Plugin {
     this.registerView(VIEW_TYPE_OAK_HOME, (leaf: WorkspaceLeaf) => {
       return new OakHomeView(leaf, this.state, this.app);
     });
-    // Single "oak mode" entry: brings up both surfaces — the home view
-    // in the main pane and the sidebar view on the right — in one
-    // gesture. Idempotent: clicking again on an open setup just
-    // refocuses both leaves.
-    this.addRibbonIcon("trees", "Open oak", () => {
-      void this.activateOakMode();
+    // Single "oak mode" entry — toggles between the focused oak
+    // surfaces (home in main, sidebar on the right, file explorer
+    // hidden) and the regular Obsidian layout (file explorer
+    // restored, oak leaves closed).
+    this.addRibbonIcon("trees", "Toggle oak mode", () => {
+      void this.toggleOakMode();
     });
 
     this.registerEvent(
@@ -82,9 +82,9 @@ export default class OakPlugin extends Plugin {
     );
 
     this.addCommand({
-      id: "oak-open",
-      name: "Open oak (home + sidebar)",
-      callback: () => void this.activateOakMode(),
+      id: "oak-toggle-mode",
+      name: "Toggle oak mode",
+      callback: () => void this.toggleOakMode(),
     });
     this.addCommand({
       id: "oak-new-page",
@@ -173,31 +173,44 @@ export default class OakPlugin extends Plugin {
     }
   }
 
-  // "oak mode": activate both surfaces in one gesture. Idempotent —
-  // already-open leaves are simply revealed. We open the sidebar
-  // first so the user's final focus lands on the main-pane home,
-  // which is where they'll do most of the browsing.
+  // Toggle "oak mode": one gesture switches between the focused oak
+  // surfaces and the regular Obsidian layout.
   //
-  // When entering oak mode "freshly" (neither leaf currently open) we
-  // also close any file-explorer leaves so the user gets a focused
-  // oak surface. Repeated clicks while oak is already open do not
-  // touch the file explorer — the user may have intentionally
-  // reopened it alongside oak.
-  async activateOakMode(): Promise<void> {
-    const sidebarOpen =
-      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK).length > 0;
-    const homeOpen =
-      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME).length > 0;
-    const enteringFresh = !sidebarOpen && !homeOpen;
+  // ON  — at least one oak leaf is open. Toggling off detaches every
+  //       oak leaf and re-opens the file explorer in the left pane
+  //       (using an existing leaf if there is one).
+  // OFF — no oak leaves open. Toggling on opens the sidebar (right)
+  //       and the home (main), focuses the home, and detaches any
+  //       file-explorer leaves so the left pane gets out of the way.
+  async toggleOakMode(): Promise<void> {
+    const sidebarLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK);
+    const homeLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
+    const isOn = sidebarLeaves.length > 0 || homeLeaves.length > 0;
+
+    if (isOn) {
+      for (const leaf of sidebarLeaves) leaf.detach();
+      for (const leaf of homeLeaves) leaf.detach();
+      await this.restoreFileExplorer();
+      return;
+    }
 
     await this.activateSidebar();
     await this.activateHome();
-
-    if (enteringFresh) {
-      for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
-        leaf.detach();
-      }
+    for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
+      leaf.detach();
     }
+  }
+
+  private async restoreFileExplorer(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType("file-explorer");
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]!);
+      return;
+    }
+    const leaf = this.app.workspace.getLeftLeaf(false);
+    if (!leaf) return;
+    await leaf.setViewState({ type: "file-explorer", active: true });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   private async activateSidebar(): Promise<void> {
