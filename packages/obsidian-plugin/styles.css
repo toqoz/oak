@@ -33,11 +33,13 @@ body.oak-mode-active .workspace-leaf-content[data-type="oak-sidebar"] .view-head
   display: none !important;
 }
 
-/* The markdown leaf's view header stays visible: it surfaces the
-   oak title (via the .oak-tab-title-override overlay on
-   `view.titleEl` / `.view-header-title`) plus the navigation
-   arrows. The big inline `.oak-page-title` is the editing surface;
-   the small header title is the page-context surface. */
+/* Hide the markdown leaf's view header in oak mode: the small
+   filename / title repeated above the editor is just noise. The
+   inline `.oak-page-title` already shows the title, and the tab
+   strip surfaces it too via the data-oak-title overlay. */
+body.oak-mode-active .workspace-leaf-content[data-type="markdown"] .view-header {
+  display: none !important;
+}
 
 /* The right-side dock keeps a thin horizontal tab strip at the top
    showing every right-pane tab (Backlinks, Outgoing links, Tags,
@@ -74,13 +76,19 @@ body.oak-mode-active .inline-title {
   display: none;
 }
 body.oak-mode-active input.oak-page-title {
+  /* Absolute so the title is taken out of `.cm-scroller`'s flex
+     flow (otherwise it shares a row with `.cm-content` and the
+     gutter, which appears as side-by-side text columns).
+     Anchored to the top of the scrollable area, so the title
+     scrolls with the body and the scrollbar still runs the full
+     pane height. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: block;
-  width: 100%;
-  /* Same horizontal gutter as `.cm-content` / `.markdown-preview-view`,
-     so title and body line up. The title sits inside `.cm-scroller`
-     (or `.markdown-preview-view`) — the scrollbar is unaffected. */
-  margin: 1.2em 0 0.5em;
-  padding: 0 4rem;
+  margin: 0;
+  padding: 1em 4rem 0.5em;
   box-sizing: border-box;
   font-size: 2.2em;
   font-weight: 700;
@@ -141,14 +149,23 @@ body.oak-mode-active {
 }
 body.oak-mode-active .cm-content {
   padding-inline: 4rem !important;
+  /* Reserve room for the absolutely-positioned title above. */
+  padding-top: 4em !important;
 }
 body.oak-mode-active .markdown-preview-view {
   padding-inline: 4rem !important;
+  padding-top: 4em !important;
 }
 /* The scrollers themselves stay edge-to-edge so the scrollbar
    tracks the full pane height. */
 body.oak-mode-active .cm-scroller {
   padding-inline: 0 !important;
+  /* Establish positioning context for the absolutely-positioned
+     title injected as a child. */
+  position: relative !important;
+}
+body.oak-mode-active .markdown-preview-view {
+  position: relative !important;
 }
 
 /* oak sidebar */
