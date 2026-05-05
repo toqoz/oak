@@ -182,12 +182,14 @@ body.oak-mode-active {
 }
 body.oak-mode-active .cm-content {
   padding-inline: 4rem !important;
-  /* Reserve room for the absolutely-positioned title above. */
-  padding-top: 4em !important;
+  /* Just enough room for the absolutely-positioned title above
+     (title is now ~24px so the spacer no longer needs to clear a
+     2.2em heading). */
+  padding-top: 2em !important;
 }
 body.oak-mode-active .markdown-preview-view {
   padding-inline: 4rem !important;
-  padding-top: 4em !important;
+  padding-top: 2em !important;
 }
 /* The scrollers themselves stay edge-to-edge so the scrollbar
    tracks the full pane height. */
