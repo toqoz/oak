@@ -69,19 +69,18 @@ body.oak-mode-active .inline-title {
 }
 body.oak-mode-active input.oak-page-title {
   display: block;
+  /* Mirror the body content's centering: max-width tracks
+     `--file-line-width` (calc(100% - 8rem)) and `margin: auto`
+     produces the same left/right gutters as the markdown body. */
+  max-width: var(--file-line-width);
   width: 100%;
+  margin: 1.2em auto 0.5em;
+  padding: 0;
   box-sizing: border-box;
   font-size: 2.2em;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text-normal);
-  /* Horizontal in rem so the gutter matches the body's
-     `--file-line-width: calc(100% - 8em)` (which evaluates against
-     the editor's root-ish font size, ~16px). Using `em` here would
-     scale the gutter against this element's 2.2em font-size and
-     push the title noticeably further right than the body. */
-  padding: 1.2em 4rem 0.5em;
-  margin: 0;
   background: transparent;
   border: 0;
   outline: 0;
@@ -117,16 +116,16 @@ body.oak-mode-active .oak-tab-title-override::before {
 }
 
 /* Expand content to the full pane width but keep generous breathing
-   room on the sides — roughly 2x the home view's previous padding.
-     - home view: 4em horizontal padding (was 2em)
-     - markdown editor / preview: keep `--file-line-width` driving
-       Obsidian's centering, but reserve 4em on each side. */
+   room on the sides. `rem` is used (not `em`) so the gutter is the
+   same pixel value everywhere it's read — `em` would otherwise
+   evaluate against each element's own font-size and the title /
+   body would drift apart. */
 body.oak-mode-active .oak-home {
   max-width: none;
   padding: 2em 4em;
 }
 body.oak-mode-active {
-  --file-line-width: calc(100% - 8em);
+  --file-line-width: calc(100% - 8rem);
 }
 
 /* oak sidebar */
