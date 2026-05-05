@@ -1,6 +1,12 @@
 export * from "./types.js";
 export { extractLinks } from "./links.js";
 export { parsePage, parseVault } from "./parse.js";
+export { composePage, createPage } from "./create.js";
+export type {
+  ComposedPage,
+  CreatePageOptions,
+  CreatePageResult,
+} from "./create.js";
 export {
   buildGraph,
   resolveLinks,
