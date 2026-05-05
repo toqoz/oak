@@ -33,6 +33,12 @@ body.oak-mode-active .workspace-leaf-content[data-type="oak-sidebar"] .view-head
   display: none !important;
 }
 
+/* The markdown leaf's view header stays visible: it surfaces the
+   oak title (via the .oak-tab-title-override overlay on
+   `view.titleEl` / `.view-header-title`) plus the navigation
+   arrows. The big inline `.oak-page-title` is the editing surface;
+   the small header title is the page-context surface. */
+
 /* The right-side dock keeps a thin horizontal tab strip at the top
    showing every right-pane tab (Backlinks, Outgoing links, Tags,
    Outline, … and our oak sidebar). In oak mode there's only one
