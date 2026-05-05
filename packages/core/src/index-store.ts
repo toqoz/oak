@@ -22,10 +22,16 @@ import type { Graph, Issue, Vault } from "./types.js";
 // the lookup through Node's own resolver, which knows about
 // `node:sqlite` natively. This keeps the module test-friendly under
 // vitest while still being perfectly normal Node code.
-const _require = createRequire(import.meta.url);
+//
+// Defer createRequire to call time so esbuild bundling to CJS (used
+// by the Obsidian plugin) doesn't trip over an empty `import.meta.url`
+// at module load. The plugin never calls these helpers, but the
+// module must still evaluate.
 let _DatabaseSync: typeof DatabaseSyncCtor | null = null;
 function loadDatabaseSync(): typeof DatabaseSyncCtor {
   if (_DatabaseSync) return _DatabaseSync;
+  const url = import.meta.url || `file://${process.cwd()}/oak-fallback.js`;
+  const _require = createRequire(url);
   const mod = _require("node:sqlite") as typeof import("node:sqlite");
   _DatabaseSync = mod.DatabaseSync;
   return _DatabaseSync;
