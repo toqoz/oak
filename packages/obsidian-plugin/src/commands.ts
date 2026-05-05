@@ -12,11 +12,11 @@ import {
   TFile,
   type EditorPosition,
 } from "obsidian";
-import { ulid } from "ulid";
 import {
   addMount,
   buildGraph,
   checkpoint,
+  composePage,
   parseVault,
   partitionIssues,
   publish,
@@ -28,6 +28,7 @@ import {
 
 import type OakPlugin from "./main.js";
 import { vaultRoot } from "./paths.js";
+import { findWikiTargetInLine } from "./wiki-cursor.js";
 
 const VISIBILITIES: Visibility[] = ["private", "unlisted", "public"];
 
@@ -196,8 +197,6 @@ export async function setVisibility(plugin: OakPlugin): Promise<void> {
   plugin.state.scheduleRefresh();
 }
 
-import { findWikiTargetInLine } from "./wiki-cursor.js";
-
 function findWikiTargetAtCursor(
   editor: Editor,
   pos: EditorPosition,
@@ -205,38 +204,112 @@ function findWikiTargetAtCursor(
   return findWikiTargetInLine(editor.getLine(pos.line), pos.ch);
 }
 
-export async function createPageFromRedlink(plugin: OakPlugin): Promise<void> {
-  const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
-  let target: string | null = null;
-  if (view) {
-    const editor = view.editor;
-    const pos = editor.getCursor();
-    target = findWikiTargetAtCursor(editor, pos);
+class NewPageModal extends Modal {
+  private titleValue: string;
+  private visibilityValue: Visibility = "private";
+  constructor(
+    app: App,
+    initialTitle: string,
+    private resolve: (
+      v: { title: string; visibility: Visibility } | null,
+    ) => void,
+  ) {
+    super(app);
+    this.titleValue = initialTitle;
   }
-  if (!target) {
-    target = await askText(
-      plugin.app,
-      "Create new oak page",
-      "Page title",
-    );
+  override onOpen(): void {
+    this.contentEl.createEl("h2", { text: "Create new oak page" });
+    new Setting(this.contentEl).setName("Title").addText((t) => {
+      t.setValue(this.titleValue);
+      t.onChange((v) => (this.titleValue = v));
+      t.inputEl.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          this.submit();
+        }
+      });
+      // Focus title for fast capture.
+      setTimeout(() => t.inputEl.focus(), 0);
+    });
+    new Setting(this.contentEl).setName("Visibility").addDropdown((d) => {
+      d.addOption("private", "private (default)");
+      d.addOption("unlisted", "unlisted");
+      d.addOption("public", "public");
+      d.setValue(this.visibilityValue);
+      d.onChange((v) => (this.visibilityValue = v as Visibility));
+    });
+    new Setting(this.contentEl)
+      .addButton((b) =>
+        b.setButtonText("Create").setCta().onClick(() => this.submit()),
+      )
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.cancel()));
   }
-  if (!target) return;
+  private submit(): void {
+    const title = this.titleValue.trim();
+    if (title.length === 0) return;
+    this.resolve({ title, visibility: this.visibilityValue });
+    this.resolve = () => undefined;
+    this.close();
+  }
+  private cancel(): void {
+    this.resolve(null);
+    this.resolve = () => undefined;
+    this.close();
+  }
+  override onClose(): void {
+    this.contentEl.empty();
+  }
+}
 
-  const safe = target.replace(/[\/\\:*?"<>|]/g, "-");
-  const path = `${safe}.md`;
-  const existing = plugin.app.vault.getAbstractFileByPath(path);
+function askNewPage(
+  app: App,
+  initialTitle = "",
+): Promise<{ title: string; visibility: Visibility } | null> {
+  return new Promise((resolve) => {
+    new NewPageModal(app, initialTitle, resolve).open();
+  });
+}
+
+// Shared write-and-open helper. Uses Obsidian's vault.create so the
+// metadata cache picks up the file immediately.
+async function writeNewPage(
+  plugin: OakPlugin,
+  args: { title: string; visibility: Visibility },
+): Promise<void> {
+  const composed = composePage({
+    title: args.title,
+    visibility: args.visibility,
+  });
+  const existing = plugin.app.vault.getAbstractFileByPath(composed.vaultRelPath);
   if (existing) {
-    new Notice(`oak: page already exists at ${path}`);
+    new Notice(`oak: page already exists at ${composed.vaultRelPath}`);
     return;
   }
-  const id = ulid();
-  const body = `---\nid: ${id}\ntitle: ${target}\nvisibility: private\n---\n\n`;
-  const file = await plugin.app.vault.create(path, body);
+  const file = await plugin.app.vault.create(composed.vaultRelPath, composed.text);
   if (file instanceof TFile) {
     await plugin.app.workspace.getLeaf(false).openFile(file);
   }
-  new Notice(`oak: created ${path}`);
+  new Notice(`oak: created ${composed.vaultRelPath}`);
   plugin.state.scheduleRefresh();
+}
+
+export async function createNewPage(plugin: OakPlugin): Promise<void> {
+  const ans = await askNewPage(plugin.app);
+  if (!ans) return;
+  await writeNewPage(plugin, ans);
+}
+
+export async function createPageFromRedlink(plugin: OakPlugin): Promise<void> {
+  const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
+  let initial = "";
+  if (view) {
+    const editor = view.editor;
+    const pos = editor.getCursor();
+    initial = findWikiTargetAtCursor(editor, pos) ?? "";
+  }
+  const ans = await askNewPage(plugin.app, initial);
+  if (!ans) return;
+  await writeNewPage(plugin, ans);
 }
 
 export async function runValidate(plugin: OakPlugin): Promise<void> {

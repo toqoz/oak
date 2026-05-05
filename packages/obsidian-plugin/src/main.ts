@@ -16,6 +16,7 @@ import {
 import { VaultState } from "./state.js";
 import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
 import {
+  createNewPage,
   createPageFromRedlink,
   runCheckpoint,
   runMount,
@@ -73,13 +74,18 @@ export default class OakPlugin extends Plugin {
     );
 
     this.addCommand({
+      id: "oak-new-page",
+      name: "New oak page",
+      callback: () => void createNewPage(this),
+    });
+    this.addCommand({
       id: "oak-set-visibility",
       name: "Set visibility",
       callback: () => void setVisibility(this),
     });
     this.addCommand({
-      id: "oak-create-from-redlink",
-      name: "Create page from unresolved link",
+      id: "oak-new-from-redlink",
+      name: "New page from unresolved link",
       callback: () => void createPageFromRedlink(this),
     });
     this.addCommand({
