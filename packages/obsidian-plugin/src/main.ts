@@ -6,7 +6,7 @@
 //   2. onunload: dispose of state and timers. Obsidian unregisters
 //      events automatically via `registerEvent`.
 
-import { Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { MarkdownView, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 
 import {
   DEFAULT_SETTINGS,
@@ -102,7 +102,16 @@ export default class OakPlugin extends Plugin {
     // the body class so a manual close (or workspace state restoration
     // after reload) keeps the chrome consistent.
     this.registerEvent(
-      this.app.workspace.on("layout-change", () => this.syncOakModeClass()),
+      this.app.workspace.on("layout-change", () => {
+        this.syncOakModeClass();
+        this.applyTitleOverrides();
+      }),
+    );
+    this.registerEvent(
+      this.app.workspace.on("file-open", () => this.applyTitleOverrides()),
+    );
+    this.registerEvent(
+      this.app.metadataCache.on("changed", () => this.applyTitleOverrides()),
     );
 
     this.addCommand({
@@ -162,6 +171,7 @@ export default class OakPlugin extends Plugin {
       // Obsidian has just re-instantiated them. Re-attach the chrome
       // class so oak mode visually resumes where the user left off.
       this.syncOakModeClass();
+      this.applyTitleOverrides();
     });
   }
 
@@ -172,6 +182,9 @@ export default class OakPlugin extends Plugin {
     // Clear the body class so disabling the plugin (or reloading) can
     // never leave other ribbon icons hidden.
     document.body.removeClass("oak-mode-active");
+    // And drop any oak title overrides from open markdown views so
+    // tabs / inline titles return to Obsidian's basename rendering.
+    this.applyTitleOverrides();
   }
 
   async loadSettings(): Promise<void> {
@@ -269,6 +282,72 @@ export default class OakPlugin extends Plugin {
       this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME).length > 0;
     if (isOn) document.body.addClass("oak-mode-active");
     else document.body.removeClass("oak-mode-active");
+  }
+
+  // For each open markdown view, replace the *displayed* filename
+  // with the frontmatter `title` (when present and oak mode is
+  // active). Display-only — never mutate the actual textContent of
+  // editable / file-bound elements, so titles can safely contain
+  // characters that aren't path-safe (e.g. `:`, `/`).
+  //
+  // Two surfaces, both rely on CSS to do the visual override:
+  //   - inline title at the top of the editor: we hide Obsidian's
+  //     `.inline-title` and inject a sibling `.oak-page-title` div
+  //   - tab header title: we tag `view.titleEl` with a class +
+  //     `data-oak-title` attribute. CSS makes the original text
+  //     transparent and overlays the data attribute via `::before`.
+  private applyTitleOverrides(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof MarkdownView) || !view.file) continue;
+      this.applyTitleForView(view, view.file, oakMode);
+    }
+  }
+
+  private applyTitleForView(
+    view: MarkdownView,
+    file: TFile,
+    oakMode: boolean,
+  ): void {
+    void file; // accessed via metadataCache below; kept for callers
+    const cache = this.app.metadataCache.getFileCache(view.file!);
+    const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+    const fmTitleRaw = fm?.["title"];
+    const fmTitle =
+      typeof fmTitleRaw === "string" && fmTitleRaw.trim().length > 0
+        ? fmTitleRaw.trim()
+        : null;
+
+    const existing = view.contentEl.querySelector<HTMLElement>(
+      ":scope > .oak-page-title",
+    );
+    // `titleEl` is a runtime property on Obsidian's View base class
+    // (the tab header text element). Not in the public types but
+    // present at runtime on every view that owns a tab.
+    const tabTitleEl = (view as unknown as { titleEl?: HTMLElement })
+      .titleEl;
+
+    if (oakMode && fmTitle) {
+      let titleEl = existing;
+      if (!titleEl) {
+        titleEl = document.createElement("div");
+        titleEl.classList.add("oak-page-title");
+        view.contentEl.prepend(titleEl);
+      }
+      if (titleEl.textContent !== fmTitle) titleEl.textContent = fmTitle;
+
+      if (tabTitleEl) {
+        tabTitleEl.dataset["oakTitle"] = fmTitle;
+        tabTitleEl.classList.add("oak-tab-title-override");
+      }
+    } else {
+      if (existing) existing.remove();
+      if (tabTitleEl) {
+        delete tabTitleEl.dataset["oakTitle"];
+        tabTitleEl.classList.remove("oak-tab-title-override");
+      }
+    }
   }
 
   private async activateSidebar(): Promise<void> {

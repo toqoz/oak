@@ -51,6 +51,56 @@ body.oak-mode-active .metadata-properties {
   display: none !important;
 }
 
+/* Replace Obsidian's filename surfaces with the oak page's
+   frontmatter `title`. Both overrides are display-only — neither
+   mutates the actual textContent of editable / file-bound elements,
+   so titles can contain characters that aren't path-safe.
+
+   Inline title (top of the editor):
+     - Obsidian's `.inline-title` is hidden
+     - the plugin injects a sibling read-only `.oak-page-title`
+       (users edit the title via the sidebar form, which then auto-
+       renames the file via path-safe filename derivation) */
+body.oak-mode-active .inline-title {
+  display: none !important;
+}
+.oak-page-title {
+  display: none;
+}
+body.oak-mode-active .oak-page-title {
+  display: block;
+  font-size: 2.2em;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-normal);
+  padding: 1.2em 4em 0.5em;
+  margin: 0;
+}
+
+/* Tab header title:
+   The plugin sets `data-oak-title="<frontmatter title>"` and
+   `.oak-tab-title-override` on `view.titleEl` while in oak mode.
+   CSS hides the original text via `color: transparent` and
+   overlays the data attribute through a `::before` pseudo-element.
+   The tab dimensions stay driven by the original (real) text, which
+   keeps Obsidian's tab-bar layout untouched. */
+body.oak-mode-active .oak-tab-title-override {
+  position: relative;
+  color: transparent;
+}
+body.oak-mode-active .oak-tab-title-override::before {
+  content: attr(data-oak-title);
+  position: absolute;
+  inset: 0;
+  color: var(--text-normal);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+}
+
 /* Expand content to the full pane width but keep generous breathing
    room on the sides — roughly 2x the home view's previous padding.
      - home view: 4em horizontal padding (was 2em)
