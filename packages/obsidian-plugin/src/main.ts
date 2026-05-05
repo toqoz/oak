@@ -115,24 +115,29 @@ export default class OakPlugin extends Plugin {
         this.syncOakModeClass();
         this.applyTitleOverrides();
         this.applyLinksCards();
+        this.applyPageMeta();
       }),
     );
     this.registerEvent(
       this.app.workspace.on("file-open", () => {
         this.applyTitleOverrides();
         this.applyLinksCards();
+        this.applyPageMeta();
       }),
     );
     this.registerEvent(
       this.app.metadataCache.on("changed", () => {
         this.applyTitleOverrides();
         this.applyLinksCards();
+        this.applyPageMeta();
       }),
     );
-    // Vault state refresh -> backlinks/2-hop change -> rerender cards.
-    this.linksUnsubscribe = this.state.subscribe(() =>
-      this.applyLinksCards(),
-    );
+    // Vault state refresh -> backlinks/2-hop change -> rerender cards
+    // and meta panel.
+    this.linksUnsubscribe = this.state.subscribe(() => {
+      this.applyLinksCards();
+      this.applyPageMeta();
+    });
 
     this.addCommand({
       id: "oak-toggle-mode",
@@ -193,6 +198,7 @@ export default class OakPlugin extends Plugin {
       this.syncOakModeClass();
       this.applyTitleOverrides();
       this.applyLinksCards();
+      this.applyPageMeta();
     });
   }
 
@@ -205,10 +211,11 @@ export default class OakPlugin extends Plugin {
     // Clear the body class so disabling the plugin (or reloading) can
     // never leave other ribbon icons hidden.
     document.body.removeClass("oak-mode-active");
-    // And drop any oak title overrides + footer cards from open
-    // markdown views so they return to Obsidian's defaults.
+    // And drop any oak title overrides + footer cards / meta from
+    // open markdown views so they return to Obsidian's defaults.
     this.applyTitleOverrides();
     this.applyLinksCards();
+    this.applyPageMeta();
   }
 
   async loadSettings(): Promise<void> {
@@ -353,33 +360,62 @@ export default class OakPlugin extends Plugin {
         ? fmTitleRaw.trim()
         : null;
 
-    const existingInput =
-      view.contentEl.querySelector<HTMLInputElement>("input.oak-page-title");
+    const existingRow = view.contentEl.querySelector<HTMLElement>(
+      ".oak-page-title-row",
+    );
     // `titleEl` is a runtime property on Obsidian's View base class
     // (the tab header text element). Not in the public types but
     // present at runtime on every view that owns a tab.
     const tabTitleEl = (view as unknown as { titleEl?: HTMLElement })
       .titleEl;
 
+    const fmVisibilityRaw = fm?.["visibility"];
+    const fmVisibility =
+      typeof fmVisibilityRaw === "string" &&
+      (fmVisibilityRaw === "private" ||
+        fmVisibilityRaw === "unlisted" ||
+        fmVisibilityRaw === "public")
+        ? fmVisibilityRaw
+        : "private";
+
     if (oakMode && fmTitle) {
-      // Inject the title *inside* the scroll container so the
+      // Inject the title row *inside* the scroll container so the
       // scrollbar runs the full pane height and so the title
-      // scrolls with the content.
+      // scrolls with the content. The row holds the title input on
+      // the left and the visibility selector pinned to the right.
       const target = this.findTitleInjectionTarget(view);
-      let input = existingInput;
-      if (!input || (target && input.parentElement !== target)) {
+      let row = existingRow;
+      if (!row || (target && row.parentElement !== target)) {
         // Mode switch (source <-> preview) recreates the scroll
-        // container; drop a stale input and inject into the new one.
-        if (input) input.remove();
-        input = document.createElement("input");
+        // container; drop a stale row and inject into the new one.
+        if (row) row.remove();
+        row = document.createElement("div");
+        row.classList.add("oak-page-title-row");
+
+        const input = document.createElement("input");
         input.classList.add("oak-page-title");
         input.type = "text";
         input.spellcheck = false;
+        row.appendChild(input);
+
+        const select = document.createElement("select");
+        select.classList.add("oak-page-visibility");
+        for (const v of ["private", "unlisted", "public"]) {
+          const o = document.createElement("option");
+          o.value = v;
+          o.textContent = v;
+          select.appendChild(o);
+        }
+        row.appendChild(select);
+
         if (target) {
-          target.prepend(input);
+          target.prepend(row);
           this.attachInlineTitleEditing(view, input);
+          this.attachVisibilitySelect(view, select);
         }
       }
+      const input = row.querySelector<HTMLInputElement>(".oak-page-title");
+      const select = row.querySelector<HTMLSelectElement>(".oak-page-visibility");
       if (input) {
         // Don't clobber what the user is typing. We only push the
         // canonical value when the input isn't focused.
@@ -387,18 +423,39 @@ export default class OakPlugin extends Plugin {
           input.value = fmTitle;
         }
       }
+      if (select && select.value !== fmVisibility) {
+        select.value = fmVisibility;
+      }
 
       if (tabTitleEl) {
         tabTitleEl.dataset["oakTitle"] = fmTitle;
         tabTitleEl.classList.add("oak-tab-title-override");
       }
     } else {
-      if (existingInput) existingInput.remove();
+      if (existingRow) existingRow.remove();
       if (tabTitleEl) {
         delete tabTitleEl.dataset["oakTitle"];
         tabTitleEl.classList.remove("oak-tab-title-override");
       }
     }
+  }
+
+  private attachVisibilitySelect(
+    view: MarkdownView,
+    select: HTMLSelectElement,
+  ): void {
+    select.addEventListener("change", () => {
+      const file = view.file;
+      if (!file) return;
+      const next = select.value;
+      void this.app.fileManager
+        .processFrontMatter(file, (fm) => {
+          (fm as Record<string, unknown>)["visibility"] = next;
+        })
+        .catch((err) =>
+          new Notice(`oak: failed to update visibility — ${(err as Error).message}`),
+        );
+    });
   }
 
   // For each open markdown view, render a "Related" footer that
@@ -555,6 +612,174 @@ export default class OakPlugin extends Plugin {
     if (file instanceof TFile) {
       void this.openInBrowseLeaf(file, { newTab });
     }
+  }
+
+  // Per-page metadata (id / slug / llm / status), rendered as a
+  // compact row of label-value pairs after the Related cards.
+  private applyPageMeta(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof MarkdownView)) continue;
+      this.applyPageMetaForView(view, oakMode);
+    }
+  }
+
+  private applyPageMetaForView(
+    view: MarkdownView,
+    oakMode: boolean,
+  ): void {
+    const existing =
+      view.contentEl.querySelector<HTMLElement>(".oak-page-meta");
+
+    if (!oakMode || !view.file) {
+      existing?.remove();
+      return;
+    }
+
+    const snap = this.state.current();
+    if (!snap) {
+      existing?.remove();
+      return;
+    }
+
+    let page: OakPage | null = null;
+    for (const p of snap.vault.pages.values()) {
+      if (p.relPath === view.file.path) {
+        page = p;
+        break;
+      }
+    }
+    if (!page) {
+      existing?.remove();
+      return;
+    }
+
+    const target = this.findLinksInjectionTarget(view);
+    if (!target) {
+      existing?.remove();
+      return;
+    }
+
+    let container = existing;
+    if (!container || container.parentElement !== target) {
+      container?.remove();
+      container = document.createElement("div");
+      container.classList.add("oak-page-meta");
+      target.appendChild(container);
+    }
+    container.empty();
+
+    const file = view.file;
+    this.metaRowReadonly(container, "ID", page.id);
+    this.metaRowText(container, "Slug", "slug", page.slug, file);
+    this.metaRowSelect(
+      container,
+      "LLM",
+      "llm",
+      page.llm,
+      ["deny", "allow", "summary-only"],
+      file,
+    );
+
+    const issues = snap.issues.filter((i) => i.pageId === page.id);
+    const errCount = issues.filter((i) => i.severity === "error").length;
+    this.metaRowReadonly(
+      container,
+      "Status",
+      errCount === 0
+        ? "ok"
+        : `${errCount} error(s) blocking publish`,
+      errCount > 0,
+    );
+  }
+
+  private metaRowReadonly(
+    parent: HTMLElement,
+    label: string,
+    value: string,
+    isError = false,
+  ): void {
+    parent.createEl("span", {
+      cls: "oak-page-meta-label",
+      text: label,
+    });
+    parent.createEl("span", {
+      cls: isError
+        ? "oak-page-meta-value oak-page-meta-error"
+        : "oak-page-meta-value oak-page-meta-readonly",
+      text: value,
+    });
+  }
+
+  private metaRowText(
+    parent: HTMLElement,
+    label: string,
+    key: string,
+    value: string,
+    file: TFile,
+  ): void {
+    parent.createEl("span", {
+      cls: "oak-page-meta-label",
+      text: label,
+    });
+    const input = parent.createEl("input", {
+      cls: "oak-page-meta-input",
+      type: "text",
+    });
+    input.value = value;
+    const commit = async () => {
+      const next = input.value.trim();
+      if (next === value) return;
+      try {
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          const f = fm as Record<string, unknown>;
+          if (next.length === 0) delete f[key];
+          else f[key] = next;
+        });
+      } catch (err) {
+        new Notice(`oak: failed to update ${key} — ${(err as Error).message}`);
+      }
+    };
+    input.addEventListener("blur", () => void commit());
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      }
+    });
+  }
+
+  private metaRowSelect(
+    parent: HTMLElement,
+    label: string,
+    key: string,
+    value: string,
+    options: string[],
+    file: TFile,
+  ): void {
+    parent.createEl("span", {
+      cls: "oak-page-meta-label",
+      text: label,
+    });
+    const select = parent.createEl("select", {
+      cls: "oak-page-meta-select",
+    });
+    for (const opt of options) {
+      const o = select.createEl("option", { text: opt });
+      o.value = opt;
+      if (opt === value) o.selected = true;
+    }
+    select.addEventListener("change", () => {
+      const next = select.value;
+      void this.app.fileManager
+        .processFrontMatter(file, (fm) => {
+          (fm as Record<string, unknown>)[key] = next;
+        })
+        .catch((err) =>
+          new Notice(`oak: failed to update ${key} — ${(err as Error).message}`),
+        );
+    });
   }
 
   // The cards belong inside the scroll container, alongside the body

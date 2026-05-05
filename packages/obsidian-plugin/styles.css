@@ -154,6 +154,67 @@ body.oak-mode-active .oak-page-links-empty {
   opacity: 0.5;
 }
 
+/* Per-page meta block sitting after the related cards. id, slug,
+   llm, status — the small print of the page. Rendered as a
+   compact label-value grid. */
+.oak-page-meta {
+  display: none;
+}
+body.oak-mode-active .oak-page-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.6em 1.5em;
+  align-items: center;
+  flex: 0 0 100%;
+  width: 100%;
+  order: 100;
+  margin: 1em 0 4em;
+  padding: 0 4rem;
+  box-sizing: border-box;
+  font-size: 12px;
+}
+body.oak-mode-active .oak-page-meta-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+body.oak-mode-active .oak-page-meta-value {
+  color: var(--text-normal);
+}
+body.oak-mode-active .oak-page-meta-readonly {
+  font-family: var(--font-monospace, monospace);
+  font-size: 11px;
+  opacity: 0.7;
+}
+body.oak-mode-active .oak-page-meta-error {
+  color: var(--text-error);
+}
+body.oak-mode-active .oak-page-meta-input,
+body.oak-mode-active .oak-page-meta-select {
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--text-normal);
+  font: inherit;
+  width: auto;
+  min-width: 0;
+}
+body.oak-mode-active .oak-page-meta-input:focus,
+body.oak-mode-active .oak-page-meta-select:focus {
+  outline: 1px solid var(--text-accent);
+  outline-offset: 0;
+}
+
+/* Right sidebar dock: nothing meaningful inside in oak mode (the
+   sidebar leaf is reduced to a stub). Hide the entire pane so the
+   editor takes the full width. */
+body.oak-mode-active .mod-right-split {
+  display: none !important;
+}
+
 /* Obsidian's built-in Properties view (.metadata-container) is
    replaced by oak's structured form in the sidebar (id read-only,
    visibility / llm validated by select). Hiding the default avoids
@@ -179,20 +240,28 @@ body.oak-mode-active .inline-title {
 .oak-page-title {
   display: none;
 }
-body.oak-mode-active input.oak-page-title {
-  /* Absolute so the title is taken out of `.cm-scroller`'s flex
-     flow (otherwise it shares a row with `.cm-content` and the
-     gutter, which appears as side-by-side text columns).
-     The view-header above (with nav buttons) provides the spacing
-     above the title, so the title itself sits at top: 0 of the
-     scrollable content. */
+/* The title row holds the title input on the left and the
+   visibility selector pinned to the right. Absolute so the row is
+   taken out of `.cm-scroller`'s flex flow (otherwise it shares a
+   row with `.cm-content` + the gutter and renders as side-by-side
+   text columns). */
+body.oak-mode-active .oak-page-title-row {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  padding: 1em 4rem 0.5em;
+  box-sizing: border-box;
+  background: var(--background-primary);
+}
+body.oak-mode-active input.oak-page-title {
+  flex: 1 1 auto;
   display: block;
   margin: 0;
-  padding: 1em 4rem 0.5em;
+  padding: 0;
   box-sizing: border-box;
   /* 24px — quiet, closer to body text than a heading. */
   font-size: 1.5rem;
@@ -203,6 +272,22 @@ body.oak-mode-active input.oak-page-title {
   border: 0;
   outline: 0;
   font-family: inherit;
+}
+body.oak-mode-active select.oak-page-visibility {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-family: inherit;
+}
+body.oak-mode-active select.oak-page-visibility:focus {
+  outline: 1px solid var(--text-accent);
+  outline-offset: 0;
 }
 body.oak-mode-active input.oak-page-title:focus {
   outline: 1px dashed var(--text-muted);
