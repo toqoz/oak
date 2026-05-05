@@ -75,75 +75,78 @@ body.oak-mode-active .status-bar {
   display: none !important;
 }
 
-/* Page links footer cards (Backlinks / 2-hop). Sit at the bottom
-   of the markdown leaf's `.view-content` as siblings of the
-   editor; flex-column on view-content lets the editor fill the
-   remaining height while the cards stay anchored at the bottom. */
-body.oak-mode-active
-  .workspace-leaf-content[data-type="markdown"]
-  > .view-content {
-  display: flex !important;
-  flex-direction: column;
-}
-body.oak-mode-active
-  .workspace-leaf-content[data-type="markdown"]
-  > .view-content
-  > .markdown-source-view,
-body.oak-mode-active
-  .workspace-leaf-content[data-type="markdown"]
-  > .view-content
-  > .markdown-preview-view {
-  flex: 1 1 auto;
-  min-height: 0;
+/* "Related" footer — sits *inside* the scroll container (alongside
+   `.cm-content` for source / live-preview, alongside
+   `.markdown-preview-section` for reading mode), so the cards
+   scroll with the body and read as a continuation of the page.
+   Source mode uses `flex-wrap` on `.cm-scroller` so the cards land
+   on a row below the body+gutter row. */
+body.oak-mode-active .cm-scroller {
+  flex-wrap: wrap !important;
 }
 .oak-page-links {
   display: none;
 }
 body.oak-mode-active .oak-page-links {
   display: block;
-  flex: 0 0 auto;
-  border-top: 1px solid var(--background-modifier-border);
-  padding: 1.5em 4rem 2em;
-  background: var(--background-primary);
+  flex: 0 0 100%;
+  width: 100%;
+  order: 99;
+  margin: 4em 0 2em;
+  padding: 0 4rem;
+  box-sizing: border-box;
+  background: transparent;
 }
-body.oak-mode-active .oak-page-links-grid {
+body.oak-mode-active .oak-page-links-heading {
+  margin: 0 0 1em;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+body.oak-mode-active .oak-page-links-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2em;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1em;
 }
-@media (max-width: 800px) {
-  body.oak-mode-active .oak-page-links-grid {
-    grid-template-columns: 1fr;
-  }
+body.oak-mode-active .oak-page-links-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 1em 1.2em;
+  cursor: pointer;
+  background: var(--background-primary);
+  transition: border-color 0.12s ease, transform 0.12s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
 }
-body.oak-mode-active .oak-page-links-card h4 {
-  margin: 0 0 0.6em;
-  font-size: 11px;
+body.oak-mode-active .oak-page-links-card:hover {
+  border-color: var(--text-accent);
+}
+body.oak-mode-active .oak-page-links-card:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 2px;
+}
+body.oak-mode-active .oak-page-links-card-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-normal);
+}
+body.oak-mode-active .oak-page-links-card-excerpt {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+body.oak-mode-active .oak-page-links-card-relation {
+  margin-top: auto;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  opacity: 0.6;
-  font-weight: 500;
-}
-body.oak-mode-active .oak-page-links-card ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-body.oak-mode-active .oak-page-links-card li {
-  margin: 0.4em 0;
-}
-body.oak-mode-active .oak-page-links-link {
-  color: var(--text-accent);
-  text-decoration: none;
-  font-size: 13px;
-}
-body.oak-mode-active .oak-page-links-link:hover {
-  text-decoration: underline;
-}
-body.oak-mode-active .oak-page-links-context {
-  font-size: 11px;
-  opacity: 0.65;
-  margin-top: 0.1em;
+  opacity: 0.5;
 }
 body.oak-mode-active .oak-page-links-empty {
   margin: 0;

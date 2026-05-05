@@ -28,6 +28,7 @@ import {
 } from "./commands.js";
 import {
   ensureGitRepo,
+  excerptFrom,
   slugify,
   snapshot,
   type OakPage,
@@ -400,11 +401,10 @@ export default class OakPlugin extends Plugin {
     }
   }
 
-  // For each open markdown view, render Backlinks + 2-hop as a
-  // pair of cards at the bottom of the leaf's `.view-content`.
-  // The cards live next to the editor (not inside the scroller),
-  // so they stay visible regardless of body length — they read like
-  // a footer for the page.
+  // For each open markdown view, render a "Related" footer that
+  // sits *inside* the scroll container (after the body), so the
+  // user reaches it by scrolling down — it reads as the tail end of
+  // the page rather than as separate chrome.
   private applyLinksCards(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
@@ -418,9 +418,8 @@ export default class OakPlugin extends Plugin {
     view: MarkdownView,
     oakMode: boolean,
   ): void {
-    const existing = view.contentEl.querySelector<HTMLElement>(
-      ":scope > .oak-page-links",
-    );
+    const existing =
+      view.contentEl.querySelector<HTMLElement>(".oak-page-links");
 
     if (!oakMode || !view.file) {
       existing?.remove();
@@ -445,81 +444,104 @@ export default class OakPlugin extends Plugin {
       return;
     }
 
-    const container = existing ?? document.createElement("div");
-    if (!existing) {
+    const target = this.findLinksInjectionTarget(view);
+    if (!target) {
+      existing?.remove();
+      return;
+    }
+
+    let container = existing;
+    if (!container || container.parentElement !== target) {
+      container?.remove();
+      container = document.createElement("div");
       container.classList.add("oak-page-links");
-      view.contentEl.appendChild(container);
+      target.appendChild(container);
     }
     container.empty();
 
-    const grid = container.createDiv({ cls: "oak-page-links-grid" });
-    this.renderBacklinksCard(grid, snap, page);
-    this.renderTwoHopCard(grid, snap, page);
-  }
-
-  private renderBacklinksCard(
-    parent: HTMLElement,
-    snap: VaultSnapshot,
-    page: OakPage,
-  ): void {
-    const back = describeBacklinks(snap.graph, snap.vault, page.id);
-    const card = parent.createDiv({ cls: "oak-page-links-card" });
-    card.createEl("h4", { text: `Backlinks (${back.length})` });
-    if (back.length === 0) {
-      card.createEl("p", { cls: "oak-page-links-empty", text: "(none)" });
-      return;
+    // Merge backlinks + 2-hop into a single deduplicated list of
+    // related pages, with relation labels for the card footer.
+    type RelatedItem = {
+      page: OakPage;
+      relation: string;
+    };
+    const related: RelatedItem[] = [];
+    const seen = new Set<string>();
+    for (const b of describeBacklinks(snap.graph, snap.vault, page.id)) {
+      if (seen.has(b.fromId)) continue;
+      seen.add(b.fromId);
+      const p = snap.vault.pages.get(b.fromId);
+      if (!p) continue;
+      related.push({ page: p, relation: "backlink" });
     }
-    const ul = card.createEl("ul");
-    for (const b of back) {
-      const li = ul.createEl("li");
-      const a = li.createEl("a", {
-        cls: "oak-page-links-link",
-        text: b.fromTitle,
-        href: "#",
-      });
-      a.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        this.openLinkTarget(snap, b.fromId, ev.metaKey || ev.ctrlKey);
-      });
-      if (b.context.length > 0) {
-        li.createEl("div", {
-          cls: "oak-page-links-context",
-          text: b.context,
-        });
-      }
-    }
-  }
-
-  private renderTwoHopCard(
-    parent: HTMLElement,
-    snap: VaultSnapshot,
-    page: OakPage,
-  ): void {
-    const twohop = describeTwoHop(snap.graph, snap.vault, page.id);
-    const card = parent.createDiv({ cls: "oak-page-links-card" });
-    card.createEl("h4", { text: `2-hop (${twohop.length})` });
-    if (twohop.length === 0) {
-      card.createEl("p", { cls: "oak-page-links-empty", text: "(none)" });
-      return;
-    }
-    const ul = card.createEl("ul");
-    for (const h of twohop) {
-      const li = ul.createEl("li");
-      const a = li.createEl("a", {
-        cls: "oak-page-links-link",
-        text: `${h.title} [score=${h.score}]`,
-        href: "#",
-      });
-      a.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        this.openLinkTarget(snap, h.pageId, ev.metaKey || ev.ctrlKey);
-      });
+    for (const h of describeTwoHop(snap.graph, snap.vault, page.id)) {
+      if (seen.has(h.pageId)) continue;
+      seen.add(h.pageId);
+      const p = snap.vault.pages.get(h.pageId);
+      if (!p) continue;
       const via = h.via.map((v) => v.title).join(", ");
-      li.createEl("div", {
-        cls: "oak-page-links-context",
-        text: `via ${via}`,
+      related.push({ page: p, relation: `2-hop · via ${via}` });
+    }
+
+    if (related.length === 0) {
+      // Empty state: keep the heading so the page still terminates
+      // gracefully but skip the row to avoid an empty scroller.
+      container.createEl("h2", {
+        cls: "oak-page-links-heading",
+        text: "関連項目",
+      });
+      container.createEl("p", {
+        cls: "oak-page-links-empty",
+        text: "(no backlinks or 2-hop neighbours yet)",
+      });
+      return;
+    }
+
+    container.createEl("h2", {
+      cls: "oak-page-links-heading",
+      text: "関連項目",
+    });
+    const row = container.createDiv({ cls: "oak-page-links-row" });
+    for (const item of related) {
+      this.renderRelatedCard(row, snap, item.page, item.relation);
+    }
+  }
+
+  private renderRelatedCard(
+    parent: HTMLElement,
+    snap: VaultSnapshot,
+    page: OakPage,
+    relation: string,
+  ): void {
+    const card = parent.createDiv({ cls: "oak-page-links-card" });
+    card.setAttr("role", "link");
+    card.setAttr("tabindex", "0");
+    card.createEl("div", {
+      cls: "oak-page-links-card-title",
+      text: page.title,
+    });
+    const excerpt = excerptFrom(page.body, 240);
+    if (excerpt.length > 0) {
+      card.createEl("p", {
+        cls: "oak-page-links-card-excerpt",
+        text: excerpt,
       });
     }
+    card.createEl("div", {
+      cls: "oak-page-links-card-relation",
+      text: relation,
+    });
+    const open = (newTab: boolean) =>
+      this.openLinkTarget(snap, page.id, newTab);
+    card.addEventListener("click", (ev) => {
+      open(ev.metaKey || ev.ctrlKey);
+    });
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        open(ev.metaKey || ev.ctrlKey);
+      }
+    });
   }
 
   private openLinkTarget(
@@ -533,6 +555,20 @@ export default class OakPlugin extends Plugin {
     if (file instanceof TFile) {
       void this.openInBrowseLeaf(file, { newTab });
     }
+  }
+
+  // The cards belong inside the scroll container, alongside the body
+  // content, so they scroll with it.
+  //   source / live-preview: `.cm-scroller` (sibling of `.cm-content`)
+  //   reading view:          `.markdown-preview-view`
+  private findLinksInjectionTarget(view: MarkdownView): HTMLElement | null {
+    const cmScroller =
+      view.contentEl.querySelector<HTMLElement>(".cm-scroller");
+    if (cmScroller) return cmScroller;
+    const preview = view.contentEl.querySelector<HTMLElement>(
+      ".markdown-preview-view",
+    );
+    return preview ?? null;
   }
 
   // Figure out which DOM node the inline title belongs in, depending
