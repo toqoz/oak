@@ -6,19 +6,18 @@
    tab bar, but they keep the same class names. Selecting on the
    class alone catches them wherever they live. */
 
-/* Orange accent (R 255 G 146 B 48) — scoped to oak mode so the
-   user's normal Obsidian theme stays intact outside. Both the
-   HSL triple and the resolved colour variables are set, since
-   Obsidian computes some accent surfaces from HSL and others read
-   the explicit rgb directly. */
+/* Orange accent — softer / pastel-ish so it reads as a quiet
+   highlight rather than a saturated alert. HSL(28, 100%, 72%)
+   ≈ rgb(255, 178, 110). Scoped to oak mode so the user's normal
+   Obsidian theme stays intact outside. */
 body.oak-mode-active {
   --accent-h: 28;
   --accent-s: 100%;
-  --accent-l: 59%;
-  --text-accent: rgb(255, 146, 48);
-  --text-accent-hover: rgb(255, 146, 48);
-  --interactive-accent: rgb(255, 146, 48);
-  --interactive-accent-hover: rgb(255, 146, 48);
+  --accent-l: 72%;
+  --text-accent: rgb(255, 178, 110);
+  --text-accent-hover: rgb(255, 178, 110);
+  --interactive-accent: rgb(255, 178, 110);
+  --interactive-accent-hover: rgb(255, 178, 110);
 }
 
 /* Hide the entire workspace ribbon dock in oak mode. The user
