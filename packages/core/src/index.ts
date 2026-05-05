@@ -50,6 +50,13 @@ export {
   snapshot,
   checkpoint,
   recentCommits,
+  headCommit,
+  listWorktrees,
+  createWorktree,
+  removeWorktree,
+  deleteBranch,
+  diffBranch,
+  mergeBranch,
   GitError,
 } from "./git.js";
 export type {
@@ -58,6 +65,9 @@ export type {
   CommitRecord,
   SnapshotResult,
   EnsureRepoResult,
+  WorktreeRecord,
+  ChangedFile,
+  DiffSummary,
 } from "./git.js";
 export { publish, PublishError } from "./publish.js";
 export type {

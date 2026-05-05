@@ -21,6 +21,7 @@ const MANAGED_GITIGNORE_LINES = [
   "_external/",
   ".oak/index.sqlite",
   ".oak/tmp/",
+  ".git-worktrees/",
   "public-site/",
   "node_modules/",
   ".DS_Store",
@@ -335,6 +336,154 @@ export async function checkpoint(
     throw new Error("checkpoint message is required");
   }
   return commit(vaultRoot, `checkpoint: ${message.trim()}`);
+}
+
+export type WorktreeRecord = {
+  path: string;
+  head: string;
+  branch: string | null;
+};
+
+export type ChangedFile = {
+  status: string; // porcelain X (e.g. "A", "M", "D", "R", "??")
+  path: string;
+};
+
+// Resolve `git rev-parse HEAD` for the main worktree. Used by the
+// agent workflow to pin a base commit before forking off.
+export async function headCommit(vaultRoot: string): Promise<string> {
+  const r = await runGit(vaultRoot, ["rev-parse", "HEAD"]);
+  return r.stdout.trim();
+}
+
+export async function listWorktrees(
+  vaultRoot: string,
+): Promise<WorktreeRecord[]> {
+  if (!(await isGitRepo(vaultRoot))) return [];
+  const r = await runGit(vaultRoot, ["worktree", "list", "--porcelain"]);
+  const out: WorktreeRecord[] = [];
+  let pending: Partial<WorktreeRecord> = {};
+  const flush = () => {
+    if (pending.path && pending.head) {
+      out.push({
+        path: pending.path,
+        head: pending.head,
+        branch: pending.branch ?? null,
+      });
+    }
+    pending = {};
+  };
+  for (const line of r.stdout.split("\n")) {
+    if (line.length === 0) {
+      flush();
+      continue;
+    }
+    if (line.startsWith("worktree ")) pending.path = line.slice(9);
+    else if (line.startsWith("HEAD ")) pending.head = line.slice(5);
+    else if (line.startsWith("branch ")) {
+      const ref = line.slice(7);
+      pending.branch = ref.startsWith("refs/heads/")
+        ? ref.slice("refs/heads/".length)
+        : ref;
+    } else if (line === "detached") {
+      pending.branch = null;
+    }
+  }
+  flush();
+  return out;
+}
+
+export async function createWorktree(
+  vaultRoot: string,
+  worktreePath: string,
+  branch: string,
+  options: { newBranch?: boolean; from?: string } = {},
+): Promise<void> {
+  await mkdir(dirname(worktreePath), { recursive: true });
+  const args = ["worktree", "add"];
+  if (options.newBranch) args.push("-b", branch);
+  args.push(worktreePath);
+  if (options.newBranch && options.from) {
+    args.push(options.from);
+  } else if (!options.newBranch) {
+    args.push(branch);
+  }
+  await runGit(vaultRoot, args);
+}
+
+export async function removeWorktree(
+  vaultRoot: string,
+  worktreePath: string,
+  force = false,
+): Promise<void> {
+  const args = ["worktree", "remove"];
+  if (force) args.push("--force");
+  args.push(worktreePath);
+  await runGit(vaultRoot, args, { allowFailure: true });
+  // Always prune metadata in case the worktree dir was hand-removed.
+  await runGit(vaultRoot, ["worktree", "prune"], { allowFailure: true });
+}
+
+export async function deleteBranch(
+  vaultRoot: string,
+  branch: string,
+  force = false,
+): Promise<void> {
+  await runGit(
+    vaultRoot,
+    ["branch", force ? "-D" : "-d", branch],
+    { allowFailure: true },
+  );
+}
+
+export type DiffSummary = {
+  base: string;
+  target: string;
+  diff: string;
+  changedFiles: ChangedFile[];
+};
+
+export async function diffBranch(
+  vaultRoot: string,
+  target: string,
+  base = "HEAD",
+): Promise<DiffSummary> {
+  const baseRev = (await runGit(vaultRoot, ["rev-parse", base])).stdout.trim();
+  const targetRev = (
+    await runGit(vaultRoot, ["rev-parse", target])
+  ).stdout.trim();
+  const diff = (
+    await runGit(vaultRoot, ["diff", `${baseRev}..${targetRev}`])
+  ).stdout;
+  const namesR = await runGit(
+    vaultRoot,
+    ["diff", "--name-status", `${baseRev}..${targetRev}`],
+  );
+  const changedFiles: ChangedFile[] = [];
+  for (const line of namesR.stdout.split("\n")) {
+    if (line.length === 0) continue;
+    const tab = line.indexOf("\t");
+    if (tab === -1) continue;
+    const status = line.slice(0, tab).trim();
+    const path = line.slice(tab + 1).trim();
+    changedFiles.push({ status, path });
+  }
+  return { base: baseRev, target: targetRev, diff, changedFiles };
+}
+
+export async function mergeBranch(
+  vaultRoot: string,
+  branch: string,
+  options: { message?: string; ff?: "no" | "only" | "yes" } = {},
+): Promise<{ commit: string }> {
+  const args = ["merge"];
+  if (options.ff === "only") args.push("--ff-only");
+  else if (options.ff === "no") args.push("--no-ff");
+  // Default: let git decide
+  if (options.message) args.push("-m", options.message);
+  args.push(branch);
+  await runGit(vaultRoot, args);
+  return { commit: await headCommit(vaultRoot) };
 }
 
 export async function recentCommits(
