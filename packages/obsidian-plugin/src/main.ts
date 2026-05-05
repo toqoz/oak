@@ -278,11 +278,21 @@ export default class OakPlugin extends Plugin {
   }
 
   private syncOakModeClass(): void {
-    const isOn =
-      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK).length > 0 ||
+    const sidebarPresent =
+      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK).length > 0;
+    const homePresent =
       this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME).length > 0;
+    const isOn = sidebarPresent || homePresent;
     if (isOn) document.body.addClass("oak-mode-active");
     else document.body.removeClass("oak-mode-active");
+
+    // Re-create the home leaf if the user closed it while still in
+    // oak mode (sidebar still open). Pinning prevents the leaf from
+    // being replaced by file open events; this catches the manual
+    // close case.
+    if (isOn && !homePresent) {
+      void this.activateHome();
+    }
   }
 
   // For each open markdown view, replace the *displayed* filename
@@ -451,12 +461,18 @@ export default class OakPlugin extends Plugin {
   private async activateHome(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
     if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]!);
+      const leaf = existing[0]!;
+      this.app.workspace.revealLeaf(leaf);
+      // Re-affirm the pin in case the user toggled it off.
+      leaf.setPinned(true);
       return;
     }
     // Open in the main editor area, not the sidebar.
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.setViewState({ type: VIEW_TYPE_OAK_HOME, active: true });
     this.app.workspace.revealLeaf(leaf);
+    // Pin the home so opening a file from the sidebar / search / etc.
+    // can't accidentally replace it.
+    leaf.setPinned(true);
   }
 }
