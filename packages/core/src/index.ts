@@ -19,3 +19,17 @@ export {
   INDEX_REL_PATH,
 } from "./index-store.js";
 export type { IndexStats, ReadIndexMeta } from "./index-store.js";
+export {
+  loadMountConfig,
+  saveMountConfig,
+  addMount,
+  describeMount,
+  listMountStatus,
+  mountDoctor,
+} from "./mount.js";
+export type {
+  MountConfig,
+  MountConfigEntry,
+  MountStatus,
+  AddMountOptions,
+} from "./mount.js";
