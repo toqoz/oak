@@ -80,9 +80,22 @@ body.oak-mode-active .status-bar {
    `.markdown-preview-section` for reading mode), so the cards
    scroll with the body and read as a continuation of the page.
    Source mode uses `flex-wrap` on `.cm-scroller` so the cards land
-   on a row below the body+gutter row. */
+   on a row below the body+gutter row. `align-content: flex-start`
+   packs the rows toward the top — without it the rows stretch
+   evenly and a short body still pushes the cards far down. */
 body.oak-mode-active .cm-scroller {
   flex-wrap: wrap !important;
+  align-content: flex-start !important;
+}
+/* CodeMirror reserves min-height on `.cm-contentContainer` /
+   `.cm-content` so the user can click below the last line to
+   place the cursor there. In oak mode that reservation becomes
+   dead space between body and the Related cards — release it so
+   the content shrinks to its actual height and the cards sit
+   right below. */
+body.oak-mode-active .cm-contentContainer,
+body.oak-mode-active .cm-content {
+  min-height: 0 !important;
 }
 .oak-page-links {
   display: none;
