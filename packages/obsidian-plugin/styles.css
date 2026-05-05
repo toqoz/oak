@@ -87,14 +87,13 @@ body.oak-mode-active .cm-scroller {
   flex-wrap: wrap !important;
   align-content: flex-start !important;
 }
-/* CodeMirror reserves min-height on `.cm-contentContainer` /
-   `.cm-content` so the user can click below the last line to
-   place the cursor there. In oak mode that reservation becomes
-   dead space between body and the Related cards — release it so
-   the content shrinks to its actual height and the cards sit
-   right below. */
-body.oak-mode-active .cm-contentContainer,
-body.oak-mode-active .cm-content {
+/* CodeMirror's `.cm-sizer` is the wrapper that reserves the
+   "click below the last line to place a cursor" comfort space,
+   propagating a tall min-height down to its children. In oak
+   mode that reservation becomes dead space between the body and
+   the Related cards. Release it so the content shrinks to its
+   actual height and the cards sit right below. */
+body.oak-mode-active .cm-sizer {
   min-height: 0 !important;
 }
 .oak-page-links {
