@@ -69,6 +69,25 @@ export type {
   ChangedFile,
   DiffSummary,
 } from "./git.js";
+export {
+  startAgentTask,
+  reviewAgentTask,
+  acceptAgentTask,
+  rejectAgentTask,
+  listAgentTasks,
+  agentTaskRecord,
+  agentContext,
+  AgentError,
+} from "./agent.js";
+export type {
+  StartAgentOptions,
+  StartAgentResult,
+  AgentTaskRecord,
+  ReviewAgentResult,
+  AcceptAgentResult,
+  AgentContextEntry,
+  AgentContextOptions,
+} from "./agent.js";
 export { publish, PublishError } from "./publish.js";
 export type {
   PublishOptions,
