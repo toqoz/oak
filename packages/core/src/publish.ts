@@ -14,6 +14,11 @@ import type { Graph, Issue, OakPage, Vault } from "./types.js";
 import { partitionIssues } from "./validate.js";
 import { renderPageDocument } from "./render.js";
 import { extractAssetRefs } from "./assets.js";
+import {
+  homeViewModel,
+  type HomeEntry,
+  type HomeViewModel,
+} from "./home.js";
 
 const MANIFEST_REL = ".oak/publish-manifest.json";
 const MANIFEST_SCHEMA = 1;
@@ -425,6 +430,14 @@ export async function publish(
     "utf8",
   );
 
+  // Generate index.html — the static-site home page. Mirrors what the
+  // Obsidian home view shows so the two stay structurally consistent.
+  const home = await homeViewModel(vault, graph, {
+    visibilityFilter: ["public", "unlisted"],
+  });
+  const homeHtml = renderHomeDocument(home, baseUrl, pageUrlById);
+  await writeFile(resolve(outputDir, "index.html"), homeHtml, "utf8");
+
   // Remove stale outputs.
   for (const slugPath of new Set(removedPages.map((p) => p.split("/")[0]!))) {
     await removePageDir(outputDir, slugPath);
@@ -454,6 +467,91 @@ export async function publish(
     removedPages,
     removedAssets,
   };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderHomeEntryLi(
+  entry: HomeEntry,
+  pageUrlById: Map<string, string>,
+): string {
+  const url = pageUrlById.get(entry.id) ?? "";
+  const meta: string[] = [];
+  if (entry.updatedAt) {
+    meta.push(`updated ${entry.updatedAt.slice(0, 10)}`);
+  }
+  if (entry.inboundCount > 0) meta.push(`${entry.inboundCount} backlinks`);
+  const metaLine =
+    meta.length > 0 ? `<div class="oak-meta">${escapeHtml(meta.join(" · "))}</div>` : "";
+  const excerpt =
+    entry.excerpt.length > 0
+      ? `<p class="oak-excerpt">${escapeHtml(entry.excerpt)}</p>`
+      : "";
+  return `<li>
+  <a href="${escapeHtml(url)}">${escapeHtml(entry.title)}</a>
+  ${metaLine}
+  ${excerpt}
+</li>`;
+}
+
+function renderHomeDocument(
+  home: HomeViewModel,
+  baseUrl: string,
+  pageUrlById: Map<string, string>,
+): string {
+  const recentList =
+    home.recent.length > 0
+      ? `<section>
+  <h2>Recent updates</h2>
+  <ul class="oak-list">
+${home.recent.map((e) => renderHomeEntryLi(e, pageUrlById)).join("\n")}
+  </ul>
+</section>`
+      : "";
+  const allList = `<section>
+  <h2>All pages (${home.pages.length})</h2>
+  <ul class="oak-list">
+${home.pages.map((e) => renderHomeEntryLi(e, pageUrlById)).join("\n")}
+  </ul>
+</section>`;
+  const stats = home.stats;
+  const statsLine = `${stats.public} public · ${stats.unlisted} unlisted`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Index</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; line-height: 1.5; color: #222; }
+  h1 { margin-bottom: 0.2em; }
+  .oak-stats { color: #666; font-size: 0.9em; margin-bottom: 1.5em; }
+  .oak-list { list-style: none; padding: 0; }
+  .oak-list li { margin: 0.8em 0; }
+  .oak-list a { font-weight: 500; text-decoration: none; color: #1a4f8a; }
+  .oak-list a:hover { text-decoration: underline; }
+  .oak-meta { font-size: 0.8em; color: #888; margin-top: 0.1em; }
+  .oak-excerpt { margin: 0.2em 0 0; color: #444; font-size: 0.95em; }
+  footer { margin-top: 3em; font-size: 0.8em; color: #999; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<h1><a href="${escapeHtml(baseUrl)}">Index</a></h1>
+<p class="oak-stats">${escapeHtml(statsLine)}</p>
+${recentList}
+${allList}
+<footer>generated ${escapeHtml(home.generatedAt)} · <a href="graph.json">graph.json</a> · <a href="search-index.json">search-index.json</a></footer>
+</body>
+</html>
+`;
 }
 
 function stripWikiSyntax(body: string): string {

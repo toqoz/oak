@@ -7,6 +7,13 @@ export type {
   CreatePageOptions,
   CreatePageResult,
 } from "./create.js";
+export { homeViewModel, excerptFrom } from "./home.js";
+export type {
+  HomeViewModel,
+  HomeViewOptions,
+  HomeEntry,
+  HomeStats,
+} from "./home.js";
 export {
   buildGraph,
   resolveLinks,
