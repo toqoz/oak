@@ -92,7 +92,7 @@ body.oak-mode-active .oak-page-links {
   flex: 0 0 100%;
   width: 100%;
   order: 99;
-  margin: 4em 0 2em;
+  margin: 2em 0 3em;
   padding: 0 4rem;
   box-sizing: border-box;
   background: transparent;
@@ -271,10 +271,16 @@ body.oak-mode-active .cm-content {
      (title is now ~24px so the spacer no longer needs to clear a
      2.2em heading). */
   padding-top: 2em !important;
+  /* CodeMirror / Obsidian normally adds a tall bottom padding so
+     the last line can sit near the middle of the viewport. With
+     the "Related" cards living right below, that comfort space
+     becomes a yawning gap — trim it. */
+  padding-bottom: 1em !important;
 }
 body.oak-mode-active .markdown-preview-view {
   padding-inline: 4rem !important;
   padding-top: 2em !important;
+  padding-bottom: 1em !important;
 }
 /* The scrollers themselves stay edge-to-edge so the scrollbar
    tracks the full pane height. */
