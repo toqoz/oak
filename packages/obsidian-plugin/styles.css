@@ -115,17 +115,26 @@ body.oak-mode-active .oak-tab-title-override::before {
   align-items: center;
 }
 
-/* Expand content to the full pane width but keep generous breathing
-   room on the sides. `rem` is used (not `em`) so the gutter is the
-   same pixel value everywhere it's read — `em` would otherwise
-   evaluate against each element's own font-size and the title /
-   body would drift apart. */
+/* Pane content gets generous side margins.
+   `rem` is used (not `em`) so the gutter is the same pixel value
+   everywhere it's read — `em` would otherwise evaluate against each
+   element's own font-size and the title / body would drift apart. */
 body.oak-mode-active .oak-home {
   max-width: none;
   padding: 2em 4em;
 }
 body.oak-mode-active {
   --file-line-width: calc(100% - 8rem);
+}
+/* Force the body content to honour `--file-line-width` whether or
+   not the user has Obsidian's "Readable line length" setting on.
+   Without this, the body would stretch to the pane edge while the
+   inline title (which always reads --file-line-width) shrinks —
+   they'd never line up. */
+body.oak-mode-active .markdown-source-view .cm-contentContainer,
+body.oak-mode-active .markdown-preview-view .markdown-preview-section {
+  max-width: var(--file-line-width) !important;
+  margin-inline: auto !important;
 }
 
 /* oak sidebar */
