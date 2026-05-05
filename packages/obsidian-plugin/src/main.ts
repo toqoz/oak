@@ -6,7 +6,7 @@
 //   2. onunload: dispose of state and timers. Obsidian unregisters
 //      events automatically via `registerEvent`.
 
-import { MarkdownView, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import { MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
 
 import {
   DEFAULT_SETTINGS,
@@ -26,9 +26,10 @@ import {
   runValidate,
   setVisibility,
 } from "./commands.js";
-import { ensureGitRepo, snapshot } from "@oak/core";
+import { ensureGitRepo, slugify, snapshot } from "@oak/core";
 import { vaultRoot } from "./paths.js";
 import type { OakOpenFile } from "./open-file.js";
+import { commitTitleChange } from "./title-commit.js";
 
 export default class OakPlugin extends Plugin {
   settings: OakPluginSettings = DEFAULT_SETTINGS;
@@ -319,8 +320,8 @@ export default class OakPlugin extends Plugin {
         ? fmTitleRaw.trim()
         : null;
 
-    const existing = view.contentEl.querySelector<HTMLElement>(
-      ":scope > .oak-page-title",
+    const existingInput = view.contentEl.querySelector<HTMLInputElement>(
+      ":scope > input.oak-page-title",
     );
     // `titleEl` is a runtime property on Obsidian's View base class
     // (the tab header text element). Not in the public types but
@@ -329,25 +330,85 @@ export default class OakPlugin extends Plugin {
       .titleEl;
 
     if (oakMode && fmTitle) {
-      let titleEl = existing;
-      if (!titleEl) {
-        titleEl = document.createElement("div");
-        titleEl.classList.add("oak-page-title");
-        view.contentEl.prepend(titleEl);
+      let input = existingInput;
+      if (!input) {
+        input = document.createElement("input");
+        input.classList.add("oak-page-title");
+        input.type = "text";
+        input.spellcheck = false;
+        view.contentEl.prepend(input);
+        this.attachInlineTitleEditing(view, input);
       }
-      if (titleEl.textContent !== fmTitle) titleEl.textContent = fmTitle;
+      // Don't clobber what the user is typing. We only push the
+      // canonical value when the input isn't focused.
+      if (input.value !== fmTitle && document.activeElement !== input) {
+        input.value = fmTitle;
+      }
 
       if (tabTitleEl) {
         tabTitleEl.dataset["oakTitle"] = fmTitle;
         tabTitleEl.classList.add("oak-tab-title-override");
       }
     } else {
-      if (existing) existing.remove();
+      if (existingInput) existingInput.remove();
       if (tabTitleEl) {
         delete tabTitleEl.dataset["oakTitle"];
         tabTitleEl.classList.remove("oak-tab-title-override");
       }
     }
+  }
+
+  private attachInlineTitleEditing(
+    view: MarkdownView,
+    input: HTMLInputElement,
+  ): void {
+    const commit = async () => {
+      const file = view.file;
+      if (!file) return;
+      const newTitle = input.value.trim();
+      const cache = this.app.metadataCache.getFileCache(file);
+      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+      const oldTitleRaw = fm?.["title"];
+      const oldTitle =
+        typeof oldTitleRaw === "string" ? oldTitleRaw.trim() : "";
+      if (newTitle.length === 0 || newTitle === oldTitle) {
+        input.value = oldTitle;
+        return;
+      }
+      const oldSlugRaw = fm?.["slug"];
+      const oldSlug =
+        typeof oldSlugRaw === "string" ? oldSlugRaw.trim() : slugify(oldTitle);
+      const result = await commitTitleChange(
+        this.app,
+        file,
+        { title: oldTitle, slug: oldSlug, basename: file.basename },
+        newTitle,
+      );
+      if (result.status === "frontmatter-failed") {
+        new Notice(`oak: failed to update title — ${result.error}`);
+      } else if (result.status === "rename-skipped") {
+        new Notice(`oak: rename skipped — ${result.reason}`);
+      } else if (result.status === "rename-failed") {
+        new Notice(`oak: rename failed — ${result.error}`);
+      }
+    };
+    input.addEventListener("blur", () => void commit());
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        // Revert to the canonical value and bail.
+        const cache = view.file
+          ? this.app.metadataCache.getFileCache(view.file)
+          : null;
+        const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+        const t = fm?.["title"];
+        if (typeof t === "string") input.value = t;
+        input.blur();
+      }
+    });
   }
 
   private async activateSidebar(): Promise<void> {

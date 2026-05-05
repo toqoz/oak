@@ -67,14 +67,29 @@ body.oak-mode-active .inline-title {
 .oak-page-title {
   display: none;
 }
-body.oak-mode-active .oak-page-title {
+body.oak-mode-active input.oak-page-title {
   display: block;
+  width: 100%;
+  box-sizing: border-box;
   font-size: 2.2em;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text-normal);
-  padding: 1.2em 4em 0.5em;
+  /* Horizontal in rem so the gutter matches the body's
+     `--file-line-width: calc(100% - 8em)` (which evaluates against
+     the editor's root-ish font size, ~16px). Using `em` here would
+     scale the gutter against this element's 2.2em font-size and
+     push the title noticeably further right than the body. */
+  padding: 1.2em 4rem 0.5em;
   margin: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-family: inherit;
+}
+body.oak-mode-active input.oak-page-title:focus {
+  outline: 1px dashed var(--text-muted);
+  outline-offset: 2px;
 }
 
 /* Tab header title:

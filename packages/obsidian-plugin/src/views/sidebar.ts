@@ -27,6 +27,7 @@ import {
   slugify,
   type OakPage,
 } from "@oak/core";
+import { commitTitleChange } from "../title-commit.js";
 import type { VaultSnapshot, VaultState } from "../state.js";
 import type { OakOpenFile } from "../open-file.js";
 
@@ -231,37 +232,18 @@ export class OakSidebarView extends ItemView {
     const oldBasename = page.basename;
     const oldRelPath = page.relPath;
 
-    // "Auto-derived" detection: compare the current value to what
-    // the algorithm would have produced from the old title. A match
-    // means we own that derivation and should re-run it.
+    // Optimistically mirror what the shared helper will do, so any
+    // re-render between the file ops and the next state.refresh
+    // shows the new value, not the pre-commit one. The authoritative
+    // snapshot overwrites these fields when parseVault runs again.
     const slugWasAuto = slugify(oldTitle) === oldSlug;
     const newSlug = slugify(newTitle);
-
     const basenameWasAuto = pathSafeFilename(oldTitle) === oldBasename;
     const newBasename = pathSafeFilename(newTitle);
 
-    // Optimistic local update so any re-render between the file ops
-    // (e.g. an active-leaf-change fired by Obsidian during rename)
-    // and the next state.refresh shows the new value, not the
-    // pre-commit one. The authoritative snapshot overwrites these
-    // fields when parseVault runs again.
     page.title = newTitle;
     if (slugWasAuto && newSlug.length > 0) page.slug = newSlug;
-
-    try {
-      await this.app2.fileManager.processFrontMatter(file, (fm) => {
-        const f = fm as Record<string, unknown>;
-        f["title"] = newTitle;
-        if (slugWasAuto && newSlug.length > 0) f["slug"] = newSlug;
-      });
-    } catch (err) {
-      // Roll back the optimistic update on failure.
-      page.title = oldTitle;
-      page.slug = oldSlug;
-      new Notice(`oak: failed to update frontmatter — ${(err as Error).message}`);
-      return;
-    }
-
+    let optimisticRenameApplied = false;
     if (
       basenameWasAuto &&
       newBasename.length > 0 &&
@@ -271,27 +253,45 @@ export class OakSidebarView extends ItemView {
         file.parent && file.parent.path && file.parent.path !== "/"
           ? `${file.parent.path}/`
           : "";
-      const newRelPath = `${dir}${newBasename}.md`;
-      const existing = this.app2.vault.getAbstractFileByPath(newRelPath);
-      if (existing && existing !== file) {
-        new Notice(
-          `oak: rename skipped — \`${newRelPath}\` already exists`,
-        );
-        return;
-      }
-      // Optimistic local mirror of the rename, applied right before
-      // we hand control to Obsidian, so a re-render triggered by
-      // the rename event (which can land before state.refresh) finds
-      // the page via its new relPath.
       page.basename = newBasename;
-      page.relPath = newRelPath;
-      try {
-        await this.app2.fileManager.renameFile(file, newRelPath);
-      } catch (err) {
+      page.relPath = `${dir}${newBasename}.md`;
+      optimisticRenameApplied = true;
+    }
+
+    const result = await commitTitleChange(
+      this.app2,
+      file,
+      { title: oldTitle, slug: oldSlug, basename: oldBasename },
+      newTitle,
+    );
+
+    if (result.status === "frontmatter-failed") {
+      page.title = oldTitle;
+      page.slug = oldSlug;
+      if (optimisticRenameApplied) {
         page.basename = oldBasename;
         page.relPath = oldRelPath;
-        new Notice(`oak: rename failed — ${(err as Error).message}`);
       }
+      new Notice(`oak: failed to update frontmatter — ${result.error}`);
+      return;
+    }
+    if (result.status === "rename-skipped") {
+      // Frontmatter was applied but the rename couldn't proceed —
+      // roll back the optimistic basename/relPath so the sidebar
+      // doesn't show a path that won't exist on disk.
+      if (optimisticRenameApplied) {
+        page.basename = oldBasename;
+        page.relPath = oldRelPath;
+      }
+      new Notice(`oak: rename skipped — ${result.reason}`);
+      return;
+    }
+    if (result.status === "rename-failed") {
+      if (optimisticRenameApplied) {
+        page.basename = oldBasename;
+        page.relPath = oldRelPath;
+      }
+      new Notice(`oak: rename failed — ${result.error}`);
     }
   }
 
