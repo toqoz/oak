@@ -84,16 +84,16 @@ body.oak-mode-active input.oak-page-title {
   /* Absolute so the title is taken out of `.cm-scroller`'s flex
      flow (otherwise it shares a row with `.cm-content` and the
      gutter, which appears as side-by-side text columns).
-     `top: 2em` leaves clear breathing room between the tab strip
-     and the title; the title still scrolls with the body because
-     `top` is relative to the scrollable content. */
+     The view-header above (with nav buttons) provides the spacing
+     above the title, so the title itself sits at top: 0 of the
+     scrollable content. */
   position: absolute;
-  top: 2em;
+  top: 0;
   left: 0;
   right: 0;
   display: block;
   margin: 0;
-  padding: 0 4rem;
+  padding: 1em 4rem 0.5em;
   box-sizing: border-box;
   font-size: 2.2em;
   font-weight: 700;
@@ -154,13 +154,12 @@ body.oak-mode-active {
 }
 body.oak-mode-active .cm-content {
   padding-inline: 4rem !important;
-  /* Reserve room for the absolutely-positioned title above
-     (top offset 2em + title height ~2.6em + breathing room). */
-  padding-top: 6em !important;
+  /* Reserve room for the absolutely-positioned title above. */
+  padding-top: 4em !important;
 }
 body.oak-mode-active .markdown-preview-view {
   padding-inline: 4rem !important;
-  padding-top: 6em !important;
+  padding-top: 4em !important;
 }
 /* The scrollers themselves stay edge-to-edge so the scrollbar
    tracks the full pane height. */
