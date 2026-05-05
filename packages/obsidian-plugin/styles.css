@@ -35,6 +35,17 @@ body.oak-mode-active .mod-right-split .workspace-tab-header-container {
   display: none !important;
 }
 
+/* Expand content to the full pane width.
+     - the home view drops its 760px cap
+     - markdown editor / preview override Obsidian's "readable line
+       length" by maxing out the --file-line-width variable */
+body.oak-mode-active .oak-home {
+  max-width: none;
+}
+body.oak-mode-active {
+  --file-line-width: 100%;
+}
+
 /* oak sidebar */
 
 .oak-sidebar {
