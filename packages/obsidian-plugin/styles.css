@@ -132,6 +132,15 @@ body.oak-mode-active
   > .view-content {
   padding-inline: 4rem !important;
 }
+/* CodeMirror's scroller and Obsidian's preview container both add
+   their own horizontal padding by default. Strip it in oak mode so
+   the body's left/right edges sit flush with the view-content
+   gutter (and therefore with the title above). */
+body.oak-mode-active .cm-scroller,
+body.oak-mode-active .markdown-preview-view,
+body.oak-mode-active .markdown-preview-section {
+  padding-inline: 0 !important;
+}
 
 /* oak sidebar */
 
