@@ -53,11 +53,12 @@ export default class OakPlugin extends Plugin {
     this.registerView(VIEW_TYPE_OAK_HOME, (leaf: WorkspaceLeaf) => {
       return new OakHomeView(leaf, this.state, this.app);
     });
-    this.addRibbonIcon("trees", "Open oak sidebar", () => {
-      void this.activateSidebar();
-    });
-    this.addRibbonIcon("home", "Open oak home", () => {
-      void this.activateHome();
+    // Single "oak mode" entry: brings up both surfaces — the home view
+    // in the main pane and the sidebar view on the right — in one
+    // gesture. Idempotent: clicking again on an open setup just
+    // refocuses both leaves.
+    this.addRibbonIcon("trees", "Open oak", () => {
+      void this.activateOakMode();
     });
 
     this.registerEvent(
@@ -81,9 +82,9 @@ export default class OakPlugin extends Plugin {
     );
 
     this.addCommand({
-      id: "oak-open-home",
-      name: "Open oak home",
-      callback: () => void this.activateHome(),
+      id: "oak-open",
+      name: "Open oak (home + sidebar)",
+      callback: () => void this.activateOakMode(),
     });
     this.addCommand({
       id: "oak-new-page",
@@ -99,16 +100,6 @@ export default class OakPlugin extends Plugin {
       id: "oak-new-from-redlink",
       name: "New page from unresolved link",
       callback: () => void createPageFromRedlink(this),
-    });
-    this.addCommand({
-      id: "oak-show-backlinks",
-      name: "Show backlinks (open Oak sidebar)",
-      callback: () => void this.activateSidebar(),
-    });
-    this.addCommand({
-      id: "oak-show-twohop",
-      name: "Show 2-hop neighbours (open Oak sidebar)",
-      callback: () => void this.activateSidebar(),
     });
     this.addCommand({
       id: "oak-validate",
@@ -182,7 +173,16 @@ export default class OakPlugin extends Plugin {
     }
   }
 
-  async activateSidebar(): Promise<void> {
+  // "oak mode": activate both surfaces in one gesture. Idempotent —
+  // already-open leaves are simply revealed. We open the sidebar
+  // first so the user's final focus lands on the main-pane home,
+  // which is where they'll do most of the browsing.
+  async activateOakMode(): Promise<void> {
+    await this.activateSidebar();
+    await this.activateHome();
+  }
+
+  private async activateSidebar(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK);
     if (existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]!);
@@ -194,7 +194,7 @@ export default class OakPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  async activateHome(): Promise<void> {
+  private async activateHome(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
     if (existing.length > 0) {
       this.app.workspace.revealLeaf(existing[0]!);
