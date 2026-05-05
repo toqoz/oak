@@ -28,7 +28,7 @@ import {
   setVisibility,
 } from "./commands.js";
 import {
-  createPage,
+  composePage,
   ensureGitRepo,
   excerptFrom,
   slugify,
@@ -411,25 +411,39 @@ export default class OakPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  // Materialise a ghost target into a real page. Generates id +
-  // default frontmatter via @oak/core's createPage, then opens the
-  // freshly-created file in the same leaf the ghost lived in — the
-  // explicit transition from reading to writing.
+  // Materialise a ghost target into a real page. Uses @oak/core's
+  // `composePage` for the file content (id, default frontmatter,
+  // sanitised filename) but writes via Obsidian's `vault.create`
+  // so the resulting `TFile` is available immediately — the
+  // alternative (fs.writeFile via @oak/core's `createPage`) makes
+  // the file visible to Obsidian only on the next adapter scan,
+  // which is too late to reopen in the ghost's leaf.
   private async materialiseGhost(
     target: string,
     hostLeaf: WorkspaceLeaf,
   ): Promise<void> {
-    const root = vaultRoot(this.app);
     try {
-      const result = await createPage(root, { title: target });
-      const file = this.app.vault.getAbstractFileByPath(result.vaultRelPath);
+      const composed = composePage({ title: target });
+      const existing = this.app.vault.getAbstractFileByPath(
+        composed.vaultRelPath,
+      );
+      if (existing) {
+        new Notice(
+          `oak: \`${composed.vaultRelPath}\` already exists — opening it instead`,
+        );
+        if (existing instanceof TFile) {
+          await hostLeaf.openFile(existing);
+          this.browseLeaf = hostLeaf;
+        }
+        return;
+      }
+      const file = await this.app.vault.create(
+        composed.vaultRelPath,
+        composed.text,
+      );
       if (file instanceof TFile) {
         await hostLeaf.openFile(file);
         this.browseLeaf = hostLeaf;
-      } else {
-        new Notice(
-          `oak: created ${result.vaultRelPath} but couldn't reopen it`,
-        );
       }
       this.state.scheduleRefresh();
     } catch (err) {
