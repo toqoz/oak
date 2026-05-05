@@ -1,16 +1,39 @@
 #!/usr/bin/env node
 // Entry point for the `oak` CLI.
 
+// Silence the one-off "SQLite is an experimental feature" warning that
+// node:sqlite emits on first use. The CLI relies on it intentionally.
+{
+  const origEmit = process.emit.bind(process);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (process as any).emit = function (event: string, ...args: unknown[]) {
+    if (event === "warning") {
+      const w = args[0] as { name?: string; message?: string } | undefined;
+      if (
+        w?.name === "ExperimentalWarning" &&
+        typeof w.message === "string" &&
+        /SQLite/i.test(w.message)
+      ) {
+        return false;
+      }
+    }
+    return origEmit(event as never, ...(args as never[]));
+  };
+}
+
 import { resolve } from "node:path";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import {
+  addMount,
   buildGraph,
   getBacklinks,
-  getOutboundLinks,
   getTwoHopLinks,
+  listMountStatus,
+  mountDoctor,
   parseVault,
   partitionIssues,
   validateVault,
+  writeIndex,
 } from "@oak/core";
 
 import { getBool, getString, parseArgs } from "./args.js";
@@ -23,14 +46,16 @@ Usage:
 
 Commands:
   init                       Initialize a vault in the current directory
-  index                      Parse the vault and print a summary
+  index                      Parse the vault and write .oak/index.sqlite
   validate                   Run vault validation; exits non-zero on errors
   status                     Show pending vault changes (stub in v1)
   backlinks <page>           List incoming links for a page
   twohop <page>              List two-hop neighbours for a page
   publish                    Render publishable pages (Phase 3, not yet)
   checkpoint <msg>           Tag the vault state via git (Phase 4, not yet)
-  mount <subcommand>         Manage external mounts (Phase 2, not yet)
+  mount add <id> <path>      Mount an external directory at _external/<id>
+  mount list                 Show configured mounts and their health
+  mount doctor               Report broken / overlapping mounts
 
 Common options:
   --vault <path>             Vault root (default: current directory)
@@ -72,11 +97,12 @@ async function main(argv: string[]): Promise<number> {
       return await cmdBacklinks(vaultPath, parsed.positional, json);
     case "twohop":
       return await cmdTwoHop(vaultPath, parsed.positional, json);
+    case "mount":
+      return await cmdMount(vaultPath, parsed.positional, parsed.flags, json);
     case "publish":
     case "checkpoint":
-    case "mount":
       process.stderr.write(
-        `\`oak ${parsed.command}\` is not implemented in Phase 1.\n`,
+        `\`oak ${parsed.command}\` is not implemented yet.\n`,
       );
       return 2;
     default:
@@ -126,24 +152,22 @@ async function cmdInit(vaultPath: string): Promise<number> {
 
 async function cmdIndex(vaultPath: string, json: boolean): Promise<number> {
   const vault = await parseVault(vaultPath);
+  const graph = buildGraph(vault);
+  const issues = validateVault(vault, graph);
+  const stats = await writeIndex(vault, graph, issues);
+
   if (json) {
-    const summary = {
-      root: vault.rootPath,
-      pages: vault.pages.size,
-      externals: vault.externals.size,
-      mounts: vault.mounts.size,
-      issues: vault.issues.length,
-    };
-    process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
+    process.stdout.write(JSON.stringify(stats, null, 2) + "\n");
     return 0;
   }
-  process.stdout.write(`Vault: ${vault.rootPath}\n`);
-  process.stdout.write(`  pages:     ${vault.pages.size}\n`);
-  process.stdout.write(`  externals: ${vault.externals.size}\n`);
-  process.stdout.write(`  mounts:    ${vault.mounts.size}\n`);
-  if (vault.issues.length > 0) {
-    process.stdout.write(`  issues:    ${vault.issues.length}\n`);
-  }
+  process.stdout.write(`Indexed ${vault.rootPath}\n`);
+  process.stdout.write(`  -> ${stats.dbPath}\n`);
+  process.stdout.write(`  pages:     ${stats.pages}\n`);
+  process.stdout.write(`  aliases:   ${stats.aliases}\n`);
+  process.stdout.write(`  links:     ${stats.links}\n`);
+  process.stdout.write(`  externals: ${stats.externals}\n`);
+  process.stdout.write(`  mounts:    ${stats.mounts}\n`);
+  process.stdout.write(`  issues:    ${stats.issues}\n`);
   return 0;
 }
 
@@ -292,6 +316,120 @@ async function cmdTwoHop(
     process.stdout.write(`- ${title}  [score=${h.score}]  via: ${via}\n`);
   }
   return 0;
+}
+
+async function cmdMount(
+  vaultPath: string,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const sub = positional[0];
+  if (!sub) {
+    process.stderr.write(
+      "Missing mount subcommand. Try `oak mount add|list|doctor`.\n",
+    );
+    return 1;
+  }
+  switch (sub) {
+    case "add":
+      return await cmdMountAdd(vaultPath, positional.slice(1), flags, json);
+    case "list":
+      return await cmdMountList(vaultPath, json);
+    case "doctor":
+      return await cmdMountDoctor(vaultPath, json);
+    default:
+      process.stderr.write(`Unknown mount subcommand: ${sub}\n`);
+      return 1;
+  }
+}
+
+async function cmdMountAdd(
+  vaultPath: string,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const id = positional[0];
+  const target = positional[1];
+  if (!id || !target) {
+    process.stderr.write("Usage: oak mount add <id> <path>\n");
+    return 1;
+  }
+  const mode = getString(flags, "mode");
+  const gitPolicy = getString(flags, "git-policy");
+  const llmPolicy = getString(flags, "llm-policy");
+
+  try {
+    const entry = await addMount(vaultPath, {
+      id,
+      target,
+      ...(mode === "readwrite" || mode === "readonly" ? { mode } : {}),
+      ...(gitPolicy === "ignore" || gitPolicy === "status-only"
+        ? { gitPolicy }
+        : {}),
+      ...(llmPolicy === "allow" ||
+      llmPolicy === "deny" ||
+      llmPolicy === "summary-only"
+        ? { llmPolicy }
+        : {}),
+    });
+    if (json) {
+      process.stdout.write(JSON.stringify(entry, null, 2) + "\n");
+    } else {
+      process.stdout.write(
+        `Mounted \`${entry.id}\`\n  link:   ${entry.linkPath}\n  target: ${entry.targetPath}\n  mode:   ${entry.mode}\n`,
+      );
+    }
+    return 0;
+  } catch (err) {
+    process.stderr.write(`oak mount add: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
+async function cmdMountList(
+  vaultPath: string,
+  json: boolean,
+): Promise<number> {
+  const statuses = await listMountStatus(vaultPath);
+  if (json) {
+    process.stdout.write(JSON.stringify(statuses, null, 2) + "\n");
+    return 0;
+  }
+  if (statuses.length === 0) {
+    process.stdout.write("(no mounts configured)\n");
+    return 0;
+  }
+  for (const s of statuses) {
+    const linkOk = s.linkExists ? "ok" : "MISSING";
+    const targetOk = s.targetExists ? "ok" : "MISSING";
+    process.stdout.write(
+      `- ${s.entry.id}\n` +
+        `    link:   ${s.entry.linkPath} [${linkOk}]\n` +
+        `    target: ${s.entry.targetPath} [${targetOk}]\n` +
+        `    mode:   ${s.entry.mode}, gitPolicy: ${s.entry.gitPolicy}, llm: ${s.entry.llmPolicy}\n`,
+    );
+  }
+  return 0;
+}
+
+async function cmdMountDoctor(
+  vaultPath: string,
+  json: boolean,
+): Promise<number> {
+  const issues = await mountDoctor(vaultPath);
+  const errors = issues.filter((i) => i.severity === "error");
+  if (json) {
+    process.stdout.write(JSON.stringify(issues, null, 2) + "\n");
+  } else if (issues.length === 0) {
+    process.stdout.write("All mounts healthy.\n");
+  } else {
+    for (const i of issues) {
+      process.stdout.write(`${i.severity}: [${i.code}] ${i.message}\n`);
+    }
+  }
+  return errors.length > 0 ? 1 : 0;
 }
 
 main(process.argv.slice(2)).then(
