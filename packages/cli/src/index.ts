@@ -26,14 +26,19 @@ import { mkdir, writeFile, access } from "node:fs/promises";
 import {
   addMount,
   buildGraph,
+  checkpoint,
+  ensureGitRepo,
   getBacklinks,
   getTwoHopLinks,
+  gitStatus,
   listMountStatus,
   mountDoctor,
   parseVault,
   partitionIssues,
   publish,
   PublishError,
+  recentCommits,
+  snapshot,
   validateVault,
   writeIndex,
 } from "@oak/core";
@@ -54,7 +59,9 @@ Commands:
   backlinks <page>           List incoming links for a page
   twohop <page>              List two-hop neighbours for a page
   publish [--base-url U]     Render public/unlisted pages to public-site/
-  checkpoint <msg>           Tag the vault state via git (Phase 4, not yet)
+  snapshot [--message M]     Stage tracked files and commit a snapshot
+  checkpoint <message>       Create a named commit (e.g. before publish)
+  log [--n N]                Show recent oak commits
   mount add <id> <path>      Mount an external directory at _external/<id>
   mount list                 Show configured mounts and their health
   mount doctor               Report broken / overlapping mounts
@@ -103,11 +110,12 @@ async function main(argv: string[]): Promise<number> {
       return await cmdMount(vaultPath, parsed.positional, parsed.flags, json);
     case "publish":
       return await cmdPublish(vaultPath, parsed.flags, json);
+    case "snapshot":
+      return await cmdSnapshot(vaultPath, parsed.flags, json);
     case "checkpoint":
-      process.stderr.write(
-        `\`oak ${parsed.command}\` is not implemented yet.\n`,
-      );
-      return 2;
+      return await cmdCheckpoint(vaultPath, parsed.positional, json);
+    case "log":
+      return await cmdLog(vaultPath, parsed.flags, json);
     default:
       process.stderr.write(`Unknown command: ${parsed.command}\n\n`);
       process.stdout.write(HELP);
@@ -135,21 +143,16 @@ async function cmdInit(vaultPath: string): Promise<number> {
   if (!(await exists(mountsPath))) {
     await writeFile(mountsPath, "mounts: {}\n", "utf8");
   }
-  const gitignore = resolve(vaultPath, ".gitignore");
-  if (!(await exists(gitignore))) {
-    await writeFile(
-      gitignore,
-      [
-        ".oak/index.sqlite",
-        ".oak/tmp/",
-        "_external/",
-        "public-site/",
-        ".obsidian/workspace*",
-      ].join("\n") + "\n",
-      "utf8",
-    );
-  }
+  const repo = await ensureGitRepo(vaultPath);
   process.stdout.write(`Initialized oak vault at ${vaultPath}\n`);
+  if (repo.initialized) {
+    process.stdout.write(`  git: initialized fresh repo\n`);
+  } else {
+    process.stdout.write(`  git: existing repo detected\n`);
+  }
+  if (repo.gitignoreUpdated) {
+    process.stdout.write(`  git: .gitignore updated\n`);
+  }
   return 0;
 }
 
@@ -197,10 +200,12 @@ async function cmdValidate(vaultPath: string, json: boolean): Promise<number> {
 }
 
 async function cmdStatus(vaultPath: string, json: boolean): Promise<number> {
-  // Minimal: report parse/validate counts. Real git-status integration is Phase 4.
   const vault = await parseVault(vaultPath);
   const graph = buildGraph(vault);
   const { errors, warnings } = partitionIssues(validateVault(vault, graph));
+  const git = await gitStatus(vaultPath);
+  const recent = await recentCommits(vaultPath, 3);
+
   if (json) {
     process.stdout.write(
       JSON.stringify(
@@ -209,17 +214,40 @@ async function cmdStatus(vaultPath: string, json: boolean): Promise<number> {
           pages: vault.pages.size,
           errors: errors.length,
           warnings: warnings.length,
+          git: {
+            initialized: git.initialized,
+            branch: git.branch,
+            dirty: git.dirty,
+            staged: git.staged.length,
+            unstaged: git.unstaged.length,
+            untracked: git.untracked.length,
+          },
+          recent,
         },
         null,
         2,
       ) + "\n",
     );
+    return 0;
+  }
+  process.stdout.write(`Vault: ${vault.rootPath}\n`);
+  process.stdout.write(`  pages:    ${vault.pages.size}\n`);
+  process.stdout.write(`  errors:   ${errors.length}\n`);
+  process.stdout.write(`  warnings: ${warnings.length}\n`);
+  if (git.initialized) {
+    process.stdout.write(
+      `  git:      ${git.branch ?? "(detached)"}; ` +
+        `${git.dirty ? "dirty" : "clean"} ` +
+        `(staged ${git.staged.length}, unstaged ${git.unstaged.length}, untracked ${git.untracked.length})\n`,
+    );
+    if (recent.length > 0) {
+      process.stdout.write(`  recent:\n`);
+      for (const c of recent) {
+        process.stdout.write(`    ${c.shortHash} ${c.subject}\n`);
+      }
+    }
   } else {
-    process.stdout.write(`Vault: ${vault.rootPath}\n`);
-    process.stdout.write(`  pages:    ${vault.pages.size}\n`);
-    process.stdout.write(`  errors:   ${errors.length}\n`);
-    process.stdout.write(`  warnings: ${warnings.length}\n`);
-    process.stdout.write(`  git:      (not implemented in Phase 1)\n`);
+    process.stdout.write(`  git:      (no repo — run \`oak init\`)\n`);
   }
   return 0;
 }
@@ -333,6 +361,14 @@ async function cmdPublish(
   const baseUrl = getString(flags, "base-url");
   const outputDir = getString(flags, "output");
   const dryRun = getBool(flags, "dry-run");
+  const noCheckpoint = getBool(flags, "no-checkpoint");
+
+  // Per directive §8: `checkpoint: before publish`. We commit the
+  // current state of the vault so a publish is always reversible.
+  let checkpointResult: Awaited<ReturnType<typeof checkpoint>> | null = null;
+  if (!dryRun && !noCheckpoint) {
+    checkpointResult = await checkpoint(vaultPath, "before publish");
+  }
 
   try {
     const stats = await publish(vault, graph, issues, {
@@ -341,7 +377,13 @@ async function cmdPublish(
       dryRun,
     });
     if (json) {
-      process.stdout.write(JSON.stringify(stats, null, 2) + "\n");
+      process.stdout.write(
+        JSON.stringify(
+          { ...stats, checkpoint: checkpointResult },
+          null,
+          2,
+        ) + "\n",
+      );
       return 0;
     }
     process.stdout.write(
@@ -353,6 +395,15 @@ async function cmdPublish(
     process.stdout.write(`  removed pages:  ${stats.removedPages.length}\n`);
     process.stdout.write(`  removed assets: ${stats.removedAssets.length}\n`);
     process.stdout.write(`  manifest:       ${stats.manifestPath}\n`);
+    if (checkpointResult?.committed) {
+      process.stdout.write(
+        `  checkpoint:     ${checkpointResult.hash?.slice(0, 7)} ${checkpointResult.message}\n`,
+      );
+    } else if (noCheckpoint) {
+      process.stdout.write(`  checkpoint:     skipped (--no-checkpoint)\n`);
+    } else if (checkpointResult && !checkpointResult.committed) {
+      process.stdout.write(`  checkpoint:     no changes since last commit\n`);
+    }
     return 0;
   } catch (err) {
     if (err instanceof PublishError) {
@@ -372,6 +423,72 @@ async function cmdPublish(
     }
     throw err;
   }
+}
+
+async function cmdSnapshot(
+  vaultPath: string,
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const message = getString(flags, "message");
+  const result = await snapshot(vaultPath, message ? { message } : {});
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
+  if (!result.committed) {
+    process.stdout.write("(no changes — nothing to snapshot)\n");
+    return 0;
+  }
+  process.stdout.write(`Snapshotted ${result.hash?.slice(0, 7)} ${result.message}\n`);
+  return 0;
+}
+
+async function cmdCheckpoint(
+  vaultPath: string,
+  positional: string[],
+  json: boolean,
+): Promise<number> {
+  const message = positional.join(" ").trim();
+  if (!message) {
+    process.stderr.write("Usage: oak checkpoint <message>\n");
+    return 1;
+  }
+  const result = await checkpoint(vaultPath, message);
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
+  if (!result.committed) {
+    process.stdout.write(`(no changes — checkpoint label \`${message}\` not recorded)\n`);
+    return 0;
+  }
+  process.stdout.write(
+    `Checkpointed ${result.hash?.slice(0, 7)} ${result.message}\n`,
+  );
+  return 0;
+}
+
+async function cmdLog(
+  vaultPath: string,
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const nStr = getString(flags, "n");
+  const n = nStr ? Math.max(1, parseInt(nStr, 10)) : 10;
+  const commits = await recentCommits(vaultPath, n);
+  if (json) {
+    process.stdout.write(JSON.stringify(commits, null, 2) + "\n");
+    return 0;
+  }
+  if (commits.length === 0) {
+    process.stdout.write("(no commits — run `oak init` or make changes)\n");
+    return 0;
+  }
+  for (const c of commits) {
+    process.stdout.write(`${c.shortHash}  ${c.authorDate}  ${c.subject}\n`);
+  }
+  return 0;
 }
 
 async function cmdMount(
