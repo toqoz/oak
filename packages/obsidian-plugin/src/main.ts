@@ -177,11 +177,12 @@ export default class OakPlugin extends Plugin {
   // surfaces and the regular Obsidian layout.
   //
   // ON  — at least one oak leaf is open. Toggling off detaches every
-  //       oak leaf and re-opens the file explorer in the left pane
-  //       (using an existing leaf if there is one).
+  //       oak leaf and expands the left sidebar so the user's other
+  //       left-pane tools (file explorer, search, bookmarks, …) come
+  //       back into view.
   // OFF — no oak leaves open. Toggling on opens the sidebar (right)
-  //       and the home (main), focuses the home, and detaches any
-  //       file-explorer leaves so the left pane gets out of the way.
+  //       and the home (main), focuses the home, and collapses the
+  //       left sidebar so the layout reads as oak-only.
   async toggleOakMode(): Promise<void> {
     const sidebarLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK);
     const homeLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
@@ -190,27 +191,13 @@ export default class OakPlugin extends Plugin {
     if (isOn) {
       for (const leaf of sidebarLeaves) leaf.detach();
       for (const leaf of homeLeaves) leaf.detach();
-      await this.restoreFileExplorer();
+      this.app.workspace.leftSplit.expand();
       return;
     }
 
     await this.activateSidebar();
     await this.activateHome();
-    for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
-      leaf.detach();
-    }
-  }
-
-  private async restoreFileExplorer(): Promise<void> {
-    const existing = this.app.workspace.getLeavesOfType("file-explorer");
-    if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]!);
-      return;
-    }
-    const leaf = this.app.workspace.getLeftLeaf(false);
-    if (!leaf) return;
-    await leaf.setViewState({ type: "file-explorer", active: true });
-    this.app.workspace.revealLeaf(leaf);
+    this.app.workspace.leftSplit.collapse();
   }
 
   private async activateSidebar(): Promise<void> {
