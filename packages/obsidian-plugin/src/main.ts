@@ -28,6 +28,7 @@ import {
 } from "./commands.js";
 import { ensureGitRepo, snapshot } from "@oak/core";
 import { vaultRoot } from "./paths.js";
+import type { OakOpenFile } from "./open-file.js";
 
 export default class OakPlugin extends Plugin {
   settings: OakPluginSettings = DEFAULT_SETTINGS;
@@ -35,6 +36,11 @@ export default class OakPlugin extends Plugin {
 
   private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
   private sidebarRef: OakSidebarView | null = null;
+  // The "browse" leaf — like a web browser tab. The home and sidebar
+  // both target this leaf for plain-click navigation, so each click
+  // replaces the current page instead of stacking new tabs.
+  // Cmd/Ctrl-click bypasses reuse and opens a fresh tab.
+  private browseLeaf: WorkspaceLeaf | null = null;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -45,13 +51,16 @@ export default class OakPlugin extends Plugin {
     // wait on it — Obsidian shouldn't block on git for a plain note open.
     void this.ensureGitInBackground();
 
+    const openFile: OakOpenFile = (file, opts) =>
+      this.openInBrowseLeaf(file, opts ?? {});
+
     this.registerView(VIEW_TYPE_OAK, (leaf: WorkspaceLeaf) => {
-      const view = new OakSidebarView(leaf, this.state, this.app);
+      const view = new OakSidebarView(leaf, this.state, this.app, openFile);
       this.sidebarRef = view;
       return view;
     });
     this.registerView(VIEW_TYPE_OAK_HOME, (leaf: WorkspaceLeaf) => {
-      return new OakHomeView(leaf, this.state, this.app);
+      return new OakHomeView(leaf, this.state, this.app, openFile);
     });
     // Single "oak mode" entry — toggles between the focused oak
     // surfaces (home in main, sidebar on the right, file explorer
@@ -171,6 +180,37 @@ export default class OakPlugin extends Plugin {
     } catch (err) {
       console.warn("oak: ensureGitRepo failed", err);
     }
+  }
+
+  // Browser-tab-style navigation for oak link clicks.
+  //
+  //   plain click       reuse the existing browse leaf (or open a new
+  //                     tab if there isn't one / the user closed it)
+  //   Cmd / Ctrl click  always open a new tab; that new tab becomes the
+  //                     new browse leaf so subsequent plain clicks
+  //                     keep replacing it
+  async openInBrowseLeaf(
+    file: TFile,
+    opts: { newTab?: boolean } = {},
+  ): Promise<void> {
+    const reuse =
+      !opts.newTab &&
+      this.browseLeaf !== null &&
+      this.isLeafAlive(this.browseLeaf);
+    const leaf = reuse
+      ? this.browseLeaf!
+      : this.app.workspace.getLeaf("tab");
+    this.browseLeaf = leaf;
+    await leaf.openFile(file);
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  private isLeafAlive(leaf: WorkspaceLeaf): boolean {
+    let alive = false;
+    this.app.workspace.iterateAllLeaves((l) => {
+      if (l === leaf) alive = true;
+    });
+    return alive;
   }
 
   // Toggle "oak mode": one gesture switches between the focused oak

@@ -12,6 +12,7 @@ import {
 } from "@oak/core";
 
 import type { VaultSnapshot, VaultState } from "../state.js";
+import type { OakOpenFile } from "../open-file.js";
 
 export const VIEW_TYPE_OAK_HOME = "oak-home";
 
@@ -24,6 +25,7 @@ export class OakHomeView extends ItemView {
     leaf: WorkspaceLeaf,
     private state: VaultState,
     private app2: App,
+    private openFile: OakOpenFile,
   ) {
     super(leaf);
   }
@@ -137,7 +139,7 @@ export class OakHomeView extends ItemView {
       });
       link.addEventListener("click", (ev) => {
         ev.preventDefault();
-        this.openByRelPath(e.vaultRelPath);
+        this.openByRelPath(e.vaultRelPath, ev.metaKey || ev.ctrlKey);
       });
       const meta: string[] = [];
       meta.push(e.visibility);
@@ -150,10 +152,10 @@ export class OakHomeView extends ItemView {
     }
   }
 
-  private openByRelPath(relPath: string): void {
+  private openByRelPath(relPath: string, newTab: boolean): void {
     const file = this.app2.vault.getAbstractFileByPath(relPath);
     if (file instanceof TFile) {
-      void this.app2.workspace.getLeaf(false).openFile(file);
+      void this.openFile(file, { newTab });
     }
   }
 }

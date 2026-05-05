@@ -34,6 +34,7 @@ import {
 } from "@oak/core";
 import type { VaultSnapshot, VaultState } from "../state.js";
 import { vaultRoot } from "../paths.js";
+import type { OakOpenFile } from "../open-file.js";
 
 export const VIEW_TYPE_OAK = "oak-sidebar";
 
@@ -47,6 +48,7 @@ export class OakSidebarView extends ItemView {
     leaf: WorkspaceLeaf,
     private state: VaultState,
     private app2: App,
+    private openFile: OakOpenFile,
   ) {
     super(leaf);
   }
@@ -205,7 +207,7 @@ export class OakSidebarView extends ItemView {
         });
         link.addEventListener("click", (ev) => {
           ev.preventDefault();
-          this.openPageById(snap, b.fromId);
+          this.openPageById(snap, b.fromId, ev.metaKey || ev.ctrlKey);
         });
         if (b.context.length > 0) {
           li.createEl("div", { cls: "oak-context", text: b.context });
@@ -233,7 +235,7 @@ export class OakSidebarView extends ItemView {
         });
         link.addEventListener("click", (ev) => {
           ev.preventDefault();
-          this.openPageById(snap, h.pageId);
+          this.openPageById(snap, h.pageId, ev.metaKey || ev.ctrlKey);
         });
         const via = h.via.map((v) => v.title).join(", ");
         li.createEl("div", { cls: "oak-context", text: `via ${via}` });
@@ -252,7 +254,7 @@ export class OakSidebarView extends ItemView {
         a.addEventListener("click", (ev) => {
           ev.preventDefault();
           const snap = this.state.current();
-          if (snap) this.openPageById(snap, entry.targetId);
+          if (snap) this.openPageById(snap, entry.targetId, ev.metaKey || ev.ctrlKey);
         });
         return;
       }
@@ -334,12 +336,16 @@ export class OakSidebarView extends ItemView {
     }
   }
 
-  private openPageById(snap: VaultSnapshot, pageId: string): void {
+  private openPageById(
+    snap: VaultSnapshot,
+    pageId: string,
+    newTab: boolean,
+  ): void {
     const page = snap.vault.pages.get(pageId);
     if (!page) return;
     const file = this.app2.vault.getAbstractFileByPath(page.relPath);
-    if (file && "extension" in file) {
-      void this.app2.workspace.getLeaf(false).openFile(file as TFile);
+    if (file instanceof TFile) {
+      void this.openFile(file, { newTab });
     }
   }
 }
