@@ -177,9 +177,27 @@ export default class OakPlugin extends Plugin {
   // already-open leaves are simply revealed. We open the sidebar
   // first so the user's final focus lands on the main-pane home,
   // which is where they'll do most of the browsing.
+  //
+  // When entering oak mode "freshly" (neither leaf currently open) we
+  // also close any file-explorer leaves so the user gets a focused
+  // oak surface. Repeated clicks while oak is already open do not
+  // touch the file explorer — the user may have intentionally
+  // reopened it alongside oak.
   async activateOakMode(): Promise<void> {
+    const sidebarOpen =
+      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK).length > 0;
+    const homeOpen =
+      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME).length > 0;
+    const enteringFresh = !sidebarOpen && !homeOpen;
+
     await this.activateSidebar();
     await this.activateHome();
+
+    if (enteringFresh) {
+      for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
+        leaf.detach();
+      }
+    }
   }
 
   private async activateSidebar(): Promise<void> {
