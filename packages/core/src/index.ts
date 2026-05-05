@@ -42,3 +42,11 @@ export {
 export type { AssetRef } from "./assets.js";
 export { renderPage, renderPageDocument, rewriteBody } from "./render.js";
 export type { RenderContext } from "./render.js";
+export { publish, PublishError } from "./publish.js";
+export type {
+  PublishOptions,
+  PublishStats,
+  PublishedPage,
+  PublishedAsset,
+  PublishManifest,
+} from "./publish.js";
