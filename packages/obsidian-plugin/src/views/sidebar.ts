@@ -11,6 +11,7 @@
 
 import {
   ItemView,
+  Notice,
   TFile,
   WorkspaceLeaf,
   type App,
@@ -21,7 +22,11 @@ import {
   describeTwoHop,
   type OutboundEntry,
 } from "../format.js";
-import type { OakPage } from "@oak/core";
+import {
+  pathSafeFilename,
+  slugify,
+  type OakPage,
+} from "@oak/core";
 import type { VaultSnapshot, VaultState } from "../state.js";
 import type { OakOpenFile } from "../open-file.js";
 
@@ -126,7 +131,7 @@ export class OakSidebarView extends ItemView {
     // graph and publish manifest key off; renaming would orphan
     // backlinks across the vault.
     this.renderReadonlyProp(form, "ID", page.id);
-    this.renderTextProp(form, tfile, "Title", "title", page.title);
+    this.renderTitleProp(form, tfile, page);
     this.renderSelectProp(form, tfile, "Visibility", "visibility", page.visibility, [
       "private",
       "unlisted",
@@ -159,6 +164,95 @@ export class OakSidebarView extends ItemView {
     const row = parent.createDiv({ cls: "oak-prop-row" });
     row.createEl("label", { cls: "oak-prop-label", text: label });
     row.createEl("span", { cls: "oak-prop-readonly", text: value });
+  }
+
+  // Title is special: changing it can also rename the file (when the
+  // filename was auto-derived from the old title) and refresh the
+  // slug (when the slug was auto-derived from the old title). Either
+  // side stays untouched if the user customised it.
+  private renderTitleProp(
+    parent: HTMLElement,
+    file: TFile | null,
+    page: OakPage,
+  ): void {
+    const row = parent.createDiv({ cls: "oak-prop-row" });
+    row.createEl("label", { cls: "oak-prop-label", text: "Title" });
+    const input = row.createEl("input", {
+      cls: "oak-prop-input",
+      type: "text",
+    });
+    input.value = page.title;
+    if (!file) {
+      input.disabled = true;
+      return;
+    }
+    const commit = async () => {
+      const next = input.value.trim();
+      if (next.length === 0 || next === page.title) {
+        input.value = page.title;
+        return;
+      }
+      await this.commitTitleChange(file, page, next);
+    };
+    input.addEventListener("blur", () => void commit());
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      }
+    });
+  }
+
+  private async commitTitleChange(
+    file: TFile,
+    page: OakPage,
+    newTitle: string,
+  ): Promise<void> {
+    // "Auto-derived" detection: compare the current value to what
+    // the algorithm would have produced from the old title. A match
+    // means we own that derivation and should re-run it.
+    const slugWasAuto = slugify(page.title) === page.slug;
+    const newSlug = slugify(newTitle);
+
+    const basenameWasAuto = pathSafeFilename(page.title) === page.basename;
+    const newBasename = pathSafeFilename(newTitle);
+
+    try {
+      await this.app2.fileManager.processFrontMatter(file, (fm) => {
+        const f = fm as Record<string, unknown>;
+        f["title"] = newTitle;
+        if (slugWasAuto && newSlug.length > 0) {
+          f["slug"] = newSlug;
+        }
+      });
+    } catch (err) {
+      new Notice(`oak: failed to update frontmatter — ${(err as Error).message}`);
+      return;
+    }
+
+    if (
+      basenameWasAuto &&
+      newBasename.length > 0 &&
+      newBasename !== page.basename
+    ) {
+      const dir =
+        file.parent && file.parent.path && file.parent.path !== "/"
+          ? `${file.parent.path}/`
+          : "";
+      const newRelPath = `${dir}${newBasename}.md`;
+      const existing = this.app2.vault.getAbstractFileByPath(newRelPath);
+      if (existing && existing !== file) {
+        new Notice(
+          `oak: rename skipped — \`${newRelPath}\` already exists`,
+        );
+        return;
+      }
+      try {
+        await this.app2.fileManager.renameFile(file, newRelPath);
+      } catch (err) {
+        new Notice(`oak: rename failed — ${(err as Error).message}`);
+      }
+    }
   }
 
   private renderTextProp(

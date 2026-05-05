@@ -70,8 +70,11 @@ function toPosix(p: string): string {
   return p.split(sep).join(posix.sep);
 }
 
-function sanitiseTitleForPath(title: string): string {
-  // Replace OS-illegal characters with `-`, collapse repeats, trim.
+// Convert a title into a filesystem-safe basename. Replaces OS-illegal
+// characters with `-`, normalises whitespace, trims, caps length.
+// Exported because both `composePage` (new file) and the Obsidian
+// plugin's title rename flow need the same algorithm.
+export function pathSafeFilename(title: string): string {
   return title
     .normalize("NFC")
     .replace(ILLEGAL_FS, "-")
@@ -122,7 +125,7 @@ export function composePage(options: CreatePageOptions): ComposedPage {
     }
     relPath = ensureMarkdownExt(options.at);
   } else {
-    const safe = sanitiseTitleForPath(title);
+    const safe = pathSafeFilename(title);
     if (safe.length === 0) {
       throw new Error(
         `composePage: could not derive a filename from title \`${title}\``,
