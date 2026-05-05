@@ -92,6 +92,12 @@ export default class OakPlugin extends Plugin {
         this.sidebarRef?.setActiveFile(tfile);
       }),
     );
+    // Mode is defined by oak-leaf presence: any layout change re-syncs
+    // the body class so a manual close (or workspace state restoration
+    // after reload) keeps the chrome consistent.
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => this.syncOakModeClass()),
+    );
 
     this.addCommand({
       id: "oak-toggle-mode",
@@ -146,6 +152,10 @@ export default class OakPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.state.refresh();
       this.applyAutoSnapshot();
+      // If a previous session left oak views in the workspace state,
+      // Obsidian has just re-instantiated them. Re-attach the chrome
+      // class so oak mode visually resumes where the user left off.
+      this.syncOakModeClass();
     });
   }
 
@@ -238,14 +248,21 @@ export default class OakPlugin extends Plugin {
       for (const leaf of sidebarLeaves) leaf.detach();
       for (const leaf of homeLeaves) leaf.detach();
       this.app.workspace.leftSplit.expand();
-      document.body.removeClass("oak-mode-active");
+      // Body class is updated by the layout-change listener.
       return;
     }
 
     await this.activateSidebar();
     await this.activateHome();
     this.app.workspace.leftSplit.collapse();
-    document.body.addClass("oak-mode-active");
+  }
+
+  private syncOakModeClass(): void {
+    const isOn =
+      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK).length > 0 ||
+      this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME).length > 0;
+    if (isOn) document.body.addClass("oak-mode-active");
+    else document.body.removeClass("oak-mode-active");
   }
 
   private async activateSidebar(): Promise<void> {
