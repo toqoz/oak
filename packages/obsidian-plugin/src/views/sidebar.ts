@@ -1,13 +1,12 @@
 // Oak sidebar view — per-file context.
 //
-//   Page   — type, visibility, publish status
-//   Links  — outbound (with unresolved inline), backlinks, 2-hop
+//   Page  — title (editable), id (read-only), visibility, slug,
+//           llm policy, publish status
 //
-// Vault-wide info (git status, mounts) lives in the home view since
-// it doesn't change with the active file.
-//
-// No "Red Links Panel": unresolved targets render inline as part of
-// the outbound list (per directive §4).
+// Backlinks and 2-hop live in the main pane's footer cards now, so
+// the user reads relationships next to the body content rather than
+// having to glance over to the sidebar. Vault-wide info (git, mounts)
+// lives in the home view.
 
 import {
   ItemView,
@@ -17,17 +16,12 @@ import {
   type App,
 } from "obsidian";
 import {
-  describeBacklinks,
-  describeTwoHop,
-} from "../format.js";
-import {
   pathSafeFilename,
   slugify,
   type OakPage,
 } from "@oak/core";
 import { commitTitleChange } from "../title-commit.js";
 import type { VaultSnapshot, VaultState } from "../state.js";
-import type { OakOpenFile } from "../open-file.js";
 
 export const VIEW_TYPE_OAK = "oak-sidebar";
 
@@ -39,7 +33,6 @@ export class OakSidebarView extends ItemView {
     leaf: WorkspaceLeaf,
     private state: VaultState,
     private app2: App,
-    private openFile: OakOpenFile,
   ) {
     super(leaf);
   }
@@ -120,7 +113,6 @@ export class OakSidebarView extends ItemView {
     }
 
     this.renderPageSection(root, snap);
-    this.renderLinksSection(root, snap);
   }
 
   private activeFile(): TFile | null {
@@ -369,79 +361,4 @@ export class OakSidebarView extends ItemView {
     });
   }
 
-  private renderLinksSection(parent: HTMLElement, snap: VaultSnapshot): void {
-    const section = parent.createDiv({ cls: "oak-section" });
-    section.createEl("h3", { text: "Links" });
-
-    if (!this.currentPage) return;
-
-    // Outbound is intentionally omitted: the user reads outbound
-    // links in the body of the page itself, so duplicating them in
-    // the sidebar is just noise. Backlinks and 2-hop, on the other
-    // hand, surface relationships that aren't visible in-body.
-
-    const back = describeBacklinks(snap.graph, snap.vault, this.currentPage.id);
-    const backBlock = section.createDiv({ cls: "oak-block" });
-    backBlock.createEl("h4", { text: `Backlinks (${back.length})` });
-    if (back.length === 0) {
-      backBlock.createEl("p", { cls: "oak-muted", text: "(none)" });
-    } else {
-      const ul = backBlock.createEl("ul", { cls: "oak-list" });
-      for (const b of back) {
-        const li = ul.createEl("li");
-        const link = li.createEl("a", {
-          cls: "oak-link",
-          text: b.fromTitle,
-          href: "#",
-        });
-        link.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          this.openPageById(snap, b.fromId, ev.metaKey || ev.ctrlKey);
-        });
-        if (b.context.length > 0) {
-          li.createEl("div", { cls: "oak-context", text: b.context });
-        }
-      }
-    }
-
-    const twohop = describeTwoHop(
-      snap.graph,
-      snap.vault,
-      this.currentPage.id,
-    );
-    const twoBlock = section.createDiv({ cls: "oak-block" });
-    twoBlock.createEl("h4", { text: `2-hop (${twohop.length})` });
-    if (twohop.length === 0) {
-      twoBlock.createEl("p", { cls: "oak-muted", text: "(none)" });
-    } else {
-      const ul = twoBlock.createEl("ul", { cls: "oak-list" });
-      for (const h of twohop) {
-        const li = ul.createEl("li");
-        const link = li.createEl("a", {
-          cls: "oak-link",
-          text: `${h.title} [score=${h.score}]`,
-          href: "#",
-        });
-        link.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          this.openPageById(snap, h.pageId, ev.metaKey || ev.ctrlKey);
-        });
-        const via = h.via.map((v) => v.title).join(", ");
-        li.createEl("div", { cls: "oak-context", text: `via ${via}` });
-      }
-    }
-  }
-
-  private openPageById(
-    snap: VaultSnapshot,
-    pageId: string,
-    newTab: boolean,
-  ): void {
-    const page = snap.vault.pages.get(pageId);
-    if (!page) return;
-    const file = this.app2.vault.getAbstractFileByPath(page.relPath);
-    if (file instanceof TFile) {
-      void this.openFile(file, { newTab });
-    }
-  }
 }

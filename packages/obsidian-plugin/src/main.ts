@@ -13,7 +13,7 @@ import {
   OakSettingTab,
   type OakPluginSettings,
 } from "./settings.js";
-import { VaultState } from "./state.js";
+import { VaultState, type VaultSnapshot } from "./state.js";
 import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
 import { OakHomeView, VIEW_TYPE_OAK_HOME } from "./views/home.js";
 import {
@@ -26,7 +26,13 @@ import {
   runValidate,
   setVisibility,
 } from "./commands.js";
-import { ensureGitRepo, slugify, snapshot } from "@oak/core";
+import {
+  ensureGitRepo,
+  slugify,
+  snapshot,
+  type OakPage,
+} from "@oak/core";
+import { describeBacklinks, describeTwoHop } from "./format.js";
 import { vaultRoot } from "./paths.js";
 import type { OakOpenFile } from "./open-file.js";
 import { commitTitleChange } from "./title-commit.js";
@@ -37,6 +43,7 @@ export default class OakPlugin extends Plugin {
 
   private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
   private sidebarRef: OakSidebarView | null = null;
+  private linksUnsubscribe: (() => void) | null = null;
   // The "browse" leaf — like a web browser tab. The home and sidebar
   // both target this leaf for plain-click navigation, so each click
   // replaces the current page instead of stacking new tabs.
@@ -56,7 +63,7 @@ export default class OakPlugin extends Plugin {
       this.openInBrowseLeaf(file, opts ?? {});
 
     this.registerView(VIEW_TYPE_OAK, (leaf: WorkspaceLeaf) => {
-      const view = new OakSidebarView(leaf, this.state, this.app, openFile);
+      const view = new OakSidebarView(leaf, this.state, this.app);
       this.sidebarRef = view;
       return view;
     });
@@ -106,13 +113,24 @@ export default class OakPlugin extends Plugin {
       this.app.workspace.on("layout-change", () => {
         this.syncOakModeClass();
         this.applyTitleOverrides();
+        this.applyLinksCards();
       }),
     );
     this.registerEvent(
-      this.app.workspace.on("file-open", () => this.applyTitleOverrides()),
+      this.app.workspace.on("file-open", () => {
+        this.applyTitleOverrides();
+        this.applyLinksCards();
+      }),
     );
     this.registerEvent(
-      this.app.metadataCache.on("changed", () => this.applyTitleOverrides()),
+      this.app.metadataCache.on("changed", () => {
+        this.applyTitleOverrides();
+        this.applyLinksCards();
+      }),
+    );
+    // Vault state refresh -> backlinks/2-hop change -> rerender cards.
+    this.linksUnsubscribe = this.state.subscribe(() =>
+      this.applyLinksCards(),
     );
 
     this.addCommand({
@@ -173,19 +191,23 @@ export default class OakPlugin extends Plugin {
       // class so oak mode visually resumes where the user left off.
       this.syncOakModeClass();
       this.applyTitleOverrides();
+      this.applyLinksCards();
     });
   }
 
   override onunload(): void {
     if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
+    this.linksUnsubscribe?.();
+    this.linksUnsubscribe = null;
     this.state?.dispose();
     // Clear the body class so disabling the plugin (or reloading) can
     // never leave other ribbon icons hidden.
     document.body.removeClass("oak-mode-active");
-    // And drop any oak title overrides from open markdown views so
-    // tabs / inline titles return to Obsidian's basename rendering.
+    // And drop any oak title overrides + footer cards from open
+    // markdown views so they return to Obsidian's defaults.
     this.applyTitleOverrides();
+    this.applyLinksCards();
   }
 
   async loadSettings(): Promise<void> {
@@ -375,6 +397,141 @@ export default class OakPlugin extends Plugin {
         delete tabTitleEl.dataset["oakTitle"];
         tabTitleEl.classList.remove("oak-tab-title-override");
       }
+    }
+  }
+
+  // For each open markdown view, render Backlinks + 2-hop as a
+  // pair of cards at the bottom of the leaf's `.view-content`.
+  // The cards live next to the editor (not inside the scroller),
+  // so they stay visible regardless of body length — they read like
+  // a footer for the page.
+  private applyLinksCards(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof MarkdownView)) continue;
+      this.applyLinksCardForView(view, oakMode);
+    }
+  }
+
+  private applyLinksCardForView(
+    view: MarkdownView,
+    oakMode: boolean,
+  ): void {
+    const existing = view.contentEl.querySelector<HTMLElement>(
+      ":scope > .oak-page-links",
+    );
+
+    if (!oakMode || !view.file) {
+      existing?.remove();
+      return;
+    }
+
+    const snap = this.state.current();
+    if (!snap) {
+      existing?.remove();
+      return;
+    }
+
+    let page: OakPage | null = null;
+    for (const p of snap.vault.pages.values()) {
+      if (p.relPath === view.file.path) {
+        page = p;
+        break;
+      }
+    }
+    if (!page) {
+      existing?.remove();
+      return;
+    }
+
+    const container = existing ?? document.createElement("div");
+    if (!existing) {
+      container.classList.add("oak-page-links");
+      view.contentEl.appendChild(container);
+    }
+    container.empty();
+
+    const grid = container.createDiv({ cls: "oak-page-links-grid" });
+    this.renderBacklinksCard(grid, snap, page);
+    this.renderTwoHopCard(grid, snap, page);
+  }
+
+  private renderBacklinksCard(
+    parent: HTMLElement,
+    snap: VaultSnapshot,
+    page: OakPage,
+  ): void {
+    const back = describeBacklinks(snap.graph, snap.vault, page.id);
+    const card = parent.createDiv({ cls: "oak-page-links-card" });
+    card.createEl("h4", { text: `Backlinks (${back.length})` });
+    if (back.length === 0) {
+      card.createEl("p", { cls: "oak-page-links-empty", text: "(none)" });
+      return;
+    }
+    const ul = card.createEl("ul");
+    for (const b of back) {
+      const li = ul.createEl("li");
+      const a = li.createEl("a", {
+        cls: "oak-page-links-link",
+        text: b.fromTitle,
+        href: "#",
+      });
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        this.openLinkTarget(snap, b.fromId, ev.metaKey || ev.ctrlKey);
+      });
+      if (b.context.length > 0) {
+        li.createEl("div", {
+          cls: "oak-page-links-context",
+          text: b.context,
+        });
+      }
+    }
+  }
+
+  private renderTwoHopCard(
+    parent: HTMLElement,
+    snap: VaultSnapshot,
+    page: OakPage,
+  ): void {
+    const twohop = describeTwoHop(snap.graph, snap.vault, page.id);
+    const card = parent.createDiv({ cls: "oak-page-links-card" });
+    card.createEl("h4", { text: `2-hop (${twohop.length})` });
+    if (twohop.length === 0) {
+      card.createEl("p", { cls: "oak-page-links-empty", text: "(none)" });
+      return;
+    }
+    const ul = card.createEl("ul");
+    for (const h of twohop) {
+      const li = ul.createEl("li");
+      const a = li.createEl("a", {
+        cls: "oak-page-links-link",
+        text: `${h.title} [score=${h.score}]`,
+        href: "#",
+      });
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        this.openLinkTarget(snap, h.pageId, ev.metaKey || ev.ctrlKey);
+      });
+      const via = h.via.map((v) => v.title).join(", ");
+      li.createEl("div", {
+        cls: "oak-page-links-context",
+        text: `via ${via}`,
+      });
+    }
+  }
+
+  private openLinkTarget(
+    snap: VaultSnapshot,
+    pageId: string,
+    newTab: boolean,
+  ): void {
+    const page = snap.vault.pages.get(pageId);
+    if (!page) return;
+    const file = this.app.vault.getAbstractFileByPath(page.relPath);
+    if (file instanceof TFile) {
+      void this.openInBrowseLeaf(file, { newTab });
     }
   }
 
