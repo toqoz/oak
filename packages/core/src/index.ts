@@ -10,3 +10,12 @@ export {
 } from "./graph.js";
 export { validateVault, partitionIssues } from "./validate.js";
 export { slugify, normalizeKey } from "./slug.js";
+export {
+  writeIndex,
+  readIndexMeta,
+  queryIndex,
+  indexPathFor,
+  INDEX_SCHEMA_VERSION,
+  INDEX_REL_PATH,
+} from "./index-store.js";
+export type { IndexStats, ReadIndexMeta } from "./index-store.js";

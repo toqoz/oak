@@ -5,7 +5,7 @@
   "description": "Local-file-first knowledge graph",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "packageManager": "pnpm@9.0.0",
   "scripts": {
@@ -15,7 +15,7 @@
     "oak": "node packages/cli/dist/index.js"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^22.10.0",
     "typescript": "^5.4.0",
     "vitest": "^1.4.0"
   }
