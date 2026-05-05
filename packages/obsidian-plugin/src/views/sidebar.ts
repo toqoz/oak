@@ -18,9 +18,7 @@ import {
 } from "obsidian";
 import {
   describeBacklinks,
-  describeOutbound,
   describeTwoHop,
-  type OutboundEntry,
 } from "../format.js";
 import {
   pathSafeFilename,
@@ -377,19 +375,10 @@ export class OakSidebarView extends ItemView {
 
     if (!this.currentPage) return;
 
-    const outgoing =
-      snap.graph.outgoing.get(this.currentPage.id) ?? [];
-    const outBlock = section.createDiv({ cls: "oak-block" });
-    outBlock.createEl("h4", { text: `Outbound (${outgoing.length})` });
-    if (outgoing.length === 0) {
-      outBlock.createEl("p", { cls: "oak-muted", text: "(none)" });
-    } else {
-      const ul = outBlock.createEl("ul", { cls: "oak-list" });
-      for (const link of outgoing) {
-        const entry = describeOutbound(link, snap.vault);
-        this.renderOutboundEntry(ul.createEl("li"), entry);
-      }
-    }
+    // Outbound is intentionally omitted: the user reads outbound
+    // links in the body of the page itself, so duplicating them in
+    // the sidebar is just noise. Backlinks and 2-hop, on the other
+    // hand, surface relationships that aren't visible in-body.
 
     const back = describeBacklinks(snap.graph, snap.vault, this.currentPage.id);
     const backBlock = section.createDiv({ cls: "oak-block" });
@@ -440,42 +429,6 @@ export class OakSidebarView extends ItemView {
         const via = h.via.map((v) => v.title).join(", ");
         li.createEl("div", { cls: "oak-context", text: `via ${via}` });
       }
-    }
-  }
-
-  private renderOutboundEntry(li: HTMLLIElement, entry: OutboundEntry): void {
-    switch (entry.kind) {
-      case "page": {
-        const a = li.createEl("a", {
-          cls: "oak-link",
-          text: entry.label,
-          href: "#",
-        });
-        a.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          const snap = this.state.current();
-          if (snap) this.openPageById(snap, entry.targetId, ev.metaKey || ev.ctrlKey);
-        });
-        return;
-      }
-      case "external":
-        li.createSpan({
-          cls: "oak-external",
-          text: `${entry.label} (external)`,
-        });
-        return;
-      case "redlink":
-        li.createSpan({
-          cls: "oak-redlink",
-          text: `${entry.label} (red link)`,
-        });
-        return;
-      case "invalid":
-        li.createSpan({
-          cls: "oak-error",
-          text: `${entry.label} (invalid: ${entry.reason})`,
-        });
-        return;
     }
   }
 
