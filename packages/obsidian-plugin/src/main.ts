@@ -16,6 +16,7 @@ import {
 import { VaultState, type VaultSnapshot } from "./state.js";
 import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
 import { OakHomeView, VIEW_TYPE_OAK_HOME } from "./views/home.js";
+import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
 import {
   createNewPage,
   createPageFromRedlink,
@@ -27,6 +28,7 @@ import {
   setVisibility,
 } from "./commands.js";
 import {
+  createPage,
   ensureGitRepo,
   excerptFrom,
   slugify,
@@ -75,6 +77,20 @@ export default class OakPlugin extends Plugin {
         this.app,
         openFile,
         () => this.toggleOakMode(),
+      );
+    });
+    this.registerView(VIEW_TYPE_OAK_GHOST, (leaf: WorkspaceLeaf) => {
+      return new OakGhostView(
+        leaf,
+        this.state,
+        this.app,
+        (target, hostLeaf) => this.materialiseGhost(target, hostLeaf),
+        async (page, newTab) => {
+          const file = this.app.vault.getAbstractFileByPath(page.relPath);
+          if (file instanceof TFile) {
+            await this.openInBrowseLeaf(file, { newTab });
+          }
+        },
       );
     });
     // Single "oak mode" entry — toggles between the focused oak
@@ -138,6 +154,16 @@ export default class OakPlugin extends Plugin {
       this.applyLinksCards();
       this.applyPageMeta();
     });
+
+    // Intercept red-link clicks while in oak mode and route them to
+    // the ghost view instead of letting Obsidian create the file.
+    // Capture phase so we win over Obsidian's bubble-phase handler.
+    this.registerDomEvent(
+      document,
+      "click",
+      (ev) => this.maybeInterceptRedlinkClick(ev),
+      { capture: true },
+    );
 
     this.addCommand({
       id: "oak-toggle-mode",
@@ -277,6 +303,74 @@ export default class OakPlugin extends Plugin {
       if (l === leaf) alive = true;
     });
     return alive;
+  }
+
+  // Intercept clicks on Obsidian's `.internal-link.is-unresolved`
+  // anchors while oak mode is active. Instead of letting Obsidian
+  // create the file (its default), route into the Ghost View so the
+  // user keeps reading mode for the would-be page.
+  private maybeInterceptRedlinkClick(ev: MouseEvent): void {
+    if (!document.body.classList.contains("oak-mode-active")) return;
+    const t = ev.target as HTMLElement | null;
+    if (!t) return;
+    const link = t.closest<HTMLElement>(".internal-link");
+    if (!link) return;
+    if (!link.classList.contains("is-unresolved")) return;
+    const href =
+      link.getAttribute("data-href") ?? link.textContent ?? "";
+    const target = href.trim();
+    if (target.length === 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    void this.openGhostView(target, ev.metaKey || ev.ctrlKey);
+  }
+
+  // Open (or refocus) a Ghost View for a redlink target. Plain click
+  // reuses the browse leaf; Cmd/Ctrl-click opens a new tab so the
+  // user can keep their current page open.
+  async openGhostView(target: string, newTab = false): Promise<void> {
+    const reuse =
+      !newTab &&
+      this.browseLeaf !== null &&
+      this.isLeafAlive(this.browseLeaf);
+    const leaf = reuse
+      ? this.browseLeaf!
+      : this.app.workspace.getLeaf("tab");
+    this.browseLeaf = leaf;
+    await leaf.setViewState({
+      type: VIEW_TYPE_OAK_GHOST,
+      state: { target },
+      active: true,
+    });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  // Materialise a ghost target into a real page. Generates id +
+  // default frontmatter via @oak/core's createPage, then opens the
+  // freshly-created file in the same leaf the ghost lived in — the
+  // explicit transition from reading to writing.
+  private async materialiseGhost(
+    target: string,
+    hostLeaf: WorkspaceLeaf,
+  ): Promise<void> {
+    const root = vaultRoot(this.app);
+    try {
+      const result = await createPage(root, { title: target });
+      const file = this.app.vault.getAbstractFileByPath(result.vaultRelPath);
+      if (file instanceof TFile) {
+        await hostLeaf.openFile(file);
+        this.browseLeaf = hostLeaf;
+      } else {
+        new Notice(
+          `oak: created ${result.vaultRelPath} but couldn't reopen it`,
+        );
+      }
+      this.state.scheduleRefresh();
+    } catch (err) {
+      new Notice(
+        `oak: failed to create page — ${(err as Error).message}`,
+      );
+    }
   }
 
   // Toggle "oak mode": one gesture switches between the focused oak
