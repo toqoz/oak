@@ -151,9 +151,13 @@ body.oak-mode-active .oak-tab-title-override::before {
    sort of size Apple Notes uses) so reading and writing feels
    calmer than Obsidian's default ~16-18px. Override the editor
    font-size variable so it propagates to both source / live
-   preview and reading mode. */
+   preview and reading mode.
+   `!important` is required: Obsidian sets `--font-text-size`
+   inline on the workspace element (style attribute) when the user
+   adjusts text size in Appearance settings, and an inline style
+   beats a class-based rule of the same specificity. */
 body.oak-mode-active {
-  --font-text-size: 14px;
+  --font-text-size: 14px !important;
 }
 
 /* Pane content gets generous breathing room on the sides.
