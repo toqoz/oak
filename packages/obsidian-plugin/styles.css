@@ -42,6 +42,15 @@ body.oak-mode-active .mod-right-split .workspace-tab-header-container {
   display: none !important;
 }
 
+/* Obsidian's built-in Properties view (.metadata-container) is
+   replaced by oak's structured form in the sidebar (id read-only,
+   visibility / llm validated by select). Hiding the default avoids
+   two competing editors over the same frontmatter. */
+body.oak-mode-active .metadata-container,
+body.oak-mode-active .metadata-properties {
+  display: none !important;
+}
+
 /* Expand content to the full pane width but keep generous breathing
    room on the sides — roughly 2x the home view's previous padding.
      - home view: 4em horizontal padding (was 2em)
@@ -132,6 +141,53 @@ body.oak-mode-active {
   opacity: 0.6;
   font-size: 12px;
   margin: 0.2em 0;
+}
+
+/* Sidebar Page section: oak Properties form */
+.oak-sidebar .oak-prop-form {
+  display: grid;
+  grid-template-columns: minmax(60px, auto) 1fr;
+  gap: 0.3em 0.6em;
+  align-items: center;
+  margin: 0.4em 0 0.6em;
+}
+.oak-sidebar .oak-prop-row {
+  display: contents; /* let the grid place label + value */
+}
+.oak-sidebar .oak-prop-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+.oak-sidebar .oak-prop-readonly {
+  font-family: var(--font-monospace, monospace);
+  font-size: 11px;
+  opacity: 0.7;
+  user-select: text;
+  cursor: text;
+  word-break: break-all;
+}
+.oak-sidebar .oak-prop-input,
+.oak-sidebar .oak-prop-select {
+  font-size: 12px;
+  padding: 2px 4px;
+  background: var(--background-modifier-form-field, transparent);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 3px;
+  color: var(--text-normal);
+  width: 100%;
+  min-width: 0;
+}
+.oak-sidebar .oak-prop-input:focus,
+.oak-sidebar .oak-prop-select:focus {
+  outline: 1px solid var(--interactive-accent);
+  outline-offset: 0;
+}
+.oak-sidebar .oak-prop-status {
+  font-size: 11px;
+  margin-top: 0.4em;
+  opacity: 0.75;
 }
 
 /* oak home view (main pane) */

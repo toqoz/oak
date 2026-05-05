@@ -19,7 +19,6 @@ import {
   describeBacklinks,
   describeOutbound,
   describeTwoHop,
-  summarizePage,
   type OutboundEntry,
 } from "../format.js";
 import type { OakPage } from "@oak/core";
@@ -118,26 +117,124 @@ export class OakSidebarView extends ItemView {
       });
       return;
     }
-    const sum = summarizePage(this.currentPage);
-    const list = section.createEl("ul", { cls: "oak-meta" });
-    list.createEl("li", { text: `Title: ${sum.title}` });
-    list.createEl("li", {
-      text: `Visibility: ${sum.visibility}${sum.publishable ? " (publishable)" : " (private)"}`,
-    });
-    list.createEl("li", { text: `Slug: ${sum.slug}` });
-    list.createEl("li", { text: `LLM policy: ${sum.llm}` });
+    const page = this.currentPage;
+    const file = this.app2.vault.getAbstractFileByPath(page.relPath);
+    const tfile = file instanceof TFile ? file : null;
+    const form = section.createDiv({ cls: "oak-prop-form" });
+
+    // ID — read-only by design. Treat as the immutable handle the
+    // graph and publish manifest key off; renaming would orphan
+    // backlinks across the vault.
+    this.renderReadonlyProp(form, "ID", page.id);
+    this.renderTextProp(form, tfile, "Title", "title", page.title);
+    this.renderSelectProp(form, tfile, "Visibility", "visibility", page.visibility, [
+      "private",
+      "unlisted",
+      "public",
+    ]);
+    this.renderTextProp(form, tfile, "Slug", "slug", page.slug);
+    this.renderSelectProp(form, tfile, "LLM", "llm", page.llm, [
+      "deny",
+      "allow",
+      "summary-only",
+    ]);
 
     // Publish status from validation issues touching this page.
-    const issues = snap.issues.filter((i) => i.pageId === this.currentPage!.id);
+    const issues = snap.issues.filter((i) => i.pageId === page.id);
+    const status = section.createDiv({ cls: "oak-prop-status" });
     if (issues.length === 0) {
-      list.createEl("li", { text: "Status: ok" });
+      status.setText("Status: ok");
     } else {
       const errCount = issues.filter((i) => i.severity === "error").length;
-      list.createEl("li", {
-        text: `Status: ${errCount} error(s) blocking publish`,
-        cls: "oak-error",
-      });
+      status.setText(`Status: ${errCount} error(s) blocking publish`);
+      status.addClass("oak-error");
     }
+  }
+
+  private renderReadonlyProp(
+    parent: HTMLElement,
+    label: string,
+    value: string,
+  ): void {
+    const row = parent.createDiv({ cls: "oak-prop-row" });
+    row.createEl("label", { cls: "oak-prop-label", text: label });
+    row.createEl("span", { cls: "oak-prop-readonly", text: value });
+  }
+
+  private renderTextProp(
+    parent: HTMLElement,
+    file: TFile | null,
+    label: string,
+    key: string,
+    value: string,
+  ): void {
+    const row = parent.createDiv({ cls: "oak-prop-row" });
+    row.createEl("label", { cls: "oak-prop-label", text: label });
+    const input = row.createEl("input", {
+      cls: "oak-prop-input",
+      type: "text",
+    });
+    input.value = value;
+    if (!file) {
+      input.disabled = true;
+      return;
+    }
+    // Save on blur and on Enter so the user can confirm explicitly.
+    const commit = async () => {
+      const next = input.value.trim();
+      if (next === value) return;
+      try {
+        await this.app2.fileManager.processFrontMatter(file, (fm) => {
+          if (next.length === 0) {
+            delete (fm as Record<string, unknown>)[key];
+          } else {
+            (fm as Record<string, unknown>)[key] = next;
+          }
+        });
+      } catch (err) {
+        console.warn("oak: failed to update frontmatter", err);
+      }
+    };
+    input.addEventListener("blur", () => void commit());
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        input.blur();
+      }
+    });
+  }
+
+  private renderSelectProp(
+    parent: HTMLElement,
+    file: TFile | null,
+    label: string,
+    key: string,
+    value: string,
+    options: string[],
+  ): void {
+    const row = parent.createDiv({ cls: "oak-prop-row" });
+    row.createEl("label", { cls: "oak-prop-label", text: label });
+    const select = row.createEl("select", { cls: "oak-prop-select" });
+    for (const opt of options) {
+      const o = select.createEl("option", { text: opt });
+      o.value = opt;
+      if (opt === value) o.selected = true;
+    }
+    if (!file) {
+      select.disabled = true;
+      return;
+    }
+    select.addEventListener("change", () => {
+      const next = select.value;
+      if (next === value) return;
+      void this.app2.fileManager
+        .processFrontMatter(file, (fm) => {
+          (fm as Record<string, unknown>)[key] = next;
+        })
+        .catch((err) =>
+          console.warn("oak: failed to update frontmatter", err),
+        );
+    });
   }
 
   private renderLinksSection(parent: HTMLElement, snap: VaultSnapshot): void {
