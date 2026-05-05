@@ -76,3 +76,71 @@
   font-size: 12px;
   margin: 0.2em 0;
 }
+
+/* oak home view (main pane) */
+
+.oak-home {
+  padding: 1.5em 2em;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.oak-home .oak-empty {
+  opacity: 0.6;
+  margin: 1em 0;
+}
+
+.oak-home-header h1 {
+  margin-bottom: 0.2em;
+  font-size: 1.6em;
+}
+
+.oak-home-stats {
+  margin: 0 0 1.5em;
+  opacity: 0.65;
+  font-size: 0.9em;
+}
+
+.oak-home-section {
+  margin-bottom: 2em;
+}
+
+.oak-home-section h2 {
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+  margin: 0 0 0.6em;
+}
+
+.oak-home-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.oak-home-list li {
+  margin: 0 0 1em;
+}
+
+.oak-home-link {
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--text-accent);
+  font-size: 1.05em;
+}
+.oak-home-link:hover {
+  text-decoration: underline;
+}
+
+.oak-home-meta {
+  font-size: 0.8em;
+  opacity: 0.6;
+  margin-top: 0.1em;
+}
+
+.oak-home-excerpt {
+  margin: 0.3em 0 0;
+  font-size: 0.95em;
+  opacity: 0.85;
+}

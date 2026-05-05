@@ -15,6 +15,7 @@ import {
 } from "./settings.js";
 import { VaultState } from "./state.js";
 import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
+import { OakHomeView, VIEW_TYPE_OAK_HOME } from "./views/home.js";
 import {
   createNewPage,
   createPageFromRedlink,
@@ -49,8 +50,14 @@ export default class OakPlugin extends Plugin {
       this.sidebarRef = view;
       return view;
     });
+    this.registerView(VIEW_TYPE_OAK_HOME, (leaf: WorkspaceLeaf) => {
+      return new OakHomeView(leaf, this.state, this.app);
+    });
     this.addRibbonIcon("trees", "Open oak sidebar", () => {
       void this.activateSidebar();
+    });
+    this.addRibbonIcon("home", "Open oak home", () => {
+      void this.activateHome();
     });
 
     this.registerEvent(
@@ -73,6 +80,11 @@ export default class OakPlugin extends Plugin {
       }),
     );
 
+    this.addCommand({
+      id: "oak-open-home",
+      name: "Open oak home",
+      callback: () => void this.activateHome(),
+    });
     this.addCommand({
       id: "oak-new-page",
       name: "New oak page",
@@ -179,6 +191,18 @@ export default class OakPlugin extends Plugin {
     const leaf = this.app.workspace.getRightLeaf(false);
     if (!leaf) return;
     await leaf.setViewState({ type: VIEW_TYPE_OAK, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  async activateHome(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]!);
+      return;
+    }
+    // Open in the main editor area, not the sidebar.
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.setViewState({ type: VIEW_TYPE_OAK_HOME, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
 }
