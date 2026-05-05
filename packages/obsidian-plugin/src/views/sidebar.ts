@@ -69,7 +69,25 @@ export class OakSidebarView extends ItemView {
   }
 
   setActiveFile(file: TFile | null): void {
-    this.currentPage = this.findPageForFile(file);
+    const found = this.findPageForFile(file);
+    if (found) {
+      this.currentPage = found;
+    } else if (file === null) {
+      this.currentPage = null;
+    } else {
+      // Path mismatch (typically: mid-rename, the TFile has the new
+      // path but the snapshot still has the old one). If our previous
+      // currentPage is still in the snapshot by id, keep showing it
+      // so the sidebar doesn't flash to the empty state.
+      const snap = this.state.current();
+      if (
+        !snap ||
+        !this.currentPage ||
+        !snap.vault.pages.has(this.currentPage.id)
+      ) {
+        this.currentPage = null;
+      }
+    }
     void this.render(this.state.current());
   }
 
@@ -208,24 +226,38 @@ export class OakSidebarView extends ItemView {
     page: OakPage,
     newTitle: string,
   ): Promise<void> {
+    const oldTitle = page.title;
+    const oldSlug = page.slug;
+    const oldBasename = page.basename;
+    const oldRelPath = page.relPath;
+
     // "Auto-derived" detection: compare the current value to what
     // the algorithm would have produced from the old title. A match
     // means we own that derivation and should re-run it.
-    const slugWasAuto = slugify(page.title) === page.slug;
+    const slugWasAuto = slugify(oldTitle) === oldSlug;
     const newSlug = slugify(newTitle);
 
-    const basenameWasAuto = pathSafeFilename(page.title) === page.basename;
+    const basenameWasAuto = pathSafeFilename(oldTitle) === oldBasename;
     const newBasename = pathSafeFilename(newTitle);
+
+    // Optimistic local update so any re-render between the file ops
+    // (e.g. an active-leaf-change fired by Obsidian during rename)
+    // and the next state.refresh shows the new value, not the
+    // pre-commit one. The authoritative snapshot overwrites these
+    // fields when parseVault runs again.
+    page.title = newTitle;
+    if (slugWasAuto && newSlug.length > 0) page.slug = newSlug;
 
     try {
       await this.app2.fileManager.processFrontMatter(file, (fm) => {
         const f = fm as Record<string, unknown>;
         f["title"] = newTitle;
-        if (slugWasAuto && newSlug.length > 0) {
-          f["slug"] = newSlug;
-        }
+        if (slugWasAuto && newSlug.length > 0) f["slug"] = newSlug;
       });
     } catch (err) {
+      // Roll back the optimistic update on failure.
+      page.title = oldTitle;
+      page.slug = oldSlug;
       new Notice(`oak: failed to update frontmatter — ${(err as Error).message}`);
       return;
     }
@@ -233,7 +265,7 @@ export class OakSidebarView extends ItemView {
     if (
       basenameWasAuto &&
       newBasename.length > 0 &&
-      newBasename !== page.basename
+      newBasename !== oldBasename
     ) {
       const dir =
         file.parent && file.parent.path && file.parent.path !== "/"
@@ -247,9 +279,17 @@ export class OakSidebarView extends ItemView {
         );
         return;
       }
+      // Optimistic local mirror of the rename, applied right before
+      // we hand control to Obsidian, so a re-render triggered by
+      // the rename event (which can land before state.refresh) finds
+      // the page via its new relPath.
+      page.basename = newBasename;
+      page.relPath = newRelPath;
       try {
         await this.app2.fileManager.renameFile(file, newRelPath);
       } catch (err) {
+        page.basename = oldBasename;
+        page.relPath = oldRelPath;
         new Notice(`oak: rename failed — ${(err as Error).message}`);
       }
     }
