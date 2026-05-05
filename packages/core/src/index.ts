@@ -42,6 +42,23 @@ export {
 export type { AssetRef } from "./assets.js";
 export { renderPage, renderPageDocument, rewriteBody } from "./render.js";
 export type { RenderContext } from "./render.js";
+export {
+  ensureGitRepo,
+  ensureGitignore,
+  isGitRepo,
+  gitStatus,
+  snapshot,
+  checkpoint,
+  recentCommits,
+  GitError,
+} from "./git.js";
+export type {
+  GitStatus,
+  GitStatusEntry,
+  CommitRecord,
+  SnapshotResult,
+  EnsureRepoResult,
+} from "./git.js";
 export { publish, PublishError } from "./publish.js";
 export type {
   PublishOptions,
