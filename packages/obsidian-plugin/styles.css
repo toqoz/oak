@@ -69,12 +69,11 @@ body.oak-mode-active .inline-title {
 }
 body.oak-mode-active input.oak-page-title {
   display: block;
-  /* Mirror the body content's centering: max-width tracks
-     `--file-line-width` (calc(100% - 8rem)) and `margin: auto`
-     produces the same left/right gutters as the markdown body. */
-  max-width: var(--file-line-width);
+  /* Title inherits the leaf's `.view-content` side padding (4rem),
+     so width:100% with zero own padding lines its left/right edge
+     up exactly with the body content below. */
   width: 100%;
-  margin: 1.2em auto 0.5em;
+  margin: 1.2em 0 0.5em;
   padding: 0;
   box-sizing: border-box;
   font-size: 2.2em;
@@ -115,17 +114,23 @@ body.oak-mode-active .oak-tab-title-override::before {
   align-items: center;
 }
 
-/* Expand content to the full pane width but keep generous breathing
-   room on the sides. `rem` is used (not `em`) so the gutter is the
-   same pixel value everywhere it's read — `em` would otherwise
-   evaluate against each element's own font-size and the title /
-   body would drift apart. */
+/* Pane content gets generous breathing room on the sides.
+   We turn off Obsidian's "readable line length" narrowing
+   (`--file-line-width: 100%`) so the body fills its container,
+   then put 4rem of side padding on the markdown leaf's
+   `.view-content`. Both the body and our injected title share
+   that gutter, so their left/right edges line up by construction. */
 body.oak-mode-active .oak-home {
   max-width: none;
   padding: 2em 4em;
 }
 body.oak-mode-active {
-  --file-line-width: calc(100% - 8rem);
+  --file-line-width: 100%;
+}
+body.oak-mode-active
+  .workspace-leaf-content[data-type="markdown"]
+  > .view-content {
+  padding-inline: 4rem !important;
 }
 
 /* oak sidebar */
