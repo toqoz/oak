@@ -33,11 +33,16 @@ body.oak-mode-active .workspace-leaf-content[data-type="oak-sidebar"] .view-head
   display: none !important;
 }
 
-/* Hide the markdown leaf's view header in oak mode: the small
-   filename / title repeated above the editor is just noise. The
-   inline `.oak-page-title` already shows the title, and the tab
-   strip surfaces it too via the data-oak-title overlay. */
-body.oak-mode-active .workspace-leaf-content[data-type="markdown"] .view-header {
+/* The markdown leaf's view header keeps the back/forward nav
+   buttons (and other left-side header chrome) but loses the
+   small file title — it's redundant with the inline title and
+   the tab strip overlay. */
+body.oak-mode-active
+  .workspace-leaf-content[data-type="markdown"]
+  .view-header-title-container,
+body.oak-mode-active
+  .workspace-leaf-content[data-type="markdown"]
+  .view-header-title {
   display: none !important;
 }
 
