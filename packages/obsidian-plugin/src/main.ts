@@ -25,6 +25,7 @@ import { VaultState, type VaultSnapshot } from "./state.js";
 import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
 import { OakHomeView, VIEW_TYPE_OAK_HOME } from "./views/home.js";
 import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
+import { OakAgendaView, VIEW_TYPE_OAK_AGENDA } from "./views/agenda.js";
 import {
   createNewPage,
   createPageFromRedlink,
@@ -108,6 +109,9 @@ export default class OakPlugin extends Plugin {
           }
         },
       );
+    });
+    this.registerView(VIEW_TYPE_OAK_AGENDA, (leaf: WorkspaceLeaf) => {
+      return new OakAgendaView(leaf, this.state, this.app, openFile);
     });
     // Single "oak mode" entry — toggles between the focused oak
     // surfaces (home in main, sidebar on the right, file explorer
@@ -282,6 +286,11 @@ export default class OakPlugin extends Plugin {
       id: "oak-mount-external",
       name: "Mount external directory",
       callback: () => void runMount(this),
+    });
+    this.addCommand({
+      id: "oak-agenda",
+      name: "Open agenda",
+      callback: () => void this.openAgenda(),
     });
 
     this.addSettingTab(new OakSettingTab(this.app, this));
@@ -1271,5 +1280,18 @@ export default class OakPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.setViewState({ type: VIEW_TYPE_OAK_HOME, active: true });
     this.app.workspace.revealLeaf(leaf);
+  }
+
+  async openAgenda(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_AGENDA);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]!);
+      return;
+    }
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.setViewState({ type: VIEW_TYPE_OAK_AGENDA, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    // Make sure the vault has been parsed at least once.
+    void this.state.refresh();
   }
 }
