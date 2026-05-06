@@ -737,3 +737,41 @@ body.oak-mode-active .markdown-preview-view {
   color: var(--text-normal);
   text-decoration: underline;
 }
+
+/*
+ * Frontmatter trailing blank line.
+ *
+ * Files on disk end the YAML frontmatter with `---\n\n` — the closing
+ * fence plus a blank line so plain-text editors and tooling can still
+ * see a separator. In oak mode we don't want that blank rendering as
+ * part of the visible body. The line itself stays in the file.
+ *
+ *   Live Preview: the frontmatter is collapsed into `.metadata-*`
+ *   widget; the blank survives as the first empty `.cm-line` directly
+ *   after it. Hide that line.
+ *
+ *   Reading view:  the markdown renderer normally collapses the blank
+ *   into the gap between the Properties block and the body, so there
+ *   is nothing visible to hide. Selectors below are defensive in case
+ *   a theme materialises an empty paragraph.
+ *
+ *   Source mode:   cm-line shows raw text including the blank — that
+ *   is the literal file content and we leave it alone.
+ */
+/* Live Preview: in current Obsidian the frontmatter widget shows up
+ * as a `<div contenteditable="false">` at the very start of
+ * `.cm-content`. The blank `.cm-line` that follows it contains a
+ * single `<br>` (so `:empty` won't match — `:has(> br:only-child)`
+ * is the right test). Hide that line. */
+body.oak-mode-active
+  .cm-content
+  > div[contenteditable="false"]:first-child
+  + .cm-line:has(> br:only-child) {
+  display: none;
+}
+/* Reading view: defensive, in case a theme materialises an empty
+ * paragraph between the Properties block and the body. */
+body.oak-mode-active .markdown-preview-view > .frontmatter + p:empty,
+body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
+  display: none;
+}

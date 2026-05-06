@@ -45,6 +45,7 @@ import {
   type OakPage,
 } from "@oak/core";
 import { describeBacklinks, describeTwoHop } from "./format.js";
+import { ensureBlankAfterFrontmatter } from "./frontmatter-normalize.js";
 import { vaultRoot } from "./paths.js";
 import type { OakOpenFile } from "./open-file.js";
 import { commitTitleChange } from "./title-commit.js";
@@ -120,7 +121,12 @@ export default class OakPlugin extends Plugin {
     ribbon.addClass("oak-ribbon-icon");
 
     this.registerEvent(
-      this.app.vault.on("modify", () => this.state.scheduleRefresh()),
+      this.app.vault.on("modify", (file) => {
+        this.state.scheduleRefresh();
+        if (file instanceof TFile && file.extension === "md") {
+          void this.normalizeFrontmatterSeparator(file);
+        }
+      }),
     );
     this.registerEvent(
       this.app.vault.on("create", () => this.state.scheduleRefresh()),
@@ -548,6 +554,31 @@ export default class OakPlugin extends Plugin {
       new Notice(
         `oak: failed to create page — ${(err as Error).message}`,
       );
+    }
+  }
+
+  // On every modify of an oak-managed markdown file, ensure the
+  // frontmatter is followed by a blank line. Files always go to disk
+  // with `---\n\n`, but a user editing in source mode can delete the
+  // blank — and the styles.css rule that hides it in Live Preview
+  // depends on it being there. Restoring it on save keeps the on-disk
+  // shape stable.
+  //
+  // We gate on `id:` in the frontmatter so we never rewrite notes
+  // that aren't oak-managed (the user's other vault content stays
+  // exactly as they typed it). The early `===` check on the resulting
+  // string prevents a feedback loop: when our `vault.modify` triggers
+  // another `modify` event, the second pass sees the blank already in
+  // place and skips the write.
+  private async normalizeFrontmatterSeparator(file: TFile): Promise<void> {
+    try {
+      const content = await this.app.vault.read(file);
+      if (!/^---\n[\s\S]*?\bid:/.test(content)) return;
+      const fixed = ensureBlankAfterFrontmatter(content);
+      if (fixed === content) return;
+      await this.app.vault.modify(file, fixed);
+    } catch (err) {
+      console.warn("oak: normalizeFrontmatterSeparator failed", err);
     }
   }
 
