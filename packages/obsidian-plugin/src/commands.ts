@@ -29,6 +29,7 @@ import {
 import type OakPlugin from "./main.js";
 import { vaultRoot } from "./paths.js";
 import { findWikiTargetInLine } from "./wiki-cursor.js";
+import { extractFromSelection } from "./extract-selection.js";
 
 const VISIBILITIES: Visibility[] = ["private", "unlisted", "public"];
 
@@ -297,6 +298,61 @@ export async function createNewPage(plugin: OakPlugin): Promise<void> {
   const ans = await askNewPage(plugin.app);
   if (!ans) return;
   await writeNewPage(plugin, ans);
+}
+
+// Cut the editor's current selection out into a new oak page. The
+// first non-blank line of the selection becomes the new page's title
+// (with markdown decoration stripped); the remaining lines become the
+// body. The selection in the source page is replaced with a wikilink
+// to the new page so the structural reference stays in place.
+export async function extractSelectionToPage(
+  plugin: OakPlugin,
+): Promise<void> {
+  const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
+  if (!view) {
+    new Notice("oak: open a markdown file first");
+    return;
+  }
+  const editor = view.editor;
+  const selection = editor.getSelection();
+  if (selection.trim().length === 0) {
+    new Notice("oak: nothing selected");
+    return;
+  }
+  const { title, body, replacement } = extractFromSelection(selection);
+  if (title.length === 0) {
+    new Notice("oak: cannot derive a title from the selection");
+    return;
+  }
+  let composed;
+  try {
+    composed = composePage({ title, body });
+  } catch (err) {
+    new Notice(`oak: extract failed — ${(err as Error).message}`);
+    return;
+  }
+  const existing = plugin.app.vault.getAbstractFileByPath(composed.vaultRelPath);
+  if (existing) {
+    new Notice(`oak: page already exists at ${composed.vaultRelPath}`);
+    return;
+  }
+  let file: TFile | null = null;
+  try {
+    const created = await plugin.app.vault.create(
+      composed.vaultRelPath,
+      composed.text,
+    );
+    if (created instanceof TFile) file = created;
+  } catch (err) {
+    new Notice(`oak: extract failed — ${(err as Error).message}`);
+    return;
+  }
+  editor.replaceSelection(replacement);
+  new Notice(`oak: extracted to ${composed.vaultRelPath}`);
+  plugin.state.scheduleRefresh();
+  if (file) {
+    await plugin.app.workspace.getLeaf("tab").openFile(file);
+  }
 }
 
 export async function createPageFromRedlink(plugin: OakPlugin): Promise<void> {

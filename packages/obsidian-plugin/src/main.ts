@@ -8,6 +8,7 @@
 
 import {
   MarkdownView,
+  Menu,
   Notice,
   Plugin,
   TFile,
@@ -27,6 +28,7 @@ import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
 import {
   createNewPage,
   createPageFromRedlink,
+  extractSelectionToPage,
   runCheckpoint,
   runMount,
   runPublish,
@@ -60,6 +62,11 @@ export default class OakPlugin extends Plugin {
   // ghost view.
   private lastRedlinkTarget: string | null = null;
   private lastRedlinkClickAt = 0;
+  // When the user picks "Show default menu" from the oak context
+  // menu, we re-dispatch a fresh `contextmenu` event so Obsidian's
+  // own handler runs and shows the native menu. This flag tells our
+  // capture-phase listener to wave that re-dispatch through.
+  private oakContextmenuBypass = false;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -226,6 +233,25 @@ export default class OakPlugin extends Plugin {
       name: "New page from unresolved link",
       callback: () => void createPageFromRedlink(this),
     });
+    this.addCommand({
+      id: "oak-extract-selection",
+      name: "Extract selection to new page",
+      editorCheckCallback: (checking, editor) => {
+        if (editor.getSelection().trim().length === 0) return false;
+        if (!checking) void extractSelectionToPage(this);
+        return true;
+      },
+    });
+    // In oak mode, replace Obsidian's editor right-click menu with a
+    // bespoke one — capture-phase `contextmenu` plus `preventDefault`
+    // suppresses the native menu entirely, then we show our own with
+    // only oak entries.
+    this.registerDomEvent(
+      document,
+      "contextmenu",
+      (ev) => this.maybeShowOakEditorMenu(ev),
+      { capture: true },
+    );
     this.addCommand({
       id: "oak-validate",
       name: "Validate vault",
@@ -399,6 +425,75 @@ export default class OakPlugin extends Plugin {
     ev.stopPropagation();
     ev.stopImmediatePropagation();
     void this.openGhostView(target, ev.metaKey || ev.ctrlKey);
+  }
+
+  // In oak mode, suppress the native Obsidian editor context menu and
+  // show a bespoke one whose only entries are oak commands. The
+  // capture-phase listener fires before Obsidian's own contextmenu
+  // handler, so `preventDefault` actually blocks the native menu.
+  //
+  // The last entry (`Show default menu`) re-dispatches a fresh
+  // contextmenu event with `oakContextmenuBypass` set, so the user
+  // can fall back to Obsidian's native menu when they want it.
+  //
+  // Scope: only the editing surface (`.cm-content`, source / live
+  // preview). Reading view, sidebars, and other UI keep their native
+  // menus untouched.
+  private maybeShowOakEditorMenu(ev: MouseEvent): void {
+    if (this.oakContextmenuBypass) {
+      this.oakContextmenuBypass = false;
+      return;
+    }
+    if (!document.body.classList.contains("oak-mode-active")) return;
+    const t = ev.target as HTMLElement | null;
+    if (!t) return;
+    if (!t.closest(".cm-content")) return;
+
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const selection = view?.editor.getSelection() ?? "";
+    const hasSelection = selection.trim().length > 0;
+
+    const menu = new Menu();
+    if (hasSelection) {
+      menu.addItem((item) => {
+        item
+          .setTitle("Extract to new oak page")
+          .setIcon("scissors")
+          .onClick(() => {
+            void extractSelectionToPage(this);
+          });
+      });
+      menu.addSeparator();
+    }
+    menu.addItem((item) => {
+      item
+        .setTitle("Show default menu")
+        .setIcon("more-horizontal")
+        .onClick(() => this.replayDefaultContextmenu(ev));
+    });
+    menu.showAtMouseEvent(ev);
+  }
+
+  // Replay the original right-click as a fresh contextmenu event so
+  // Obsidian's own handler builds and shows the native menu at the
+  // same screen position.
+  private replayDefaultContextmenu(original: MouseEvent): void {
+    const target = original.target as HTMLElement | null;
+    if (!target) return;
+    this.oakContextmenuBypass = true;
+    const replay = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: original.clientX,
+      clientY: original.clientY,
+      button: 2,
+      view: window,
+    });
+    target.dispatchEvent(replay);
   }
 
   // Open (or refocus) a Ghost View for a redlink target. Plain
