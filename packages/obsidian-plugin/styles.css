@@ -18,6 +18,15 @@ body.oak-mode-active {
   --text-accent-hover: rgb(255, 178, 110);
   --interactive-accent: rgb(255, 178, 110);
   --interactive-accent-hover: rgb(255, 178, 110);
+  /* Obsidian derives --frame-left-space (the title-bar reserve for
+     macOS traffic lights / Win+Linux window buttons) from
+     `80px - var(--ribbon-width)`, assuming the ribbon already
+     occupies part of that strip. We hide the ribbon in oak mode
+     but the var stays at its default 44px, so the tab strip's
+     padding-left only clears ~36px and the toggle-sidebar button
+     ends up under the traffic lights. Zero the var to reclaim the
+     full 80px reserve. */
+  --ribbon-width: 0px;
 }
 
 /* Hide the entire workspace ribbon dock in oak mode. The user
@@ -41,9 +50,20 @@ body.oak-mode-active .view-actions {
 
 /* The oak views still need to be real ItemViews — leaf identity
    and workspace persistence depend on it — but their per-tab
-   header chrome is redundant inside oak mode. */
-body.oak-mode-active .workspace-leaf-content[data-type="oak-home"] .view-header,
+   header chrome is redundant inside oak mode.
+   Sidebar: drop the header entirely (right-pane stub).
+   Home: keep the header bar so the ← / → navigation buttons stay
+   reachable (browser-tab semantics) but hide the title text — the
+   inline H1 inside the home view already says "Oak — Home". */
 body.oak-mode-active .workspace-leaf-content[data-type="oak-sidebar"] .view-header {
+  display: none !important;
+}
+body.oak-mode-active
+  .workspace-leaf-content[data-type="oak-home"]
+  .view-header-title-container,
+body.oak-mode-active
+  .workspace-leaf-content[data-type="oak-home"]
+  .view-header-title {
   display: none !important;
 }
 
@@ -457,7 +477,20 @@ body.oak-mode-active {
    declaration below. */
 body.oak-mode-active .oak-home {
   max-width: none;
-  padding: 2em 4em;
+  /* Match the markdown title row's geometry: same top padding
+     (1em) and same horizontal gutter (4rem) so the page title
+     lands at the same coordinates whether the user is on Home
+     or on a markdown page. */
+  padding: 1em 4rem 0.5em;
+}
+/* Align the Home `<h1>` with the markdown inline title:
+   1.5rem / weight 700 / 1.2 line-height. The non-oak rule below
+   still applies outside oak mode. */
+body.oak-mode-active .oak-home-header h1 {
+  margin: 0 0 0.2em;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
 }
 body.oak-mode-active {
   --file-line-width: 100%;

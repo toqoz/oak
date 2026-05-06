@@ -61,6 +61,12 @@ export class OakGhostView extends ItemView {
     return "circle-slash";
   }
 
+  // See OakHomeView for rationale — opt the ghost view into the
+  // leaf's navigation history so ← / → can step back to whatever
+  // the user came from (typically a markdown page) and forward
+  // again to this redlink target.
+  override navigation = true;
+
   override async setState(
     state: unknown,
     result: ViewStateResult,
@@ -70,6 +76,7 @@ export class OakGhostView extends ItemView {
       if (typeof t === "string") this.target = t;
     }
     await super.setState(state, result);
+    result.history = true;
     this.render();
   }
 

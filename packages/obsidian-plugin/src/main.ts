@@ -6,7 +6,14 @@
 //   2. onunload: dispose of state and timers. Obsidian unregisters
 //      events automatically via `registerEvent`.
 
-import { MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from "obsidian";
+import {
+  MarkdownView,
+  Notice,
+  Plugin,
+  TFile,
+  WorkspaceLeaf,
+  setIcon,
+} from "obsidian";
 
 import {
   DEFAULT_SETTINGS,
@@ -47,11 +54,6 @@ export default class OakPlugin extends Plugin {
   private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
   private sidebarRef: OakSidebarView | null = null;
   private linksUnsubscribe: (() => void) | null = null;
-  // The "browse" leaf — like a web browser tab. The home and sidebar
-  // both target this leaf for plain-click navigation, so each click
-  // replaces the current page instead of stacking new tabs.
-  // Cmd/Ctrl-click bypasses reuse and opens a fresh tab.
-  private browseLeaf: WorkspaceLeaf | null = null;
   // Last redlink target the user clicked plus when. Used by the
   // vault.on("create") fallback to detect a file that Obsidian
   // auto-created in response to the click and roll it back into a
@@ -138,6 +140,7 @@ export default class OakPlugin extends Plugin {
         this.applyTitleOverrides();
         this.applyLinksCards();
         this.applyPageMeta();
+        this.applyHomeButton();
       }),
     );
     this.registerEvent(
@@ -145,6 +148,7 @@ export default class OakPlugin extends Plugin {
         this.applyTitleOverrides();
         this.applyLinksCards();
         this.applyPageMeta();
+        this.applyHomeButton();
       }),
     );
     this.registerEvent(
@@ -262,6 +266,7 @@ export default class OakPlugin extends Plugin {
       this.applyTitleOverrides();
       this.applyLinksCards();
       this.applyPageMeta();
+      this.applyHomeButton();
     });
   }
 
@@ -274,11 +279,13 @@ export default class OakPlugin extends Plugin {
     // Clear the body class so disabling the plugin (or reloading) can
     // never leave other ribbon icons hidden.
     document.body.removeClass("oak-mode-active");
-    // And drop any oak title overrides + footer cards / meta from
-    // open markdown views so they return to Obsidian's defaults.
+    // And drop any oak title overrides + footer cards / meta + the
+    // home button from open views so they return to Obsidian's
+    // defaults.
     this.applyTitleOverrides();
     this.applyLinksCards();
     this.applyPageMeta();
+    this.applyHomeButton();
   }
 
   async loadSettings(): Promise<void> {
@@ -313,25 +320,28 @@ export default class OakPlugin extends Plugin {
 
   // Browser-tab-style navigation for oak link clicks.
   //
-  //   plain click       reuse the existing browse leaf (or open a new
-  //                     tab if there isn't one / the user closed it)
-  //   Cmd / Ctrl click  always open a new tab; that new tab becomes the
-  //                     new browse leaf so subsequent plain clicks
-  //                     keep replacing it
+  //   plain click       reuse the currently-focused main-pane leaf
+  //                     so the click replaces in place (browser-tab
+  //                     semantics; combined with leaf history, ←
+  //                     walks back to where the user came from).
+  //   Cmd / Ctrl click  always open a new tab.
   async openInBrowseLeaf(
     file: TFile,
     opts: { newTab?: boolean } = {},
   ): Promise<void> {
-    const reuse =
-      !opts.newTab &&
-      this.browseLeaf !== null &&
-      this.isLeafAlive(this.browseLeaf);
-    const leaf = reuse
-      ? this.browseLeaf!
-      : this.app.workspace.getLeaf("tab");
-    this.browseLeaf = leaf;
+    const leaf = opts.newTab
+      ? this.app.workspace.getLeaf("tab")
+      : this.currentMainLeaf();
     await leaf.openFile(file);
     this.app.workspace.revealLeaf(leaf);
+  }
+
+  // Most-recent leaf in the rootSplit (sidebars excluded). Falls
+  // back to a fresh tab if the workspace somehow has no eligible
+  // leaf — shouldn't happen in oak mode but keeps the call total.
+  private currentMainLeaf(): WorkspaceLeaf {
+    const recent = this.app.workspace.getMostRecentLeaf();
+    return recent ?? this.app.workspace.getLeaf("tab");
   }
 
   private isLeafAlive(leaf: WorkspaceLeaf): boolean {
@@ -391,18 +401,13 @@ export default class OakPlugin extends Plugin {
     void this.openGhostView(target, ev.metaKey || ev.ctrlKey);
   }
 
-  // Open (or refocus) a Ghost View for a redlink target. Plain click
-  // reuses the browse leaf; Cmd/Ctrl-click opens a new tab so the
-  // user can keep their current page open.
+  // Open (or refocus) a Ghost View for a redlink target. Plain
+  // click replaces the current main-pane leaf in place; Cmd /
+  // Ctrl-click opens a new tab.
   async openGhostView(target: string, newTab = false): Promise<void> {
-    const reuse =
-      !newTab &&
-      this.browseLeaf !== null &&
-      this.isLeafAlive(this.browseLeaf);
-    const leaf = reuse
-      ? this.browseLeaf!
-      : this.app.workspace.getLeaf("tab");
-    this.browseLeaf = leaf;
+    const leaf = newTab
+      ? this.app.workspace.getLeaf("tab")
+      : this.currentMainLeaf();
     await leaf.setViewState({
       type: VIEW_TYPE_OAK_GHOST,
       state: { target },
@@ -433,7 +438,6 @@ export default class OakPlugin extends Plugin {
         );
         if (existing instanceof TFile) {
           await hostLeaf.openFile(existing);
-          this.browseLeaf = hostLeaf;
         }
         return;
       }
@@ -443,7 +447,6 @@ export default class OakPlugin extends Plugin {
       );
       if (file instanceof TFile) {
         await hostLeaf.openFile(file);
-        this.browseLeaf = hostLeaf;
       }
       this.state.scheduleRefresh();
     } catch (err) {
@@ -507,14 +510,10 @@ export default class OakPlugin extends Plugin {
     const isOn = sidebarPresent || homePresent;
     if (isOn) document.body.addClass("oak-mode-active");
     else document.body.removeClass("oak-mode-active");
-
-    // Re-create the home leaf if the user closed it while still in
-    // oak mode (sidebar still open). Pinning prevents the leaf from
-    // being replaced by file open events; this catches the manual
-    // close case.
-    if (isOn && !homePresent) {
-      void this.activateHome();
-    }
+    // Note: we deliberately don't auto-recreate a missing home
+    // leaf here. With browser-tab navigation, a "missing" home
+    // is the normal state right after the user clicked into a
+    // page from home — they get back via ← or the home button.
   }
 
   // For each open markdown view, replace the *displayed* filename
@@ -974,6 +973,71 @@ export default class OakPlugin extends Plugin {
     });
   }
 
+  // Inject a "go to oak home" icon button right after the ← / →
+  // history buttons in every visible view header. Clicking the
+  // button turns *that* tab into the home view (browser-tab
+  // semantics) rather than focusing a separate home tab. Skipped
+  // on the oak-home view itself (its header is hidden in oak
+  // mode anyway, but a guard keeps the intent explicit).
+  private applyHomeButton(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
+      const root = view.containerEl;
+      if (!root) return;
+      if (view.getViewType?.() === VIEW_TYPE_OAK_HOME) return;
+      const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
+      if (!headerLeft) return;
+      this.applyHomeButtonForHeader(headerLeft, leaf, oakMode);
+    });
+  }
+
+  private applyHomeButtonForHeader(
+    headerLeft: HTMLElement,
+    leaf: WorkspaceLeaf,
+    oakMode: boolean,
+  ): void {
+    const existing = headerLeft.querySelector<HTMLElement>(".oak-home-button");
+    if (!oakMode) {
+      existing?.remove();
+      return;
+    }
+    if (existing) return;
+    const navButtons = headerLeft.querySelector<HTMLElement>(
+      ".view-header-nav-buttons",
+    );
+    if (!navButtons) return;
+    // Append inside `.view-header-nav-buttons` so the home icon
+    // inherits the same `--icon-size` + flex alignment Obsidian
+    // applies to the back / forward buttons. Sitting outside the
+    // container would render the icon a touch larger and slightly
+    // off-baseline.
+    const button = document.createElement("button");
+    button.classList.add("clickable-icon", "oak-home-button");
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-label", "Oak Home");
+    setIcon(button, "house");
+    button.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.navigateLeafToHome(leaf);
+    });
+    navButtons.appendChild(button);
+  }
+
+  // Replace the contents of `leaf` with the oak-home view. We do
+  // *not* pin the resulting leaf: clicking a link from home should
+  // navigate this same tab to the target (browser-tab semantics),
+  // and pinning would block that.
+  private async navigateLeafToHome(leaf: WorkspaceLeaf): Promise<void> {
+    if (!this.isLeafAlive(leaf)) return;
+    if (leaf.view.getViewType() === VIEW_TYPE_OAK_HOME) {
+      this.app.workspace.revealLeaf(leaf);
+      return;
+    }
+    await leaf.setViewState({ type: VIEW_TYPE_OAK_HOME, active: true });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
   // The cards belong inside the scroll container, alongside the body
   // content, so they scroll with it.
   //   source / live-preview: `.cm-scroller` (sibling of `.cm-content`)
@@ -1071,18 +1135,15 @@ export default class OakPlugin extends Plugin {
   private async activateHome(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
     if (existing.length > 0) {
-      const leaf = existing[0]!;
-      this.app.workspace.revealLeaf(leaf);
-      // Re-affirm the pin in case the user toggled it off.
-      leaf.setPinned(true);
+      this.app.workspace.revealLeaf(existing[0]!);
       return;
     }
-    // Open in the main editor area, not the sidebar.
+    // Open in the main editor area, not the sidebar. The home is
+    // *not* pinned: with browser-tab navigation, a plain click on
+    // a home entry should replace the home in place (and ← brings
+    // it back via leaf history).
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.setViewState({ type: VIEW_TYPE_OAK_HOME, active: true });
     this.app.workspace.revealLeaf(leaf);
-    // Pin the home so opening a file from the sidebar / search / etc.
-    // can't accidentally replace it.
-    leaf.setPinned(true);
   }
 }

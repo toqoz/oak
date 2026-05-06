@@ -4,7 +4,13 @@
 // layout stays structurally consistent with the static index.html the
 // publisher emits.
 
-import { ItemView, TFile, WorkspaceLeaf, type App } from "obsidian";
+import {
+  ItemView,
+  TFile,
+  WorkspaceLeaf,
+  type App,
+  type ViewStateResult,
+} from "obsidian";
 import {
   gitStatus,
   homeViewModel,
@@ -50,6 +56,21 @@ export class OakHomeView extends ItemView {
 
   override getIcon(): string {
     return "trees";
+  }
+
+  // Mark the home view as a navigation target. With this set,
+  // Obsidian's leaf history records transitions into / out of the
+  // view (combined with `setState` flagging `result.history`), so
+  // ← / → in the view header walks back through home → file →
+  // home → … like a browser tab.
+  override navigation = true;
+
+  override async setState(
+    state: unknown,
+    result: ViewStateResult,
+  ): Promise<void> {
+    await super.setState(state, result);
+    result.history = true;
   }
 
   override async onOpen(): Promise<void> {
