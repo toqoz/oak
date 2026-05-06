@@ -758,6 +758,14 @@ body.oak-mode-active .markdown-preview-view {
  *   Source mode:   cm-line shows raw text including the blank — that
  *   is the literal file content and we leave it alone.
  */
+/* Callouts: the default `.callout-content` has a bottom margin that
+ * stacks on top of the callout's own bottom padding, leaving a
+ * visibly oversized gap before the closing border. Drop the inner
+ * margin so the callout's own padding controls the spacing. */
+body.oak-mode-active .callout-content {
+  margin-bottom: 0;
+}
+
 /* Live Preview: in current Obsidian the frontmatter widget shows up
  * as a `<div contenteditable="false">` at the very start of
  * `.cm-content`. The blank `.cm-line` that follows it contains a
