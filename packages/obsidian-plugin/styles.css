@@ -1130,7 +1130,13 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 16px 20px;
+  /* Horizontal gutter matches the home / search views (4rem) so all
+     three oak surfaces line up at the same column. `!important` is
+     needed to win over Obsidian's default `.view-content` padding —
+     `.oak-agenda` *is* the `.view-content` element, so without it
+     the theme's padding takes precedence and the row sits closer
+     to the left edge. */
+  padding: 1em 4rem !important;
   gap: 14px;
   overflow: hidden;
 }
@@ -1309,8 +1315,7 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   background: var(--background-modifier-hover);
 }
 .oak-agenda-item.is-focused {
-  background: var(--background-modifier-active-hover);
-  outline: 1px solid var(--interactive-accent);
+  background: var(--background-secondary);
 }
 
 .oak-agenda-cat {

@@ -7,11 +7,11 @@
 // offers `← upcoming` from any alt mode to return.
 //
 // Keybindings while focused:
-//   j / ArrowDown   focus next item
-//   k / ArrowUp     focus previous item
-//   Enter           open focused item's source line
-//   d               mark focused entry DONE / advance repeater
-//   r               force vault refresh
+//   j / ArrowDown / Ctrl-n   focus next item
+//   k / ArrowUp / Ctrl-p     focus previous item
+//   Enter                    open focused item's source line
+//   d                        mark focused entry DONE / advance repeater
+//   r                        force vault refresh
 
 import {
   ItemView,
@@ -59,6 +59,15 @@ type Filter =
   | { view: "find"; query: string };
 
 const UPCOMING_SPANS: UpcomingSpan[] = ["today", "week", "month"];
+
+// Display labels for the upcoming-span links. "today" reads as
+// "DAY" in the row so the three options share a one-word, all-caps
+// shape (DAY / WEEK / MONTH) and sit visually balanced.
+const SPAN_LABELS: Record<UpcomingSpan, string> = {
+  today: "DAY",
+  week: "WEEK",
+  month: "MONTH",
+};
 
 function spanDays(
   span: UpcomingSpan,
@@ -140,8 +149,12 @@ export class OakAgendaView extends ItemView {
     const moveFocus = (delta: 1 | -1) => this.moveFocus(delta);
     scope.register([], "j", () => moveFocus(1));
     scope.register([], "ArrowDown", () => moveFocus(1));
+    // Emacs-style C-n / C-p mirror the j / ArrowDown bindings; Ctrl
+    // (not Mod) so ⌘N stays bound to "new note" in Obsidian.
+    scope.register(["Ctrl"], "n", () => moveFocus(1));
     scope.register([], "k", () => moveFocus(-1));
     scope.register([], "ArrowUp", () => moveFocus(-1));
+    scope.register(["Ctrl"], "p", () => moveFocus(-1));
     scope.register([], "Enter", () => this.openFocused());
     scope.register([], "d", () => void this.markFocusedDone());
     scope.register([], "r", () => void this.state.refresh());
@@ -304,7 +317,7 @@ export class OakAgendaView extends ItemView {
     for (const span of UPCOMING_SPANS) {
       const btn = parent.createEl("button", {
         cls: "oak-agenda-link",
-        text: span,
+        text: SPAN_LABELS[span],
       });
       if (span === current) btn.addClass("is-active");
       btn.addEventListener("click", () =>
