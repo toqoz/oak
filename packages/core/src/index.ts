@@ -118,7 +118,6 @@ export {
   buildSearchView,
   buildTodoView,
   buildWeeklyAgenda,
-  coerceFrontmatterTags,
   compareTimestamps,
   compileMatch,
   dateOnly,

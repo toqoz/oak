@@ -37,7 +37,7 @@ export {
   withinWarning,
 } from "./timestamp.js";
 
-export { buildEffectiveTags, coerceFrontmatterTags } from "./tags.js";
+export { buildEffectiveTags } from "./tags.js";
 
 export { parseAgendaPage } from "./parse.js";
 

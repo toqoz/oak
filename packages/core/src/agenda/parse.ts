@@ -16,10 +16,7 @@
 import { createHash } from "node:crypto";
 
 import type { OakPage } from "../types.js";
-import {
-  buildEffectiveTags,
-  coerceFrontmatterTags,
-} from "./tags.js";
+import { buildEffectiveTags } from "./tags.js";
 import {
   parseAllTimestamps,
   parseRangeTimestamp,
@@ -157,17 +154,6 @@ export function parseAgendaPage(
   const todoSet = new Set(config.todoKeywords);
   const doneSet = new Set(config.doneKeywords);
 
-  const fmTags = coerceFrontmatterTags(
-    (page.rawFrontmatter as Record<string, unknown>)["tags"],
-  );
-  const fmCategoryRaw = (page.rawFrontmatter as Record<string, unknown>)[
-    "category"
-  ];
-  const fmCategory =
-    typeof fmCategoryRaw === "string" && fmCategoryRaw.trim().length > 0
-      ? fmCategoryRaw.trim()
-      : undefined;
-
   const lines = page.body.split("\n");
   const stack: Frame[] = [];
   // Wrap `pending` in an object so closure-mutations from
@@ -193,8 +179,6 @@ export function parseAgendaPage(
     const effectiveTags = buildEffectiveTags(
       pending.frame.ownTags,
       ancestorTags,
-      fmTags,
-      fmCategory,
       config,
     );
     let category =
@@ -203,7 +187,6 @@ export function parseAgendaPage(
         .map((f) => f.properties["CATEGORY"])
         .filter((v): v is string => typeof v === "string")
         .pop();
-    if (!category) category = fmCategory;
     if (!category) category = defaultCategoryFromFile(page.relPath);
 
     const properties: Record<string, string> = {};

@@ -88,14 +88,16 @@ real body`;
     expect(titles).toEqual(["Real"]);
   });
 
-  it("inherits frontmatter tags and category", () => {
+  it("ignores frontmatter tags and category", () => {
+    // Per design, file-level defaults are not honored; tags must come
+    // from heading inheritance and category falls back to filename.
     const page = makePage("# TODO Foo :own:", {
       tags: ["personal"],
       category: "home",
     });
     const [entry] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
-    expect(entry!.tags).toEqual(["personal", "home", "own"]);
-    expect(entry!.category).toBe("home");
+    expect(entry!.tags).toEqual(["own"]);
+    expect(entry!.category).toBe("Test");
   });
 
   it("inherits ancestor heading tags", () => {
