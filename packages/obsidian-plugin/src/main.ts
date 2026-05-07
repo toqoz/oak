@@ -26,6 +26,7 @@ import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
 import { OakHomeView, VIEW_TYPE_OAK_HOME } from "./views/home.js";
 import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
 import { OakAgendaView, VIEW_TYPE_OAK_AGENDA } from "./views/agenda.js";
+import { OakSearchView, VIEW_TYPE_OAK_SEARCH } from "./views/search.js";
 import {
   createNewPage,
   createPageFromRedlink,
@@ -121,6 +122,15 @@ export default class OakPlugin extends Plugin {
     this.registerView(VIEW_TYPE_OAK_AGENDA, (leaf: WorkspaceLeaf) => {
       return new OakAgendaView(leaf, this.state, this.app, openFile);
     });
+    this.registerView(VIEW_TYPE_OAK_SEARCH, (leaf: WorkspaceLeaf) => {
+      return new OakSearchView(
+        leaf,
+        this.state,
+        this.app,
+        openFile,
+        () => this.navigateLeafBack(),
+      );
+    });
     // Single "oak mode" entry — toggles between the focused oak
     // surfaces (home in main, sidebar on the right, file explorer
     // hidden) and the regular Obsidian layout (file explorer
@@ -166,6 +176,7 @@ export default class OakPlugin extends Plugin {
         this.applyLinksCards();
         this.applyPageMeta();
         this.applyHomeButton();
+        this.applySearchButton();
       }),
     );
     this.registerEvent(
@@ -174,6 +185,7 @@ export default class OakPlugin extends Plugin {
         this.applyLinksCards();
         this.applyPageMeta();
         this.applyHomeButton();
+        this.applySearchButton();
       }),
     );
     this.registerEvent(
@@ -303,6 +315,11 @@ export default class OakPlugin extends Plugin {
       name: "Open agenda",
       callback: () => void this.openAgenda(),
     });
+    this.addCommand({
+      id: "oak-search",
+      name: "Search vault",
+      callback: () => void this.openSearch(),
+    });
 
     // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.
     // Reads `todoKeywords` lazily so changes to .oak/agenda.yml take
@@ -331,6 +348,7 @@ export default class OakPlugin extends Plugin {
       this.applyLinksCards();
       this.applyPageMeta();
       this.applyHomeButton();
+      this.applySearchButton();
     });
   }
 
@@ -350,6 +368,7 @@ export default class OakPlugin extends Plugin {
     this.applyLinksCards();
     this.applyPageMeta();
     this.applyHomeButton();
+    this.applySearchButton();
   }
 
   async loadSettings(): Promise<void> {
@@ -1204,6 +1223,88 @@ export default class OakPlugin extends Plugin {
     await leaf.setViewState({ type: VIEW_TYPE_OAK_HOME, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
+
+  // Twin of applyHomeButton — sits right after the home icon in the
+  // view header. Skipped on the search view itself (re-clicking would
+  // be a no-op) and on the home / ghost / sidebar where their own
+  // headers already get covered by the iterator.
+  private applySearchButton(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
+      const root = view.containerEl;
+      if (!root) return;
+      if (view.getViewType?.() === VIEW_TYPE_OAK_SEARCH) return;
+      const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
+      if (!headerLeft) return;
+      this.applySearchButtonForHeader(headerLeft, leaf, oakMode);
+    });
+  }
+
+  private applySearchButtonForHeader(
+    headerLeft: HTMLElement,
+    leaf: WorkspaceLeaf,
+    oakMode: boolean,
+  ): void {
+    const existing = headerLeft.querySelector<HTMLElement>(".oak-search-button");
+    if (!oakMode) {
+      existing?.remove();
+      return;
+    }
+    if (existing) return;
+    const navButtons = headerLeft.querySelector<HTMLElement>(
+      ".view-header-nav-buttons",
+    );
+    if (!navButtons) return;
+    const button = document.createElement("button");
+    button.classList.add("clickable-icon", "oak-search-button");
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-label", "Oak Search");
+    setIcon(button, "search");
+    button.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.navigateLeafToSearch(leaf);
+    });
+    navButtons.appendChild(button);
+  }
+
+  // Browser-tab semantics for opening search: replace `leaf` in
+  // place, recording the prior view in leaf history so ← brings the
+  // user back to whatever they came from. If the leaf already shows
+  // the search view, just refocus the input so re-pressing ⌘F always
+  // ends up "ready to type".
+  private async navigateLeafToSearch(leaf: WorkspaceLeaf): Promise<void> {
+    if (!this.isLeafAlive(leaf)) return;
+    const view = leaf.view;
+    if (view instanceof OakSearchView) {
+      this.app.workspace.revealLeaf(leaf);
+      view.focusInput();
+      return;
+    }
+    await leaf.setViewState({ type: VIEW_TYPE_OAK_SEARCH, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    const newView = leaf.view;
+    if (newView instanceof OakSearchView) newView.focusInput();
+  }
+
+  // Top-level entry for the `oak-search` command. Always opens in the
+  // currently-focused main-pane leaf (browser-tab semantics).
+  async openSearch(): Promise<void> {
+    const leaf = this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
+    await this.navigateLeafToSearch(leaf);
+  }
+
+  // Walk one step back in the active leaf's history. Used by the
+  // search view's Esc handler when the query is already empty.
+  private navigateLeafBack(): void {
+    // `app.commands` is on the runtime App but not in the public
+    // types — cast through `unknown` to access it.
+    const commands = (
+      this.app as unknown as { commands?: { executeCommandById?: (id: string) => boolean } }
+    ).commands;
+    commands?.executeCommandById?.("app:go-back");
+  }
+
 
   // The cards belong inside the scroll container, alongside the body
   // content, so they scroll with it.

@@ -63,6 +63,12 @@ body.oak-mode-active
   .view-header-title-container,
 body.oak-mode-active
   .workspace-leaf-content[data-type="oak-home"]
+  .view-header-title,
+body.oak-mode-active
+  .workspace-leaf-content[data-type="oak-search"]
+  .view-header-title-container,
+body.oak-mode-active
+  .workspace-leaf-content[data-type="oak-search"]
   .view-header-title {
   display: none !important;
 }
@@ -453,6 +459,214 @@ body.oak-mode-active .oak-tab-title-override::before {
   text-overflow: ellipsis;
   display: flex;
   align-items: center;
+}
+
+/* oak search view — full-pane layout with a big input on top and a
+   results / preview split below. Horizontal gutter is on the child
+   rows (not on `.view-content` which is what `.oak-search` lives on)
+   so the theme's own `.view-content` padding rules can't beat us on
+   specificity. 4rem matches the home view. */
+.oak-search {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  font-size: 13px;
+  padding: 0 !important;
+}
+.oak-search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  padding: 1.5em 4rem 1em;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.oak-search-input-icon {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  opacity: 0.7;
+}
+.oak-search-input-icon svg {
+  width: 18px;
+  height: 18px;
+}
+input.oak-search-input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--text-normal);
+  padding: 0;
+  font-family: inherit;
+}
+input.oak-search-input:focus,
+input.oak-search-input:focus-visible {
+  outline: 0;
+  box-shadow: none;
+  border: 0;
+}
+input.oak-search-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-weight: 400;
+}
+.oak-search-summary {
+  flex: 0 0 auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.oak-search-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 2em;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 1em 4rem 2em;
+}
+@media (max-width: 900px) {
+  .oak-search-body {
+    grid-template-columns: 1fr;
+  }
+  .oak-search-preview {
+    display: none;
+  }
+}
+.oak-search-results {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+.oak-search-result {
+  padding: 0.6em 0.8em;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  background: transparent;
+}
+.oak-search-result:hover {
+  background: var(--background-modifier-hover);
+}
+.oak-search-result.is-selected {
+  background: var(--background-secondary);
+}
+.oak-search-result-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+}
+.oak-search-result-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-normal);
+}
+.oak-search-result-vis {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.oak-vis-public {
+  color: var(--text-accent);
+  border-color: var(--text-accent);
+}
+.oak-search-result-path {
+  font-family: var(--font-monospace, monospace);
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+.oak-search-snip {
+  display: grid;
+  grid-template-columns: 3.5em 1fr;
+  gap: 0.6em;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.oak-search-snip-title,
+.oak-search-snip-alias {
+  color: var(--text-normal);
+}
+.oak-search-snip-line {
+  font-family: var(--font-monospace, monospace);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  opacity: 0.7;
+  text-align: right;
+  white-space: nowrap;
+}
+.oak-search-snip-text {
+  color: var(--text-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+mark.oak-search-mark {
+  background: var(--text-accent);
+  color: var(--background-primary);
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+.oak-search-snip-more {
+  margin-top: 0.2em;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  padding-left: 4.1em;
+}
+.oak-search-preview {
+  overflow-y: auto;
+  min-height: 0;
+  border-left: 1px solid var(--background-modifier-border);
+  padding-left: 2em;
+}
+.oak-search-preview-empty {
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-size: 12px;
+}
+.oak-search-preview-head {
+  margin-bottom: 1.2em;
+  padding-bottom: 0.8em;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.oak-search-preview-title {
+  margin: 0 0 0.4em;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text-normal);
+  line-height: 1.2;
+}
+.oak-search-preview-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.75;
+  font-family: var(--font-monospace, monospace);
+}
+.oak-search-preview-snippets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+}
+.oak-search-snip-large {
+  font-size: 13px;
 }
 
 /* oak-mode is the quiet mode — drop body text size to 14px (the
