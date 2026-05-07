@@ -40,7 +40,7 @@ export {
 
 export { buildEffectiveTags } from "./tags.js";
 
-export { parseAgendaPage } from "./parse.js";
+export { parseAgendaPage, parsePlanningLine } from "./parse.js";
 
 export { compileMatch } from "./match.js";
 export type { MatchPredicate } from "./match.js";

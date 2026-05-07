@@ -132,6 +132,7 @@ export {
   nowIsoMinute,
   parseAgendaPage,
   parseAllTimestamps,
+  parsePlanningLine,
   parseRangeTimestamp,
   parseTimestamp,
   runAgenda,

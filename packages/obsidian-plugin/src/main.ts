@@ -39,12 +39,16 @@ import {
 } from "./commands.js";
 import {
   composePage,
+  DEFAULT_AGENDA_CONFIG,
   ensureGitRepo,
   excerptFrom,
+  loadAgendaConfig,
   slugify,
   snapshot,
+  type AgendaConfig,
   type OakPage,
 } from "@oak/core";
+import { agendaTooltipExtension } from "./agenda-tooltip.js";
 import { describeBacklinks, describeTwoHop } from "./format.js";
 import { ensureBlankAfterFrontmatter } from "./frontmatter-normalize.js";
 import { vaultRoot } from "./paths.js";
@@ -58,6 +62,10 @@ export default class OakPlugin extends Plugin {
   private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
   private sidebarRef: OakSidebarView | null = null;
   private linksUnsubscribe: (() => void) | null = null;
+  // Live copy of `.oak/agenda.yml`. Used by editor extensions (e.g. the
+  // SCHEDULED/DEADLINE tooltip) that need to know the active TODO
+  // keyword set without re-reading the file on every keystroke.
+  private agendaConfig: AgendaConfig = DEFAULT_AGENDA_CONFIG;
   // Last redlink target the user clicked plus when. Used by the
   // vault.on("create") fallback to detect a file that Obsidian
   // auto-created in response to the click and roll it back into a
@@ -180,6 +188,9 @@ export default class OakPlugin extends Plugin {
     this.linksUnsubscribe = this.state.subscribe(() => {
       this.applyLinksCards();
       this.applyPageMeta();
+      // The user may have edited `.oak/agenda.yml` to change TODO
+      // keywords; pick that up on the next vault refresh.
+      void this.refreshAgendaConfig();
     });
 
     // Intercept red-link clicks while in oak mode and route them to
@@ -293,12 +304,24 @@ export default class OakPlugin extends Plugin {
       callback: () => void this.openAgenda(),
     });
 
+    // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.
+    // Reads `todoKeywords` lazily so changes to .oak/agenda.yml take
+    // effect on the next state refresh without re-registering the
+    // extension.
+    this.registerEditorExtension(
+      agendaTooltipExtension({
+        todoKeywords: () => this.agendaConfig.todoKeywords,
+        weekStartsOn: () => this.agendaConfig.weekStartsOn,
+      }),
+    );
+
     this.addSettingTab(new OakSettingTab(this.app, this));
 
     // Initial parse + auto-snapshot setup happen after layout is ready
     // so the active file detection works on the first sidebar render.
     this.app.workspace.onLayoutReady(() => {
       void this.state.refresh();
+      void this.refreshAgendaConfig();
       this.applyAutoSnapshot();
       // If a previous session left oak views in the workspace state,
       // Obsidian has just re-instantiated them. Re-attach the chrome
@@ -349,6 +372,15 @@ export default class OakPlugin extends Plugin {
         console.warn("oak auto-snapshot failed:", err),
       );
     }, ms);
+  }
+
+  private async refreshAgendaConfig(): Promise<void> {
+    try {
+      this.agendaConfig = await loadAgendaConfig(vaultRoot(this.app));
+    } catch (err) {
+      console.warn("oak: loadAgendaConfig failed", err);
+      this.agendaConfig = DEFAULT_AGENDA_CONFIG;
+    }
   }
 
   private async ensureGitInBackground(): Promise<void> {

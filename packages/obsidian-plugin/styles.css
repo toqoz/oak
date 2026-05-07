@@ -795,3 +795,92 @@ body.oak-mode-active .markdown-preview-view > .frontmatter + p:empty,
 body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   display: none;
 }
+
+/* SCHEDULED / DEADLINE tooltip on TODO heading lines.
+ * Rendered via CodeMirror's `showTooltip` facet. Three-step flow:
+ *   1. pick field (SCHEDULED / DEADLINE)
+ *   2. pick date preset (today / tomorrow / next mon / +7d / cal)
+ *   3. (only if `cal`) month grid
+ * The wrapper holds a body column on the left and a close button on
+ * the right; the body's contents swap as the user steps through. */
+.oak-agenda-tooltip {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 6px 6px 8px;
+  font-size: var(--font-ui-small);
+}
+.oak-agenda-tooltip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.oak-agenda-tooltip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.oak-agenda-tooltip-btn {
+  font-size: inherit;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.oak-agenda-tooltip-back {
+  margin-left: auto;
+  opacity: 0.7;
+}
+.oak-agenda-tooltip-close {
+  align-self: flex-start;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 2px 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.oak-agenda-tooltip-close:hover {
+  opacity: 1;
+}
+
+.oak-agenda-tooltip-cal-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.oak-agenda-tooltip-cal-label {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.oak-agenda-tooltip-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 2em);
+  gap: 2px;
+}
+.oak-agenda-tooltip-cal-dow {
+  text-align: center;
+  font-size: 0.85em;
+  opacity: 0.6;
+  padding: 2px 0;
+}
+.oak-agenda-tooltip-cal-day {
+  font: inherit;
+  padding: 2px 0;
+  text-align: center;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+}
+.oak-agenda-tooltip-cal-day:hover {
+  background: var(--background-modifier-hover);
+}
+.oak-agenda-tooltip-cal-day.is-off-month {
+  opacity: 0.35;
+}
+.oak-agenda-tooltip-cal-day.is-today {
+  border-color: var(--interactive-accent);
+}

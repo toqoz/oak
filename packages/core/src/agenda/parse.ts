@@ -82,7 +82,7 @@ function defaultCategoryFromFile(relPath: string): string {
   return last.replace(/\.md$/i, "");
 }
 
-function parsePlanningLine(line: string): {
+export function parsePlanningLine(line: string): {
   scheduled?: AgendaTimestamp;
   deadline?: AgendaTimestamp;
   closed?: AgendaTimestamp;
