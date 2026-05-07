@@ -14,6 +14,13 @@ export type {
   HomeEntry,
   HomeStats,
 } from "./home.js";
+export { searchVault } from "./search.js";
+export type {
+  SearchHit,
+  SearchSnippet,
+  SearchMatchKind,
+  SearchOptions,
+} from "./search.js";
 export {
   buildGraph,
   resolveLinks,
