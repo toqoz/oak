@@ -109,6 +109,155 @@ CLOSED: [2026-05-04 Mon 17:00]
   });
 });
 
+describe("runAgenda — deadline prewarning vs SCHEDULED", () => {
+  // Mirrors a real-world layout that surfaced confusing output:
+  // a TODO with both SCHEDULED (tomorrow) and DEADLINE (within the
+  // 14d default warning window). With the emacs default policy
+  // (`false`) the deadline-warning fires on today even though the
+  // user has already declared they'll start tomorrow. The oak default
+  // is `"pre-scheduled"` — suppress prewarning until SCHEDULED day.
+  const TODAY = "2026-05-07";
+  const NOW_TODAY = new Date(`${TODAY}T08:00:00Z`);
+
+  function buildPage(): OakPage {
+    return makePage(
+      "tasks.md",
+      `## TODO Test entry alpha
+SCHEDULED: <2026-05-09 Sat>
+## TODO Refactor build configuration
+SCHEDULED: <2026-05-07 Thu>
+
+## TODO Update documentation
+SCHEDULED: <2026-05-08 Fri>
+
+## TODO Continue prior investigation
+
+## TODO Investigate intermittent failure
+SCHEDULED: <2026-05-08 Fri> DEADLINE: <2026-05-11 Mon>
+
+## TODO Review monthly cron timing
+
+## TODO Mobile responsiveness pass
+`,
+    );
+  }
+  const entries = parseAgendaPage(buildPage(), DEFAULT_AGENDA_CONFIG);
+
+  it("default policy ('pre-scheduled') hides the prewarning while today is before SCHEDULED", () => {
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      DEFAULT_AGENDA_CONFIG,
+      NOW_TODAY,
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const titles = today.items.map((it) => it.entry.title);
+    expect(titles).toContain("Refactor build configuration");
+    expect(titles).not.toContain("Investigate intermittent failure");
+  });
+
+  it("default policy still shows the entry on its SCHEDULED day", () => {
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 7 },
+      DEFAULT_AGENDA_CONFIG,
+      NOW_TODAY,
+    );
+    const fri = view.buckets.find((b) => b.key === "2026-05-08")!;
+    const item = fri.items.find(
+      (it) => it.entry.title === "Investigate intermittent failure",
+    );
+    expect(item?.marker).toBe("scheduled");
+  });
+
+  it("default policy still shows the deadline on its own day", () => {
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 7 },
+      DEFAULT_AGENDA_CONFIG,
+      NOW_TODAY,
+    );
+    const mon = view.buckets.find((b) => b.key === "2026-05-11")!;
+    const item = mon.items.find(
+      (it) => it.entry.title === "Investigate intermittent failure",
+    );
+    expect(item?.marker).toBe("deadline");
+  });
+
+  it("default policy resumes prewarning once today reaches the SCHEDULED date", () => {
+    // Pretend today is 2026-05-08 (= SCHEDULED). DEADLINE is 3d out,
+    // within the 14d warning window. Now the prewarning should fire
+    // (the entry is already on its scheduled-day bucket too).
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: "2026-05-08", days: 1 },
+      DEFAULT_AGENDA_CONFIG,
+      new Date("2026-05-08T08:00:00Z"),
+    );
+    const fri = view.buckets.find((b) => b.key === "2026-05-08")!;
+    const titles = fri.items.map((it) => it.entry.title);
+    // The entry shows up as "scheduled" (on-day) — the prewarning is
+    // additionally allowed but the on-day bucket dedupes on marker.
+    expect(titles).toContain("Investigate intermittent failure");
+  });
+
+  it("policy=false reproduces emacs default behavior (prewarning fires on today)", () => {
+    const config = {
+      ...DEFAULT_AGENDA_CONFIG,
+      skipDeadlinePrewarningIfScheduled: false as const,
+    };
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      config,
+      NOW_TODAY,
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const item = today.items.find(
+      (it) => it.entry.title === "Investigate intermittent failure",
+    );
+    expect(item?.marker).toBe("deadline-warning");
+    expect(item?.daysDelta).toBe(4);
+  });
+
+  it("policy=true suppresses prewarning whenever SCHEDULED is set, regardless of date", () => {
+    const config = {
+      ...DEFAULT_AGENDA_CONFIG,
+      skipDeadlinePrewarningIfScheduled: true as const,
+    };
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: "2026-05-08", days: 1 },
+      config,
+      new Date("2026-05-08T08:00:00Z"),
+    );
+    const fri = view.buckets.find((b) => b.key === "2026-05-08")!;
+    const warning = fri.items.find(
+      (it) => it.marker === "deadline-warning",
+    );
+    expect(warning).toBeUndefined();
+  });
+
+  it("DEADLINE-only entries (no SCHEDULED) still show the prewarning", () => {
+    const page = makePage(
+      "deadline-only.md",
+      `## TODO Submit report
+DEADLINE: <2026-05-11 Mon>
+`,
+    );
+    const localEntries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    const view = runAgenda(
+      localEntries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      DEFAULT_AGENDA_CONFIG,
+      NOW_TODAY,
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const item = today.items.find((it) => it.marker === "deadline-warning");
+    expect(item?.daysDelta).toBe(4);
+  });
+});
+
 describe("runAgenda — todo", () => {
   it("flat-lists open TODOs by priority", () => {
     const page = makePage(

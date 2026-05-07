@@ -11,6 +11,7 @@ export type {
   DurationUnit,
   Repeater,
   RepeaterKind,
+  SkipDeadlinePrewarningPolicy,
   WarningPeriod,
 } from "./types.js";
 

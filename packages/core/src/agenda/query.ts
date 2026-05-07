@@ -52,6 +52,26 @@ function isStillOpen(entry: AgendaEntry, doneSet: Set<string>): boolean {
   return !doneSet.has(entry.todoState);
 }
 
+// Apply `skipDeadlinePrewarningIfScheduled` policy. Mirrors emacs
+// `org-agenda-skip-deadline-prewarning-if-scheduled`.
+//   false           — never skip (emacs default)
+//   true            — always skip when SCHEDULED is set
+//   "pre-scheduled" — skip only while today is strictly before the
+//                     SCHEDULED date; once scheduled day arrives, the
+//                     deadline pre-warning resumes.
+function shouldSkipPrewarning(
+  entry: AgendaEntry,
+  todayIsoDate: string,
+  config: AgendaConfig,
+): boolean {
+  const policy = config.skipDeadlinePrewarningIfScheduled;
+  if (!policy) return false;
+  if (!entry.scheduled) return false;
+  if (policy === true) return true;
+  // "pre-scheduled"
+  return todayIsoDate < dateOnly(entry.scheduled.iso);
+}
+
 function timeOf(ts: AgendaTimestamp): string | null {
   if (!ts.hasTime) return null;
   return ts.iso.slice(11, 16);
@@ -142,7 +162,11 @@ export function buildWeeklyAgenda(
             time: timeOf(entry.deadline),
             endTime: endTimeOf(entry.deadline),
           });
-        } else if (w.warning !== null && dateIso === todayIsoDate) {
+        } else if (
+          w.warning !== null &&
+          dateIso === todayIsoDate &&
+          !shouldSkipPrewarning(entry, dateIso, config)
+        ) {
           // Show warning lookahead only on today's bucket.
           items.push({
             entry,

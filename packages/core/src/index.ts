@@ -153,5 +153,6 @@ export type {
   MatchPredicate,
   Repeater,
   RepeaterKind,
+  SkipDeadlinePrewarningPolicy,
   WarningPeriod,
 } from "./agenda/index.js";

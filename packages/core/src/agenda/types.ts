@@ -68,6 +68,16 @@ export type AgendaEntry = {
   body: string;
 };
 
+// `org-agenda-skip-deadline-prewarning-if-scheduled` analogue.
+//   false           — emacs default: prewarning fires regardless of SCHEDULED
+//   true            — prewarning suppressed whenever SCHEDULED is set
+//                     (deadline day itself still shows)
+//   "pre-scheduled" — prewarning suppressed only while today is strictly
+//                     before the SCHEDULED date; once scheduled day arrives,
+//                     prewarning resumes. This is the most common heavy-user
+//                     setting and the oak default.
+export type SkipDeadlinePrewarningPolicy = false | true | "pre-scheduled";
+
 export type AgendaConfig = {
   todoKeywords: string[];
   doneKeywords: string[];
@@ -78,6 +88,7 @@ export type AgendaConfig = {
   agendaFilesExclude: string[];
   weekStartsOn: 0 | 1; // 0 = Sunday, 1 = Monday (org default)
   priorities: { highest: string; lowest: string; default: string };
+  skipDeadlinePrewarningIfScheduled: SkipDeadlinePrewarningPolicy;
 };
 
 export type AgendaQuery =
