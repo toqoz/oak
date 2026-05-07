@@ -176,6 +176,7 @@ export default class OakPlugin extends Plugin {
         this.applyLinksCards();
         this.applyPageMeta();
         this.applyHomeButton();
+        this.applyAgendaButton();
         this.applySearchButton();
       }),
     );
@@ -185,6 +186,7 @@ export default class OakPlugin extends Plugin {
         this.applyLinksCards();
         this.applyPageMeta();
         this.applyHomeButton();
+        this.applyAgendaButton();
         this.applySearchButton();
       }),
     );
@@ -348,6 +350,7 @@ export default class OakPlugin extends Plugin {
       this.applyLinksCards();
       this.applyPageMeta();
       this.applyHomeButton();
+      this.applyAgendaButton();
       this.applySearchButton();
     });
   }
@@ -368,6 +371,7 @@ export default class OakPlugin extends Plugin {
     this.applyLinksCards();
     this.applyPageMeta();
     this.applyHomeButton();
+    this.applyAgendaButton();
     this.applySearchButton();
   }
 
@@ -1162,19 +1166,19 @@ export default class OakPlugin extends Plugin {
   // Inject a "go to oak home" icon button right after the ← / →
   // history buttons in every visible view header. Clicking the
   // button turns *that* tab into the home view (browser-tab
-  // semantics) rather than focusing a separate home tab. Skipped
-  // on the oak-home view itself (its header is hidden in oak
-  // mode anyway, but a guard keeps the intent explicit).
+  // semantics). Rendered on every view including the home view
+  // itself — when the view matches, the button shows up disabled
+  // so the icon row stays in a fixed position.
   private applyHomeButton(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
       const root = view.containerEl;
       if (!root) return;
-      if (view.getViewType?.() === VIEW_TYPE_OAK_HOME) return;
       const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
       if (!headerLeft) return;
-      this.applyHomeButtonForHeader(headerLeft, leaf, oakMode);
+      const isCurrent = view.getViewType?.() === VIEW_TYPE_OAK_HOME;
+      this.applyHomeButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
     });
   }
 
@@ -1182,13 +1186,18 @@ export default class OakPlugin extends Plugin {
     headerLeft: HTMLElement,
     leaf: WorkspaceLeaf,
     oakMode: boolean,
+    isCurrent: boolean,
   ): void {
-    const existing = headerLeft.querySelector<HTMLElement>(".oak-home-button");
+    const existing =
+      headerLeft.querySelector<HTMLButtonElement>(".oak-home-button");
     if (!oakMode) {
       existing?.remove();
       return;
     }
-    if (existing) return;
+    if (existing) {
+      this.setNavButtonCurrent(existing, isCurrent);
+      return;
+    }
     const navButtons = headerLeft.querySelector<HTMLElement>(
       ".view-header-nav-buttons",
     );
@@ -1207,7 +1216,26 @@ export default class OakPlugin extends Plugin {
       ev.preventDefault();
       void this.navigateLeafToHome(leaf);
     });
-    navButtons.appendChild(button);
+    this.setNavButtonCurrent(button, isCurrent);
+    // Keep order home → agenda → search regardless of which apply
+    // was called first.
+    const successor = navButtons.querySelector<HTMLElement>(
+      ".oak-agenda-button, .oak-search-button",
+    );
+    navButtons.insertBefore(button, successor ?? null);
+  }
+
+  // Mark a nav button as representing the current view: visually
+  // de-emphasised (looks "you are here, no-op") and disabled so a
+  // click can't fire.
+  private setNavButtonCurrent(
+    button: HTMLButtonElement,
+    isCurrent: boolean,
+  ): void {
+    button.disabled = isCurrent;
+    button.classList.toggle("is-active", isCurrent);
+    if (isCurrent) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   }
 
   // Replace the contents of `leaf` with the oak-home view. We do
@@ -1224,20 +1252,87 @@ export default class OakPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  // Twin of applyHomeButton — sits right after the home icon in the
-  // view header. Skipped on the search view itself (re-clicking would
-  // be a no-op) and on the home / ghost / sidebar where their own
-  // headers already get covered by the iterator.
+  // Twin of applyHomeButton — sits between the home and search icons
+  // in the view header. Rendered on every view including the agenda
+  // view itself (disabled there) so the icon row stays in a fixed
+  // position.
+  private applyAgendaButton(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
+      const root = view.containerEl;
+      if (!root) return;
+      const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
+      if (!headerLeft) return;
+      const isCurrent = view.getViewType?.() === VIEW_TYPE_OAK_AGENDA;
+      this.applyAgendaButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
+    });
+  }
+
+  private applyAgendaButtonForHeader(
+    headerLeft: HTMLElement,
+    leaf: WorkspaceLeaf,
+    oakMode: boolean,
+    isCurrent: boolean,
+  ): void {
+    const existing =
+      headerLeft.querySelector<HTMLButtonElement>(".oak-agenda-button");
+    if (!oakMode) {
+      existing?.remove();
+      return;
+    }
+    if (existing) {
+      this.setNavButtonCurrent(existing, isCurrent);
+      return;
+    }
+    const navButtons = headerLeft.querySelector<HTMLElement>(
+      ".view-header-nav-buttons",
+    );
+    if (!navButtons) return;
+    const button = document.createElement("button");
+    button.classList.add("clickable-icon", "oak-agenda-button");
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-label", "Oak Agenda");
+    setIcon(button, "calendar-days");
+    button.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.navigateLeafToAgenda(leaf);
+    });
+    this.setNavButtonCurrent(button, isCurrent);
+    // Insert before the search button when present so the order in
+    // every header is home → agenda → search regardless of which
+    // button was applied first.
+    const searchButton = navButtons.querySelector<HTMLElement>(
+      ".oak-search-button",
+    );
+    navButtons.insertBefore(button, searchButton ?? null);
+  }
+
+  private async navigateLeafToAgenda(leaf: WorkspaceLeaf): Promise<void> {
+    if (!this.isLeafAlive(leaf)) return;
+    if (leaf.view.getViewType() === VIEW_TYPE_OAK_AGENDA) {
+      this.app.workspace.revealLeaf(leaf);
+      return;
+    }
+    await leaf.setViewState({ type: VIEW_TYPE_OAK_AGENDA, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    // Make sure the vault has been parsed at least once.
+    void this.state.refresh();
+  }
+
+  // Twin of applyHomeButton — sits right after the agenda icon in the
+  // view header. Rendered on every view including the search view
+  // itself (disabled there) so the icon row stays in a fixed position.
   private applySearchButton(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
       const root = view.containerEl;
       if (!root) return;
-      if (view.getViewType?.() === VIEW_TYPE_OAK_SEARCH) return;
       const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
       if (!headerLeft) return;
-      this.applySearchButtonForHeader(headerLeft, leaf, oakMode);
+      const isCurrent = view.getViewType?.() === VIEW_TYPE_OAK_SEARCH;
+      this.applySearchButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
     });
   }
 
@@ -1245,13 +1340,18 @@ export default class OakPlugin extends Plugin {
     headerLeft: HTMLElement,
     leaf: WorkspaceLeaf,
     oakMode: boolean,
+    isCurrent: boolean,
   ): void {
-    const existing = headerLeft.querySelector<HTMLElement>(".oak-search-button");
+    const existing =
+      headerLeft.querySelector<HTMLButtonElement>(".oak-search-button");
     if (!oakMode) {
       existing?.remove();
       return;
     }
-    if (existing) return;
+    if (existing) {
+      this.setNavButtonCurrent(existing, isCurrent);
+      return;
+    }
     const navButtons = headerLeft.querySelector<HTMLElement>(
       ".view-header-nav-buttons",
     );
@@ -1265,6 +1365,7 @@ export default class OakPlugin extends Plugin {
       ev.preventDefault();
       void this.navigateLeafToSearch(leaf);
     });
+    this.setNavButtonCurrent(button, isCurrent);
     navButtons.appendChild(button);
   }
 
@@ -1416,15 +1517,8 @@ export default class OakPlugin extends Plugin {
   }
 
   async openAgenda(): Promise<void> {
-    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_AGENDA);
-    if (existing.length > 0) {
-      this.app.workspace.revealLeaf(existing[0]!);
-      return;
-    }
-    const leaf = this.app.workspace.getLeaf(false);
-    await leaf.setViewState({ type: VIEW_TYPE_OAK_AGENDA, active: true });
-    this.app.workspace.revealLeaf(leaf);
-    // Make sure the vault has been parsed at least once.
-    void this.state.refresh();
+    const leaf =
+      this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
+    await this.navigateLeafToAgenda(leaf);
   }
 }

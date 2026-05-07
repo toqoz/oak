@@ -101,6 +101,22 @@ body.oak-mode-active .status-bar {
   display: none !important;
 }
 
+/* Header nav buttons for the three oak entry points. They sit in
+   every view header (alongside ← / →) so the user always knows
+   where the row is. The button matching the current view is
+   rendered disabled and tinted with the oak accent — a quiet "you
+   are here" marker, no background fill or hover swap. */
+body.oak-mode-active .clickable-icon.oak-home-button:disabled,
+body.oak-mode-active .clickable-icon.oak-agenda-button:disabled,
+body.oak-mode-active .clickable-icon.oak-search-button:disabled,
+body.oak-mode-active .clickable-icon.oak-home-button:disabled:hover,
+body.oak-mode-active .clickable-icon.oak-agenda-button:disabled:hover,
+body.oak-mode-active .clickable-icon.oak-search-button:disabled:hover {
+  color: var(--text-accent);
+  background: transparent;
+  cursor: default;
+}
+
 /* "Related" footer — sits *inside* the scroll container (alongside
    `.cm-content` for source / live-preview, alongside
    `.markdown-preview-section` for reading mode), so the cards
