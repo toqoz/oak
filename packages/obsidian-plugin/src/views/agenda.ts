@@ -1,26 +1,17 @@
 // Oak agenda view — port of emacs `org-agenda` adapted for the
 // Obsidian editor surface.
 //
-// Five tabs (named, not single letters):
-//   Today    — today's bucket only. Scheduled-on-day, deadlines-on-day,
-//              overdue scheduled and deadline warnings/overdues all
-//              roll up here per the existing weekly-view rules.
-//   Upcoming — today + N days. Span chips switch N (1/3/7/14).
-//   TODO     — global open-TODO list. Keyword chips filter by state.
-//   Tags     — `org-tags-view`. Inline input for `+work-someday` etc.
-//   Search   — body regex. Inline input.
+// Default surface is Upcoming (today + N days, weekly bucket layout).
+// Three alternate "modes" — All TODOs, Tags, Search — are reachable
+// via quiet text links rather than tabs; the Upcoming view also
+// offers `← upcoming` from any alt mode to return.
 //
-// Keybindings (focus must be in the agenda leaf):
+// Keybindings while focused:
 //   j / ArrowDown   focus next item
 //   k / ArrowUp     focus previous item
 //   Enter           open focused item's source line
 //   d               mark focused entry DONE / advance repeater
 //   r               force vault refresh
-//
-// The previous build wired `m` and `s` through `window.prompt`, which
-// Electron renderer blocks — so those modes were silently broken.
-// Inline inputs replace the prompts and let the user edit/re-run the
-// query without leaving the view.
 
 import {
   ItemView,
@@ -28,6 +19,7 @@ import {
   Scope,
   TFile,
   WorkspaceLeaf,
+  setIcon,
   type App,
 } from "obsidian";
 
@@ -53,26 +45,57 @@ import type { VaultSnapshot, VaultState } from "../state.js";
 
 export const VIEW_TYPE_OAK_AGENDA = "oak-agenda";
 
-type TabKind = "upcoming" | "todo" | "tags" | "search";
+type ViewKind = "upcoming" | "todo" | "find";
+
+// All three spans start from today. `"today"` is a one-day window;
+// `"week"` / `"month"` snap to the current week/month boundary (so
+// the span shrinks as the period progresses — "what's left this
+// week / this month").
+type UpcomingSpan = "today" | "week" | "month";
 
 type Filter =
-  | { tab: "upcoming"; days: 1 | 3 | 7 | 14 }
-  | { tab: "todo"; keyword: string | null }
-  | { tab: "tags"; expression: string }
-  | { tab: "search"; regex: string };
+  | { view: "upcoming"; span: UpcomingSpan }
+  | { view: "todo"; keyword: string | null }
+  | { view: "find"; query: string };
 
-const TAB_LABELS: Record<TabKind, string> = {
-  upcoming: "Upcoming",
-  todo: "TODO",
-  tags: "Tags",
-  search: "Search",
-};
+const UPCOMING_SPANS: UpcomingSpan[] = ["today", "week", "month"];
 
-const UPCOMING_SPANS: Array<1 | 3 | 7 | 14> = [1, 3, 7, 14];
+function spanDays(
+  span: UpcomingSpan,
+  todayIso: string,
+  weekStartsOn: 0 | 1,
+): number {
+  if (span === "today") return 1;
+  const y = parseInt(todayIso.slice(0, 4), 10);
+  const m = parseInt(todayIso.slice(5, 7), 10);
+  const d = parseInt(todayIso.slice(8, 10), 10);
+  if (span === "week") {
+    // Days from today (inclusive) through end-of-week. Week is anchored
+    // by config.weekStartsOn (0=Sun, 1=Mon).
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    const offsetFromStart = (dow - weekStartsOn + 7) % 7;
+    return 7 - offsetFromStart;
+  }
+  // "month": today (inclusive) through last day of current calendar month.
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return lastDay - d + 1;
+}
+
+// Tag-expression syntax leads with + / - / @ / `(`; anything else falls
+// through to a regex search. Lets one input handle both org-agenda
+// `tags-view` (m) and `search-view` (s) without a mode toggle.
+function parseFindQuery(
+  raw: string,
+): { kind: "match" | "search"; payload: string } | null {
+  const q = raw.trim();
+  if (q.length === 0) return null;
+  if (/^[+\-@(]/.test(q)) return { kind: "match", payload: q };
+  return { kind: "search", payload: q };
+}
 
 export class OakAgendaView extends ItemView {
   private unsubscribe: (() => void) | null = null;
-  private filter: Filter = { tab: "upcoming", days: 1 };
+  private filter: Filter = { view: "upcoming", span: "today" };
   private config: AgendaConfig = DEFAULT_AGENDA_CONFIG;
   private latestSnapshot: VaultSnapshot | null = null;
   private latestEntries: AgendaEntry[] = [];
@@ -129,6 +152,21 @@ export class OakAgendaView extends ItemView {
     this.recompute();
   }
 
+  private switchView(view: ViewKind): void {
+    if (view === this.filter.view) return;
+    switch (view) {
+      case "upcoming":
+        this.setFilter({ view: "upcoming", span: "today" });
+        return;
+      case "todo":
+        this.setFilter({ view: "todo", keyword: null });
+        return;
+      case "find":
+        this.setFilter({ view: "find", query: "" });
+        return;
+    }
+  }
+
   private refresh(snap: VaultSnapshot | null): void {
     this.latestSnapshot = snap;
     if (snap) {
@@ -139,20 +177,28 @@ export class OakAgendaView extends ItemView {
     this.recompute();
   }
 
-  private currentQuery(): AgendaQuery {
+  private currentQuery(): AgendaQuery | null {
     const today = todayIso(new Date());
-    switch (this.filter.tab) {
+    switch (this.filter.view) {
       case "upcoming":
-        return { kind: "weekly", from: today, days: this.filter.days };
+        return {
+          kind: "weekly",
+          from: today,
+          days: spanDays(this.filter.span, today, this.config.weekStartsOn),
+        };
       case "todo": {
         const q: AgendaQuery = { kind: "todo" };
         if (this.filter.keyword) q.keyword = this.filter.keyword;
         return q;
       }
-      case "tags":
-        return { kind: "match", expression: this.filter.expression };
-      case "search":
-        return { kind: "search", regex: this.filter.regex };
+      case "find": {
+        const parsed = parseFindQuery(this.filter.query);
+        if (!parsed) return null;
+        if (parsed.kind === "match") {
+          return { kind: "match", expression: parsed.payload };
+        }
+        return { kind: "search", regex: parsed.payload };
+      }
     }
   }
 
@@ -163,32 +209,18 @@ export class OakAgendaView extends ItemView {
       return;
     }
     const query = this.currentQuery();
-    // Tags / Search with an empty expression should show empty rather
-    // than throw a regex error from runAgenda.
-    if (
-      (query.kind === "match" && query.expression.length === 0) ||
-      (query.kind === "search" && query.regex.length === 0)
-    ) {
-      this.latestView = {
-        query,
-        generatedAt: new Date().toISOString(),
-        buckets: [{ key: "all", label: "", items: [] }],
-      };
+    // null query = empty find input. Render placeholder guidance.
+    if (!query) {
+      this.latestView = null;
       this.render();
       return;
     }
     try {
-      this.latestView = runAgenda(
-        this.latestEntries,
-        query,
-        this.config,
-      );
+      this.latestView = runAgenda(this.latestEntries, query, this.config);
     } catch (err) {
       console.warn("oak agenda: query failed", err);
       this.latestView = null;
     }
-    // Keep focus stable across recomputes when the focused item still
-    // exists; otherwise drop it.
     if (this.focusedKey && !this.findFocused()) this.focusedKey = null;
     this.render();
   }
@@ -206,9 +238,7 @@ export class OakAgendaView extends ItemView {
     root.addClass("oak-agenda");
 
     const header = root.createDiv({ cls: "oak-agenda-header" });
-    header.createEl("h1", { cls: "oak-agenda-title", text: "Agenda" });
-    this.renderTabs(header);
-    this.renderFilterStrip(header);
+    this.renderHeader(header);
 
     const main = root.createDiv({ cls: "oak-agenda-main" });
     this.renderMain(main);
@@ -220,144 +250,88 @@ export class OakAgendaView extends ItemView {
     });
   }
 
-  private renderTabs(parent: HTMLElement): void {
-    const tabs = parent.createDiv({ cls: "oak-agenda-tabs" });
-    const counts = this.computeTabCounts();
-    for (const kind of ["upcoming", "todo", "tags", "search"] as TabKind[]) {
-      const btn = tabs.createEl("button", { cls: "oak-agenda-tab" });
-      btn.createEl("span", {
-        cls: "oak-agenda-tab-label",
-        text: TAB_LABELS[kind],
-      });
-      const count = counts[kind];
-      if (count !== null) {
-        btn.createEl("span", {
-          cls: "oak-agenda-tab-count",
-          text: String(count),
-        });
-      }
-      if (kind === this.filter.tab) btn.addClass("is-active");
-      btn.addEventListener("click", () => this.activateTab(kind));
+  // Header is two rows. The top row is the title with the three view
+  // switchers (upcoming / all-todos / find) as icon buttons aligned
+  // to the right edge — the active view's icon is highlighted. The
+  // second row is the per-view controls (span selector / state chips
+  // / find input).
+  private renderHeader(parent: HTMLElement): void {
+    const titlerow = parent.createDiv({ cls: "oak-agenda-titlerow" });
+    titlerow.createEl("h1", { cls: "oak-agenda-title", text: "Agenda" });
+    this.renderActions(titlerow.createDiv({ cls: "oak-agenda-actions" }));
+    const controls = parent.createDiv({ cls: "oak-agenda-controls" });
+    this.renderViewControls(controls);
+  }
+
+  private renderActions(parent: HTMLElement): void {
+    const items: { view: ViewKind; icon: string; label: string }[] = [
+      { view: "upcoming", icon: "calendar-days", label: "Upcoming" },
+      { view: "todo", icon: "list-todo", label: "All TODOs" },
+      { view: "find", icon: "search", label: "Find" },
+    ];
+    for (const it of items) {
+      const btn = parent.createEl("button", { cls: "oak-agenda-action" });
+      setIcon(btn, it.icon);
+      btn.setAttribute("aria-label", it.label);
+      btn.setAttribute("title", it.label);
+      if (it.view === this.filter.view) btn.addClass("is-active");
+      btn.addEventListener("click", () => this.switchView(it.view));
     }
   }
 
-  // For Upcoming/TODO we can pre-count items cheaply. Tags and Search
-  // have no useful "count" until the user types something; we omit
-  // a count there. Upcoming counts items across the currently selected
-  // span so the badge tracks the chip the user picked.
-  private computeTabCounts(): Record<TabKind, number | null> {
-    const today = todayIso(new Date());
-    const counts: Record<TabKind, number | null> = {
-      upcoming: 0,
-      todo: 0,
-      tags: null,
-      search: null,
-    };
-    if (this.latestEntries.length === 0) return counts;
-    try {
-      const span =
-        this.filter.tab === "upcoming" ? this.filter.days : 7;
-      const upcomingView = runAgenda(
-        this.latestEntries,
-        { kind: "weekly", from: today, days: span },
-        this.config,
-      );
-      counts.upcoming = upcomingView.buckets.reduce(
-        (n, b) => n + b.items.length,
-        0,
-      );
-      const todoView = runAgenda(
-        this.latestEntries,
-        { kind: "todo" },
-        this.config,
-      );
-      counts.todo = todoView.buckets[0]?.items.length ?? 0;
-    } catch {
-      // Counts are best-effort — fall back to zeros on regex errors etc.
-    }
-    return counts;
-  }
-
-  private activateTab(kind: TabKind): void {
-    if (kind === this.filter.tab) return;
-    switch (kind) {
+  private renderViewControls(parent: HTMLElement): void {
+    switch (this.filter.view) {
       case "upcoming":
-        this.setFilter({ tab: "upcoming", days: 1 });
+        this.renderSpanLinks(parent);
         return;
       case "todo":
-        this.setFilter({ tab: "todo", keyword: null });
+        this.renderTodoStateLinks(parent);
         return;
-      case "tags":
-        this.setFilter({ tab: "tags", expression: "" });
-        return;
-      case "search":
-        this.setFilter({ tab: "search", regex: "" });
-        return;
-    }
-  }
-
-  private renderFilterStrip(parent: HTMLElement): void {
-    const strip = parent.createDiv({ cls: "oak-agenda-filter" });
-    switch (this.filter.tab) {
-      case "upcoming":
-        this.renderSpanChips(strip);
-        return;
-      case "todo":
-        this.renderTodoStateChips(strip);
-        return;
-      case "tags":
+      case "find":
         this.renderTextInput(
-          strip,
-          "tag expression  e.g. +work-someday",
-          this.filter.expression,
-          (v) => this.setFilter({ tab: "tags", expression: v }),
-        );
-        return;
-      case "search":
-        this.renderTextInput(
-          strip,
-          "search regex  e.g. budget|invoice",
-          this.filter.regex,
-          (v) => this.setFilter({ tab: "search", regex: v }),
+          parent,
+          "+work-someday  or  budget|invoice",
+          this.filter.query,
+          (v) => this.setFilter({ view: "find", query: v }),
         );
         return;
     }
   }
 
-  private renderSpanChips(parent: HTMLElement): void {
-    if (this.filter.tab !== "upcoming") return;
-    const current = this.filter.days;
-    for (const days of UPCOMING_SPANS) {
+  private renderSpanLinks(parent: HTMLElement): void {
+    if (this.filter.view !== "upcoming") return;
+    const current = this.filter.span;
+    for (const span of UPCOMING_SPANS) {
       const btn = parent.createEl("button", {
-        cls: "oak-agenda-chip",
-        text: `${days}d`,
+        cls: "oak-agenda-link",
+        text: span,
       });
-      if (days === current) btn.addClass("is-active");
+      if (span === current) btn.addClass("is-active");
       btn.addEventListener("click", () =>
-        this.setFilter({ tab: "upcoming", days }),
+        this.setFilter({ view: "upcoming", span }),
       );
     }
   }
 
-  private renderTodoStateChips(parent: HTMLElement): void {
-    if (this.filter.tab !== "todo") return;
+  private renderTodoStateLinks(parent: HTMLElement): void {
+    if (this.filter.view !== "todo") return;
     const current = this.filter.keyword;
     const all = parent.createEl("button", {
-      cls: "oak-agenda-chip",
-      text: "All",
+      cls: "oak-agenda-link",
+      text: "all",
     });
     if (current === null) all.addClass("is-active");
     all.addEventListener("click", () =>
-      this.setFilter({ tab: "todo", keyword: null }),
+      this.setFilter({ view: "todo", keyword: null }),
     );
     for (const k of this.config.todoKeywords) {
       const btn = parent.createEl("button", {
-        cls: "oak-agenda-chip",
-        text: k,
+        cls: "oak-agenda-link",
+        text: k.toLowerCase(),
       });
       if (current === k) btn.addClass("is-active");
       btn.addEventListener("click", () =>
-        this.setFilter({ tab: "todo", keyword: k }),
+        this.setFilter({ view: "todo", keyword: k }),
       );
     }
   }
@@ -385,15 +359,7 @@ export class OakAgendaView extends ItemView {
         apply(pending.trim());
       }
     });
-    // Auto-focus the input when the tab activates so the user can
-    // start typing immediately. setTimeout queues past the current
-    // render so focus actually lands.
     window.setTimeout(() => input.focus(), 0);
-    const submit = parent.createEl("button", {
-      cls: "oak-agenda-chip",
-      text: "Apply",
-    });
-    submit.addEventListener("click", () => apply(pending.trim()));
   }
 
   private renderMain(root: HTMLElement): void {
@@ -404,16 +370,11 @@ export class OakAgendaView extends ItemView {
       });
       return;
     }
-    if (
-      (this.filter.tab === "tags" && this.filter.expression.length === 0) ||
-      (this.filter.tab === "search" && this.filter.regex.length === 0)
-    ) {
+    if (this.filter.view === "find" && this.filter.query.trim().length === 0) {
       root.createEl("div", {
         cls: "oak-agenda-empty",
         text:
-          this.filter.tab === "tags"
-            ? "Type a tag expression and press Enter."
-            : "Type a search regex and press Enter.",
+          "Type a tag expression (+work-someday) or a regex (budget|invoice) and press Enter.",
       });
       return;
     }
@@ -438,16 +399,12 @@ export class OakAgendaView extends ItemView {
 
     const todayIsoDate = todayIso(new Date());
     for (const bucket of this.latestView.buckets) {
-      if (bucket.items.length === 0 && this.filter.tab !== "upcoming") {
+      if (bucket.items.length === 0 && this.filter.view !== "upcoming") {
         continue;
       }
       const sec = root.createDiv({ cls: "oak-agenda-bucket" });
-      // For weekly views the bucket label IS the date; otherwise we
-      // hide the heading (single bucket).
       if (this.shouldShowBucketHeader()) {
-        const h = sec.createEl("h2", { cls: "oak-agenda-bucket-label" });
-        h.setText(this.bucketLabelFor(bucket.key, todayIsoDate, bucket.label));
-        if (bucket.key === todayIsoDate) h.addClass("is-today");
+        this.renderBucketHeader(sec, bucket.key, todayIsoDate, bucket.label);
       }
       if (bucket.items.length === 0) {
         sec.createEl("p", {
@@ -473,53 +430,46 @@ export class OakAgendaView extends ItemView {
   }
 
   private shouldShowBucketHeader(): boolean {
-    return this.filter.tab === "upcoming";
+    return this.filter.view === "upcoming";
   }
 
-  private bucketLabelFor(
+  // Render the bucket header as `YYYY-MM-DD Day` (matching org's
+  // `<2026-05-07 Thu>` timestamp style). No special styling for the
+  // today bucket — Upcoming always starts from today so the first
+  // row is always today by construction; the accent would carry no
+  // information.
+  private renderBucketHeader(
+    sec: HTMLElement,
     key: string,
     todayIsoDate: string,
     fallback: string,
-  ): string {
-    if (key === "all") return fallback;
-    const delta = daysBetween(todayIsoDate, key);
-    const dayName = new Date(
+  ): void {
+    void todayIsoDate;
+    const h = sec.createEl("h2", { cls: "oak-agenda-bucket-label" });
+    if (key === "all") {
+      h.setText(fallback);
+      return;
+    }
+    const dow = new Date(
       Date.UTC(
         parseInt(key.slice(0, 4), 10),
         parseInt(key.slice(5, 7), 10) - 1,
         parseInt(key.slice(8, 10), 10),
       ),
     ).getUTCDay();
-    const DAYS = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
-    const dayLabel = DAYS[dayName];
-    let suffix = "";
-    if (delta === 0) suffix = " · today";
-    else if (delta === 1) suffix = " · tomorrow";
-    else if (delta === -1) suffix = " · yesterday";
-    else if (delta > 0) suffix = ` · in ${delta}d`;
-    else suffix = ` · ${-delta}d ago`;
-    return `${dayLabel} · ${key}${suffix}`;
+    const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    h.setText(`${key} ${DAYS_SHORT[dow]}`);
   }
 
   private emptyMessage(): string {
-    switch (this.filter.tab) {
+    switch (this.filter.view) {
       case "upcoming":
-        return this.filter.days === 1
+        return this.filter.span === "today"
           ? "Nothing on today."
           : "Nothing scheduled in this window.";
       case "todo":
         return "No open TODOs.";
-      case "tags":
-        return "No matches.";
-      case "search":
+      case "find":
         return "No matches.";
     }
   }
@@ -557,8 +507,6 @@ export class OakAgendaView extends ItemView {
       cls: "oak-agenda-item-title",
       text: item.entry.title,
     });
-    // For non-bucketed views, show an absolute date when present so
-    // the user knows when this is for.
     if (!this.shouldShowBucketHeader() && item.date) {
       const d = row.createEl("span", { cls: "oak-agenda-item-date" });
       const delta = daysBetween(todayIsoDate, item.date);

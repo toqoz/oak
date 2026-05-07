@@ -887,110 +887,145 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
 
 /* ====================================================================
  * Agenda view (`OakAgendaView`).
- * Five tabs (Today / Upcoming / TODO / Tags / Search) over the
- * existing `runAgenda` core. Layout is a vertical stack:
- *   header  (title + tabs + filter strip)
+ * Single Upcoming surface with quiet `·`-separated text-link controls.
+ * Layout is a vertical stack:
+ *   header  (title + per-view controls + nav links)
  *   main    (day buckets / item rows)
  *   footer  (key hint)
- * Items are rendered as flex rows: category, time, marker, keyword,
- * priority, title, optional date chip, tags. */
+ * Visual aim is "static page", not dashboard chrome — no chip pills,
+ * no tab tabs, no count badges. The active control is differentiated
+ * with weight + accent color rather than fill. */
 
 .oak-agenda {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 12px 16px;
-  gap: 12px;
+  padding: 16px 20px;
+  gap: 14px;
   overflow: hidden;
 }
 .oak-agenda-header {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
+}
+.oak-agenda-titlerow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2px;
 }
 .oak-agenda-title {
   margin: 0;
   font-size: 1.4em;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
 }
-.oak-agenda-tabs {
+.oak-agenda-actions {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  padding-bottom: 4px;
 }
-.oak-agenda-tab {
+.oak-agenda button.oak-agenda-action {
+  appearance: none;
+  -webkit-appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  font: inherit;
-  background: transparent;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
   cursor: pointer;
   color: var(--text-muted);
 }
-.oak-agenda-tab:hover {
+.oak-agenda button.oak-agenda-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  box-shadow: none;
+}
+.oak-agenda button.oak-agenda-action.is-active {
   color: var(--text-normal);
   background: var(--background-modifier-hover);
 }
-.oak-agenda-tab.is-active {
-  color: var(--text-normal);
-  border-color: var(--background-modifier-border);
-  background: var(--background-primary);
-  position: relative;
-  bottom: -1px;
+.oak-agenda button.oak-agenda-action .svg-icon {
+  width: 18px;
+  height: 18px;
 }
-.oak-agenda-tab-count {
-  font-size: 0.85em;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--background-modifier-border);
+
+/* Per-view controls under the title row: span links for Upcoming,
+ * state links for TODO, an inline input for Find. The `·` separator
+ * comes from `.oak-agenda-link::after` below. */
+.oak-agenda-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  min-height: 1.2em;
+}
+.oak-agenda-controls:empty {
+  display: none;
+}
+
+/* Obsidian gives every <button> in a view its own background/border/
+ * box-shadow; we have to reset all three to land plain text. The
+ * selectors lead with `.oak-agenda` for specificity to beat the
+ * default `.workspace-leaf-content button` rule. */
+.oak-agenda button.oak-agenda-link {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  height: auto;
+  line-height: inherit;
+  cursor: pointer;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-.oak-agenda-tab.is-active .oak-agenda-tab-count {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+.oak-agenda button.oak-agenda-link:hover {
+  color: var(--text-normal);
+  background: none;
+  box-shadow: none;
+}
+.oak-agenda button.oak-agenda-link.is-active {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+.oak-agenda button.oak-agenda-link:not(:last-child)::after {
+  content: " · ";
+  color: var(--text-faint);
+  font-weight: normal;
+  margin: 0 0.25em;
 }
 
-.oak-agenda-filter {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-height: 24px;
-}
-.oak-agenda-filter:empty {
-  display: none;
-}
-.oak-agenda-chip {
+.oak-agenda input.oak-agenda-input {
+  flex: 1;
+  min-width: 14em;
+  max-width: 32em;
   font: inherit;
-  font-size: 0.9em;
-  padding: 2px 10px;
-  border: 1px solid var(--background-modifier-border);
-  background: transparent;
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--text-muted);
-}
-.oak-agenda-chip:hover {
-  background: var(--background-modifier-hover);
+  padding: 2px 0;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  box-shadow: none;
   color: var(--text-normal);
 }
-.oak-agenda-chip.is-active {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border-color: var(--interactive-accent);
-}
-.oak-agenda-input {
-  flex: 1;
-  min-width: 12em;
-  font: inherit;
-  padding: 3px 8px;
+.oak-agenda input.oak-agenda-input:focus {
+  outline: none;
+  border-bottom-color: var(--interactive-accent);
+  box-shadow: none;
 }
 
 .oak-agenda-main {
@@ -1018,9 +1053,7 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   color: var(--text-muted);
   padding-bottom: 4px;
   border-bottom: 1px dashed var(--background-modifier-border);
-}
-.oak-agenda-bucket-label.is-today {
-  color: var(--interactive-accent);
+  font-variant-numeric: tabular-nums;
 }
 .oak-agenda-bucket-empty {
   margin: 0;
