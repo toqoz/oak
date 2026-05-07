@@ -884,3 +884,298 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
 .oak-agenda-tooltip-cal-day.is-today {
   border-color: var(--interactive-accent);
 }
+
+/* ====================================================================
+ * Agenda view (`OakAgendaView`).
+ * Five tabs (Today / Upcoming / TODO / Tags / Search) over the
+ * existing `runAgenda` core. Layout is a vertical stack:
+ *   header  (title + tabs + filter strip)
+ *   main    (day buckets / item rows)
+ *   footer  (key hint)
+ * Items are rendered as flex rows: category, time, marker, keyword,
+ * priority, title, optional date chip, tags. */
+
+.oak-agenda {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px 16px;
+  gap: 12px;
+  overflow: hidden;
+}
+.oak-agenda-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.oak-agenda-title {
+  margin: 0;
+  font-size: 1.4em;
+}
+.oak-agenda-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 4px;
+}
+.oak-agenda-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.oak-agenda-tab:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.oak-agenda-tab.is-active {
+  color: var(--text-normal);
+  border-color: var(--background-modifier-border);
+  background: var(--background-primary);
+  position: relative;
+  bottom: -1px;
+}
+.oak-agenda-tab-count {
+  font-size: 0.85em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.oak-agenda-tab.is-active .oak-agenda-tab-count {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.oak-agenda-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.oak-agenda-filter:empty {
+  display: none;
+}
+.oak-agenda-chip {
+  font: inherit;
+  font-size: 0.9em;
+  padding: 2px 10px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.oak-agenda-chip:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.oak-agenda-chip.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+.oak-agenda-input {
+  flex: 1;
+  min-width: 12em;
+  font: inherit;
+  padding: 3px 8px;
+}
+
+.oak-agenda-main {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.oak-agenda-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.oak-agenda-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.oak-agenda-bucket-label {
+  margin: 0;
+  font-size: 0.95em;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--background-modifier-border);
+}
+.oak-agenda-bucket-label.is-today {
+  color: var(--interactive-accent);
+}
+.oak-agenda-bucket-empty {
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--text-faint);
+  font-size: 0.9em;
+}
+
+.oak-agenda-list {
+  display: flex;
+  flex-direction: column;
+}
+.oak-agenda-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95em;
+}
+.oak-agenda-item:hover {
+  background: var(--background-modifier-hover);
+}
+.oak-agenda-item.is-focused {
+  background: var(--background-modifier-active-hover);
+  outline: 1px solid var(--interactive-accent);
+}
+
+.oak-agenda-cat {
+  flex-shrink: 0;
+  min-width: 6em;
+  max-width: 12em;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oak-agenda-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9em;
+  color: var(--text-normal);
+  min-width: 4.5em;
+}
+.oak-agenda-marker {
+  flex-shrink: 0;
+  font-size: 0.8em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.oak-marker-deadline,
+.oak-marker-deadline-overdue {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-marker-deadline-warning {
+  background: rgba(220, 150, 60, 0.18);
+  color: rgb(190, 130, 40);
+}
+.oak-marker-scheduled-overdue {
+  background: rgba(200, 130, 60, 0.18);
+  color: rgb(180, 110, 40);
+}
+
+.oak-agenda-keyword {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.oak-keyword-todo {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-keyword-next {
+  background: rgba(80, 160, 220, 0.18);
+  color: rgb(50, 130, 200);
+}
+.oak-keyword-waiting {
+  background: rgba(200, 130, 60, 0.18);
+  color: rgb(180, 110, 40);
+}
+.oak-keyword-done,
+.oak-keyword-cancelled {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.oak-agenda-priority {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 700;
+  background: var(--background-modifier-border);
+}
+.oak-priority-a {
+  background: rgba(220, 80, 80, 0.22);
+  color: rgb(200, 50, 50);
+}
+.oak-priority-b {
+  background: rgba(220, 150, 60, 0.22);
+  color: rgb(180, 110, 40);
+}
+.oak-priority-c {
+  background: rgba(120, 180, 120, 0.22);
+  color: rgb(80, 140, 80);
+}
+
+.oak-agenda-item-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oak-agenda-item-date {
+  flex-shrink: 0;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.oak-agenda-item-date.is-today {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+.oak-agenda-item-date.is-past {
+  color: rgb(200, 60, 60);
+}
+.oak-agenda-tag-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.oak-agenda-tag {
+  font-size: 0.78em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.oak-agenda-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 6px;
+  font-size: 0.85em;
+  color: var(--text-faint);
+}

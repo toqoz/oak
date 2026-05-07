@@ -1,21 +1,26 @@
-// Oak agenda view — port of emacs `org-agenda` into the plugin.
+// Oak agenda view — port of emacs `org-agenda` adapted for the
+// Obsidian editor surface.
 //
-// The view subscribes to VaultState; on each snapshot it parses every
-// page's body for org-style task syntax (TODO/SCHEDULED/DEADLINE/...)
-// and runs the current AgendaQuery (weekly | todo | match | search)
-// against the result.
+// Five tabs (named, not single letters):
+//   Today    — today's bucket only. Scheduled-on-day, deadlines-on-day,
+//              overdue scheduled and deadline warnings/overdues all
+//              roll up here per the existing weekly-view rules.
+//   Upcoming — today + N days. Span chips switch N (1/3/7/14).
+//   TODO     — global open-TODO list. Keyword chips filter by state.
+//   Tags     — `org-tags-view`. Inline input for `+work-someday` etc.
+//   Search   — body regex. Inline input.
 //
-// Keybindings while focused, mirroring `org-agenda`:
-//   a  weekly agenda (default span 7 days starting on weekStartsOn)
-//   t  global TODO list
-//   m  prompt for tag/property match expression
-//   s  prompt for body regex search
-//   f  shift weekly window forward by `span` days
-//   b  shift weekly window backward by `span` days
-//   .  jump to today
-//   r  rebuild (forces VaultState.refresh)
-//   d  mark the focused entry DONE / advance its repeater
-//  Enter  open the entry's source file at the heading line
+// Keybindings (focus must be in the agenda leaf):
+//   j / ArrowDown   focus next item
+//   k / ArrowUp     focus previous item
+//   Enter           open focused item's source line
+//   d               mark focused entry DONE / advance repeater
+//   r               force vault refresh
+//
+// The previous build wired `m` and `s` through `window.prompt`, which
+// Electron renderer blocks — so those modes were silently broken.
+// Inline inputs replace the prompts and let the user edit/re-run the
+// query without leaving the view.
 
 import {
   ItemView,
@@ -28,15 +33,15 @@ import {
 
 import {
   DEFAULT_AGENDA_CONFIG,
-  addUnits,
+  daysBetween,
   extractVaultAgendaEntries,
   loadAgendaConfig,
   markDone,
   runAgenda,
-  startOfWeek,
   todayIso,
   WriteBackError,
   type AgendaConfig,
+  type AgendaEntry,
   type AgendaItem,
   type AgendaQuery,
   type AgendaView,
@@ -48,13 +53,31 @@ import type { VaultSnapshot, VaultState } from "../state.js";
 
 export const VIEW_TYPE_OAK_AGENDA = "oak-agenda";
 
+type TabKind = "upcoming" | "todo" | "tags" | "search";
+
+type Filter =
+  | { tab: "upcoming"; days: 1 | 3 | 7 | 14 }
+  | { tab: "todo"; keyword: string | null }
+  | { tab: "tags"; expression: string }
+  | { tab: "search"; regex: string };
+
+const TAB_LABELS: Record<TabKind, string> = {
+  upcoming: "Upcoming",
+  todo: "TODO",
+  tags: "Tags",
+  search: "Search",
+};
+
+const UPCOMING_SPANS: Array<1 | 3 | 7 | 14> = [1, 3, 7, 14];
+
 export class OakAgendaView extends ItemView {
   private unsubscribe: (() => void) | null = null;
-  private query: AgendaQuery;
+  private filter: Filter = { tab: "upcoming", days: 1 };
   private config: AgendaConfig = DEFAULT_AGENDA_CONFIG;
   private latestSnapshot: VaultSnapshot | null = null;
+  private latestEntries: AgendaEntry[] = [];
   private latestView: AgendaView | null = null;
-  private focusedItemKey: string | null = null;
+  private focusedKey: string | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -63,12 +86,6 @@ export class OakAgendaView extends ItemView {
     private openFile: OakOpenFile,
   ) {
     super(leaf);
-    const today = todayIso(new Date());
-    this.query = {
-      kind: "weekly",
-      from: startOfWeek(today, this.config.weekStartsOn),
-      days: 7,
-    };
   }
 
   override getViewType(): string {
@@ -85,12 +102,6 @@ export class OakAgendaView extends ItemView {
 
   override async onOpen(): Promise<void> {
     this.config = await loadAgendaConfig(vaultRoot(this.app2));
-    if (this.query.kind === "weekly") {
-      this.query = {
-        ...this.query,
-        from: startOfWeek(todayIso(new Date()), this.config.weekStartsOn),
-      };
-    }
     this.installKeybindings();
     this.unsubscribe = this.state.subscribe((snap) => this.refresh(snap));
   }
@@ -103,58 +114,46 @@ export class OakAgendaView extends ItemView {
   private installKeybindings(): void {
     const scope = new Scope(this.app2.scope);
     this.scope = scope;
-    scope.register([], "a", () => this.setQuery({
-      kind: "weekly",
-      from: startOfWeek(todayIso(new Date()), this.config.weekStartsOn),
-      days: 7,
-    }));
-    scope.register([], "t", () => this.setQuery({ kind: "todo" }));
-    scope.register([], "m", () => this.promptMatch());
-    scope.register([], "s", () => this.promptSearch());
-    scope.register([], "f", () => this.shiftWeekly(+1));
-    scope.register([], "b", () => this.shiftWeekly(-1));
-    scope.register([], ".", () => {
-      if (this.query.kind === "weekly") {
-        this.setQuery({
-          kind: "weekly",
-          from: startOfWeek(todayIso(new Date()), this.config.weekStartsOn),
-          days: this.query.days,
-        });
-      }
-    });
-    scope.register([], "r", () => {
-      void this.state.refresh();
-    });
-    scope.register([], "d", () => void this.markFocusedDone());
+    const moveFocus = (delta: 1 | -1) => this.moveFocus(delta);
+    scope.register([], "j", () => moveFocus(1));
+    scope.register([], "ArrowDown", () => moveFocus(1));
+    scope.register([], "k", () => moveFocus(-1));
+    scope.register([], "ArrowUp", () => moveFocus(-1));
     scope.register([], "Enter", () => this.openFocused());
+    scope.register([], "d", () => void this.markFocusedDone());
+    scope.register([], "r", () => void this.state.refresh());
   }
 
-  private setQuery(query: AgendaQuery): void {
-    this.query = query;
+  private setFilter(filter: Filter): void {
+    this.filter = filter;
     this.recompute();
-  }
-
-  private shiftWeekly(direction: 1 | -1): void {
-    if (this.query.kind !== "weekly") return;
-    const next = addUnits(this.query.from, direction * this.query.days, "d");
-    this.setQuery({ kind: "weekly", from: next, days: this.query.days });
-  }
-
-  private promptMatch(): void {
-    const expr = window.prompt("Match expression (e.g. work+urgent-someday)");
-    if (!expr) return;
-    this.setQuery({ kind: "match", expression: expr.trim() });
-  }
-
-  private promptSearch(): void {
-    const regex = window.prompt("Search regex");
-    if (!regex) return;
-    this.setQuery({ kind: "search", regex: regex.trim() });
   }
 
   private refresh(snap: VaultSnapshot | null): void {
     this.latestSnapshot = snap;
+    if (snap) {
+      this.latestEntries = extractVaultAgendaEntries(snap.vault, this.config);
+    } else {
+      this.latestEntries = [];
+    }
     this.recompute();
+  }
+
+  private currentQuery(): AgendaQuery {
+    const today = todayIso(new Date());
+    switch (this.filter.tab) {
+      case "upcoming":
+        return { kind: "weekly", from: today, days: this.filter.days };
+      case "todo": {
+        const q: AgendaQuery = { kind: "todo" };
+        if (this.filter.keyword) q.keyword = this.filter.keyword;
+        return q;
+      }
+      case "tags":
+        return { kind: "match", expression: this.filter.expression };
+      case "search":
+        return { kind: "search", regex: this.filter.regex };
+    }
   }
 
   private recompute(): void {
@@ -163,16 +162,34 @@ export class OakAgendaView extends ItemView {
       this.render();
       return;
     }
+    const query = this.currentQuery();
+    // Tags / Search with an empty expression should show empty rather
+    // than throw a regex error from runAgenda.
+    if (
+      (query.kind === "match" && query.expression.length === 0) ||
+      (query.kind === "search" && query.regex.length === 0)
+    ) {
+      this.latestView = {
+        query,
+        generatedAt: new Date().toISOString(),
+        buckets: [{ key: "all", label: "", items: [] }],
+      };
+      this.render();
+      return;
+    }
     try {
-      const entries = extractVaultAgendaEntries(
-        this.latestSnapshot.vault,
+      this.latestView = runAgenda(
+        this.latestEntries,
+        query,
         this.config,
       );
-      this.latestView = runAgenda(entries, this.query, this.config);
     } catch (err) {
       console.warn("oak agenda: query failed", err);
       this.latestView = null;
     }
+    // Keep focus stable across recomputes when the focused item still
+    // exists; otherwise drop it.
+    if (this.focusedKey && !this.findFocused()) this.focusedKey = null;
     this.render();
   }
 
@@ -189,128 +206,450 @@ export class OakAgendaView extends ItemView {
     root.addClass("oak-agenda");
 
     const header = root.createDiv({ cls: "oak-agenda-header" });
-    header.createEl("h1", { text: "Oak — Agenda" });
+    header.createEl("h1", { cls: "oak-agenda-title", text: "Agenda" });
     this.renderTabs(header);
-    this.renderQueryLine(header);
+    this.renderFilterStrip(header);
 
-    if (!this.latestView) {
-      root.createEl("div", {
-        cls: "oak-empty",
-        text: "Indexing vault…",
-      });
-      return;
-    }
-
-    for (const bucket of this.latestView.buckets) {
-      const sec = root.createDiv({ cls: "oak-agenda-bucket" });
-      sec.createEl("h2", { text: bucket.label });
-      if (bucket.items.length === 0) {
-        sec.createEl("p", { cls: "oak-empty", text: "(nothing)" });
-        continue;
-      }
-      const ul = sec.createEl("ul", { cls: "oak-agenda-list" });
-      for (const item of bucket.items) {
-        const key = `${item.entry.relPath}:${item.entry.line}:${item.date ?? ""}`;
-        const li = ul.createEl("li", { cls: "oak-agenda-item" });
-        if (this.focusedItemKey === key) li.addClass("is-focused");
-        li.dataset.itemKey = key;
-        li.addEventListener("click", () => {
-          this.focusedItemKey = key;
-          this.openItem(item);
-        });
-        this.renderItem(li, item);
-      }
-    }
+    const main = root.createDiv({ cls: "oak-agenda-main" });
+    this.renderMain(main);
 
     const footer = root.createDiv({ cls: "oak-agenda-footer" });
-    footer.createEl("p", {
-      cls: "oak-home-meta",
-      text: "a/t/m/s · f/b · . · r · d · Enter",
+    footer.createEl("span", {
+      cls: "oak-agenda-footer-keys",
+      text: "j/k focus · Enter open · d done · r refresh",
     });
   }
 
   private renderTabs(parent: HTMLElement): void {
     const tabs = parent.createDiv({ cls: "oak-agenda-tabs" });
-    const make = (label: string, q: AgendaQuery, active: boolean) => {
-      const btn = tabs.createEl("button", { text: label });
-      if (active) btn.addClass("is-active");
-      btn.addEventListener("click", () => this.setQuery(q));
-    };
-    make("a", {
-      kind: "weekly",
-      from: startOfWeek(todayIso(new Date()), this.config.weekStartsOn),
-      days: 7,
-    }, this.query.kind === "weekly");
-    make("t", { kind: "todo" }, this.query.kind === "todo");
-    make("m", { kind: "match", expression: "" }, this.query.kind === "match");
-    make("s", { kind: "search", regex: "" }, this.query.kind === "search");
-  }
-
-  private renderQueryLine(parent: HTMLElement): void {
-    const p = parent.createEl("p", { cls: "oak-home-meta" });
-    if (this.query.kind === "weekly") {
-      p.setText(
-        `Weekly · ${this.query.from} → ${addUnits(this.query.from, this.query.days - 1, "d")}`,
-      );
-    } else if (this.query.kind === "todo") {
-      p.setText(
-        `Global TODO list${this.query.keyword ? ` (${this.query.keyword})` : ""}`,
-      );
-    } else if (this.query.kind === "match") {
-      p.setText(`Match: ${this.query.expression || "(none)"}`);
-    } else {
-      p.setText(`Search: /${this.query.regex || ""}/i`);
+    const counts = this.computeTabCounts();
+    for (const kind of ["upcoming", "todo", "tags", "search"] as TabKind[]) {
+      const btn = tabs.createEl("button", { cls: "oak-agenda-tab" });
+      btn.createEl("span", {
+        cls: "oak-agenda-tab-label",
+        text: TAB_LABELS[kind],
+      });
+      const count = counts[kind];
+      if (count !== null) {
+        btn.createEl("span", {
+          cls: "oak-agenda-tab-count",
+          text: String(count),
+        });
+      }
+      if (kind === this.filter.tab) btn.addClass("is-active");
+      btn.addEventListener("click", () => this.activateTab(kind));
     }
   }
 
-  private renderItem(li: HTMLElement, item: AgendaItem): void {
-    const cat = li.createEl("span", { cls: "oak-agenda-cat" });
+  // For Upcoming/TODO we can pre-count items cheaply. Tags and Search
+  // have no useful "count" until the user types something; we omit
+  // a count there. Upcoming counts items across the currently selected
+  // span so the badge tracks the chip the user picked.
+  private computeTabCounts(): Record<TabKind, number | null> {
+    const today = todayIso(new Date());
+    const counts: Record<TabKind, number | null> = {
+      upcoming: 0,
+      todo: 0,
+      tags: null,
+      search: null,
+    };
+    if (this.latestEntries.length === 0) return counts;
+    try {
+      const span =
+        this.filter.tab === "upcoming" ? this.filter.days : 7;
+      const upcomingView = runAgenda(
+        this.latestEntries,
+        { kind: "weekly", from: today, days: span },
+        this.config,
+      );
+      counts.upcoming = upcomingView.buckets.reduce(
+        (n, b) => n + b.items.length,
+        0,
+      );
+      const todoView = runAgenda(
+        this.latestEntries,
+        { kind: "todo" },
+        this.config,
+      );
+      counts.todo = todoView.buckets[0]?.items.length ?? 0;
+    } catch {
+      // Counts are best-effort — fall back to zeros on regex errors etc.
+    }
+    return counts;
+  }
+
+  private activateTab(kind: TabKind): void {
+    if (kind === this.filter.tab) return;
+    switch (kind) {
+      case "upcoming":
+        this.setFilter({ tab: "upcoming", days: 1 });
+        return;
+      case "todo":
+        this.setFilter({ tab: "todo", keyword: null });
+        return;
+      case "tags":
+        this.setFilter({ tab: "tags", expression: "" });
+        return;
+      case "search":
+        this.setFilter({ tab: "search", regex: "" });
+        return;
+    }
+  }
+
+  private renderFilterStrip(parent: HTMLElement): void {
+    const strip = parent.createDiv({ cls: "oak-agenda-filter" });
+    switch (this.filter.tab) {
+      case "upcoming":
+        this.renderSpanChips(strip);
+        return;
+      case "todo":
+        this.renderTodoStateChips(strip);
+        return;
+      case "tags":
+        this.renderTextInput(
+          strip,
+          "tag expression  e.g. +work-someday",
+          this.filter.expression,
+          (v) => this.setFilter({ tab: "tags", expression: v }),
+        );
+        return;
+      case "search":
+        this.renderTextInput(
+          strip,
+          "search regex  e.g. budget|invoice",
+          this.filter.regex,
+          (v) => this.setFilter({ tab: "search", regex: v }),
+        );
+        return;
+    }
+  }
+
+  private renderSpanChips(parent: HTMLElement): void {
+    if (this.filter.tab !== "upcoming") return;
+    const current = this.filter.days;
+    for (const days of UPCOMING_SPANS) {
+      const btn = parent.createEl("button", {
+        cls: "oak-agenda-chip",
+        text: `${days}d`,
+      });
+      if (days === current) btn.addClass("is-active");
+      btn.addEventListener("click", () =>
+        this.setFilter({ tab: "upcoming", days }),
+      );
+    }
+  }
+
+  private renderTodoStateChips(parent: HTMLElement): void {
+    if (this.filter.tab !== "todo") return;
+    const current = this.filter.keyword;
+    const all = parent.createEl("button", {
+      cls: "oak-agenda-chip",
+      text: "All",
+    });
+    if (current === null) all.addClass("is-active");
+    all.addEventListener("click", () =>
+      this.setFilter({ tab: "todo", keyword: null }),
+    );
+    for (const k of this.config.todoKeywords) {
+      const btn = parent.createEl("button", {
+        cls: "oak-agenda-chip",
+        text: k,
+      });
+      if (current === k) btn.addClass("is-active");
+      btn.addEventListener("click", () =>
+        this.setFilter({ tab: "todo", keyword: k }),
+      );
+    }
+  }
+
+  private renderTextInput(
+    parent: HTMLElement,
+    placeholder: string,
+    value: string,
+    apply: (v: string) => void,
+  ): void {
+    const input = parent.createEl("input", {
+      cls: "oak-agenda-input",
+      type: "text",
+    });
+    input.placeholder = placeholder;
+    input.spellcheck = false;
+    input.value = value;
+    let pending = value;
+    input.addEventListener("input", () => {
+      pending = input.value;
+    });
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        apply(pending.trim());
+      }
+    });
+    // Auto-focus the input when the tab activates so the user can
+    // start typing immediately. setTimeout queues past the current
+    // render so focus actually lands.
+    window.setTimeout(() => input.focus(), 0);
+    const submit = parent.createEl("button", {
+      cls: "oak-agenda-chip",
+      text: "Apply",
+    });
+    submit.addEventListener("click", () => apply(pending.trim()));
+  }
+
+  private renderMain(root: HTMLElement): void {
+    if (!this.latestSnapshot) {
+      root.createEl("div", {
+        cls: "oak-agenda-empty",
+        text: "Indexing vault…",
+      });
+      return;
+    }
+    if (
+      (this.filter.tab === "tags" && this.filter.expression.length === 0) ||
+      (this.filter.tab === "search" && this.filter.regex.length === 0)
+    ) {
+      root.createEl("div", {
+        cls: "oak-agenda-empty",
+        text:
+          this.filter.tab === "tags"
+            ? "Type a tag expression and press Enter."
+            : "Type a search regex and press Enter.",
+      });
+      return;
+    }
+    if (!this.latestView) {
+      root.createEl("div", {
+        cls: "oak-agenda-empty",
+        text: "Query failed (see console).",
+      });
+      return;
+    }
+    const totalItems = this.latestView.buckets.reduce(
+      (n, b) => n + b.items.length,
+      0,
+    );
+    if (totalItems === 0) {
+      root.createEl("div", {
+        cls: "oak-agenda-empty",
+        text: this.emptyMessage(),
+      });
+      return;
+    }
+
+    const todayIsoDate = todayIso(new Date());
+    for (const bucket of this.latestView.buckets) {
+      if (bucket.items.length === 0 && this.filter.tab !== "upcoming") {
+        continue;
+      }
+      const sec = root.createDiv({ cls: "oak-agenda-bucket" });
+      // For weekly views the bucket label IS the date; otherwise we
+      // hide the heading (single bucket).
+      if (this.shouldShowBucketHeader()) {
+        const h = sec.createEl("h2", { cls: "oak-agenda-bucket-label" });
+        h.setText(this.bucketLabelFor(bucket.key, todayIsoDate, bucket.label));
+        if (bucket.key === todayIsoDate) h.addClass("is-today");
+      }
+      if (bucket.items.length === 0) {
+        sec.createEl("p", {
+          cls: "oak-agenda-bucket-empty",
+          text: "—",
+        });
+        continue;
+      }
+      const list = sec.createDiv({ cls: "oak-agenda-list" });
+      for (const item of bucket.items) {
+        const key = itemKey(item);
+        const row = list.createDiv({ cls: "oak-agenda-item" });
+        if (this.focusedKey === key) row.addClass("is-focused");
+        row.dataset.itemKey = key;
+        row.addEventListener("click", () => {
+          this.focusedKey = key;
+          this.openItem(item);
+          this.render();
+        });
+        this.renderItem(row, item, todayIsoDate);
+      }
+    }
+  }
+
+  private shouldShowBucketHeader(): boolean {
+    return this.filter.tab === "upcoming";
+  }
+
+  private bucketLabelFor(
+    key: string,
+    todayIsoDate: string,
+    fallback: string,
+  ): string {
+    if (key === "all") return fallback;
+    const delta = daysBetween(todayIsoDate, key);
+    const dayName = new Date(
+      Date.UTC(
+        parseInt(key.slice(0, 4), 10),
+        parseInt(key.slice(5, 7), 10) - 1,
+        parseInt(key.slice(8, 10), 10),
+      ),
+    ).getUTCDay();
+    const DAYS = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
+    const dayLabel = DAYS[dayName];
+    let suffix = "";
+    if (delta === 0) suffix = " · today";
+    else if (delta === 1) suffix = " · tomorrow";
+    else if (delta === -1) suffix = " · yesterday";
+    else if (delta > 0) suffix = ` · in ${delta}d`;
+    else suffix = ` · ${-delta}d ago`;
+    return `${dayLabel} · ${key}${suffix}`;
+  }
+
+  private emptyMessage(): string {
+    switch (this.filter.tab) {
+      case "upcoming":
+        return this.filter.days === 1
+          ? "Nothing on today."
+          : "Nothing scheduled in this window.";
+      case "todo":
+        return "No open TODOs.";
+      case "tags":
+        return "No matches.";
+      case "search":
+        return "No matches.";
+    }
+  }
+
+  private renderItem(
+    row: HTMLElement,
+    item: AgendaItem,
+    todayIsoDate: string,
+  ): void {
+    const cat = row.createEl("span", { cls: "oak-agenda-cat" });
     cat.setText(item.entry.category);
     if (item.time) {
-      const t = li.createEl("span", { cls: "oak-agenda-time" });
-      t.setText(item.endTime ? `${item.time}-${item.endTime}` : item.time);
+      const t = row.createEl("span", { cls: "oak-agenda-time" });
+      t.setText(item.endTime ? `${item.time}–${item.endTime}` : item.time);
     }
     if (item.marker) {
-      const m = li.createEl("span", { cls: `oak-agenda-marker oak-marker-${item.marker}` });
+      const m = row.createEl("span", {
+        cls: `oak-agenda-marker oak-marker-${item.marker}`,
+      });
       m.setText(this.markerLabel(item));
     }
     if (item.entry.todoState) {
-      const k = li.createEl("span", {
+      const k = row.createEl("span", {
         cls: `oak-agenda-keyword oak-keyword-${item.entry.todoState.toLowerCase()}`,
       });
       k.setText(item.entry.todoState);
     }
     if (item.entry.priority) {
-      const p = li.createEl("span", { cls: "oak-agenda-priority" });
-      p.setText(`[#${item.entry.priority}]`);
+      const p = row.createEl("span", {
+        cls: `oak-agenda-priority oak-priority-${item.entry.priority.toLowerCase()}`,
+      });
+      p.setText(`#${item.entry.priority}`);
     }
-    li.createEl("span", {
-      cls: "oak-agenda-title",
+    row.createEl("span", {
+      cls: "oak-agenda-item-title",
       text: item.entry.title,
     });
-    if (item.entry.tags.length > 0) {
-      const tags = li.createEl("span", { cls: "oak-agenda-tags" });
-      tags.setText(`:${item.entry.tags.join(":")}:`);
+    // For non-bucketed views, show an absolute date when present so
+    // the user knows when this is for.
+    if (!this.shouldShowBucketHeader() && item.date) {
+      const d = row.createEl("span", { cls: "oak-agenda-item-date" });
+      const delta = daysBetween(todayIsoDate, item.date);
+      d.setText(this.relativeDate(item.date, delta));
+      if (delta < 0) d.addClass("is-past");
+      else if (delta === 0) d.addClass("is-today");
     }
+    if (item.entry.tags.length > 0) {
+      const tagWrap = row.createEl("span", { cls: "oak-agenda-tag-wrap" });
+      for (const tag of item.entry.tags) {
+        tagWrap.createEl("span", {
+          cls: "oak-agenda-tag",
+          text: tag,
+        });
+      }
+    }
+  }
+
+  private relativeDate(iso: string, delta: number): string {
+    if (delta === 0) return "today";
+    if (delta === 1) return "tomorrow";
+    if (delta === -1) return "yesterday";
+    if (delta > 0 && delta <= 7) return `+${delta}d`;
+    if (delta < 0 && delta >= -7) return `${delta}d`;
+    return iso;
   }
 
   private markerLabel(item: AgendaItem): string {
     switch (item.marker) {
       case "scheduled":
-        return "Scheduled:";
+        return "Sched";
       case "scheduled-overdue":
-        return `Sched.${item.daysDelta}xD:`;
+        return `Sched +${item.daysDelta}d`;
       case "deadline":
-        return "Deadline:";
+        return "Due";
       case "deadline-warning":
-        return `In  ${item.daysDelta} d.:`;
+        return `Due +${item.daysDelta}d`;
       case "deadline-overdue":
-        return `${item.daysDelta} d. ago:`;
+        return `Due −${item.daysDelta}d`;
       case "timestamp":
         return "";
       default:
         return "";
     }
+  }
+
+  // ---------------------- focus / actions --------------------------
+
+  private allItems(): AgendaItem[] {
+    if (!this.latestView) return [];
+    const out: AgendaItem[] = [];
+    for (const b of this.latestView.buckets) {
+      for (const it of b.items) out.push(it);
+    }
+    return out;
+  }
+
+  private findFocused(): AgendaItem | null {
+    if (!this.focusedKey) return null;
+    for (const it of this.allItems()) {
+      if (itemKey(it) === this.focusedKey) return it;
+    }
+    return null;
+  }
+
+  private moveFocus(delta: 1 | -1): void {
+    const items = this.allItems();
+    if (items.length === 0) return;
+    const idx = this.focusedKey
+      ? items.findIndex((it) => itemKey(it) === this.focusedKey)
+      : -1;
+    let next: number;
+    if (idx === -1) {
+      next = delta === 1 ? 0 : items.length - 1;
+    } else {
+      next = (idx + delta + items.length) % items.length;
+    }
+    this.focusedKey = itemKey(items[next]!);
+    this.render();
+    this.scrollFocusedIntoView();
+  }
+
+  private scrollFocusedIntoView(): void {
+    const root = this.container();
+    const el = root.querySelector<HTMLElement>(".oak-agenda-item.is-focused");
+    el?.scrollIntoView({ block: "nearest" });
+  }
+
+  private openFocused(): void {
+    const item = this.findFocused();
+    if (item) this.openItem(item);
   }
 
   private openItem(item: AgendaItem): void {
@@ -320,7 +659,6 @@ export class OakAgendaView extends ItemView {
       return;
     }
     void this.openFile(file, { newTab: false });
-    // Best-effort line jump: schedule after the leaf has loaded.
     window.setTimeout(() => {
       const leaf = this.app2.workspace.getMostRecentLeaf();
       const view = leaf?.view as unknown as {
@@ -332,36 +670,12 @@ export class OakAgendaView extends ItemView {
     }, 60);
   }
 
-  private openFocused(): void {
-    if (!this.focusedItemKey || !this.latestView) return;
-    for (const b of this.latestView.buckets) {
-      for (const it of b.items) {
-        const k = `${it.entry.relPath}:${it.entry.line}:${it.date ?? ""}`;
-        if (k === this.focusedItemKey) {
-          this.openItem(it);
-          return;
-        }
-      }
-    }
-  }
-
   private async markFocusedDone(): Promise<void> {
-    if (!this.focusedItemKey || !this.latestView) {
-      new Notice("oak: focus an entry first (click)");
+    const target = this.findFocused();
+    if (!target) {
+      new Notice("oak: focus an entry first (j/k or click)");
       return;
     }
-    let target: AgendaItem | null = null;
-    for (const b of this.latestView.buckets) {
-      for (const it of b.items) {
-        const k = `${it.entry.relPath}:${it.entry.line}:${it.date ?? ""}`;
-        if (k === this.focusedItemKey) {
-          target = it;
-          break;
-        }
-      }
-      if (target) break;
-    }
-    if (!target) return;
     try {
       const result = await markDone(
         target.entry.filePath,
@@ -370,11 +684,7 @@ export class OakAgendaView extends ItemView {
         undefined,
         target.entry.relPath,
       );
-      new Notice(
-        result.repeated
-          ? "Advanced repeater"
-          : "Marked DONE",
-      );
+      new Notice(result.repeated ? "Advanced repeater" : "Marked DONE");
       this.state.scheduleRefresh();
     } catch (err) {
       if (err instanceof WriteBackError) {
@@ -385,4 +695,8 @@ export class OakAgendaView extends ItemView {
       }
     }
   }
+}
+
+function itemKey(item: AgendaItem): string {
+  return `${item.entry.relPath}:${item.entry.line}:${item.date ?? ""}:${item.marker ?? ""}`;
 }
