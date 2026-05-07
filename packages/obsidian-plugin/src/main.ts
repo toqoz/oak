@@ -875,7 +875,7 @@ export default class OakPlugin extends Plugin {
       cls: "oak-page-links-heading",
       text: "関連項目",
     });
-    const row = container.createDiv({ cls: "oak-page-links-row" });
+    const row = container.createDiv({ cls: "oak-card-grid" });
     for (const item of related) {
       this.renderRelatedCard(row, snap, item.page, item.relation);
     }
@@ -887,22 +887,22 @@ export default class OakPlugin extends Plugin {
     page: OakPage,
     relation: string,
   ): void {
-    const card = parent.createDiv({ cls: "oak-page-links-card" });
+    const card = parent.createDiv({ cls: "oak-card" });
     card.setAttr("role", "link");
     card.setAttr("tabindex", "0");
     card.createEl("div", {
-      cls: "oak-page-links-card-title",
+      cls: "oak-card-title",
       text: page.title,
     });
     const excerpt = excerptFrom(page.body, 240);
     if (excerpt.length > 0) {
       card.createEl("p", {
-        cls: "oak-page-links-card-excerpt",
+        cls: "oak-card-excerpt",
         text: excerpt,
       });
     }
     card.createEl("div", {
-      cls: "oak-page-links-card-relation",
+      cls: "oak-card-meta",
       text: relation,
     });
     const open = (newTab: boolean) =>

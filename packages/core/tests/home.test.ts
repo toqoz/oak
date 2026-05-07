@@ -99,19 +99,6 @@ describe("homeViewModel", () => {
     expect(home.recent.map((e) => e.title)).toEqual(["E", "D", "C"]);
   });
 
-  it("ranks hubs by inbound link count", async () => {
-    const root = resolve(scratch, "vault");
-    await cp(fxRoot("twohop"), root, { recursive: true });
-    const vault = await parseVault(root);
-    const graph = buildGraph(vault);
-    const home = await homeViewModel(vault, graph);
-    // C has B + D inbound, A has E inbound; C should rank above A.
-    const cIdx = home.hubs.findIndex((h) => h.title === "C");
-    const aIdx = home.hubs.findIndex((h) => h.title === "A");
-    expect(cIdx).toBeGreaterThanOrEqual(0);
-    expect(aIdx).toBeGreaterThanOrEqual(0);
-    expect(cIdx).toBeLessThan(aIdx);
-  });
 });
 
 describe("publisher emits index.html", () => {

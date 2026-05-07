@@ -96,10 +96,7 @@ export class OakHomeView extends ItemView {
     this.rendering = true;
     try {
       const [model] = await Promise.all([
-        homeViewModel(snap.vault, snap.graph, {
-          recentLimit: 10,
-          hubLimit: 10,
-        }),
+        homeViewModel(snap.vault, snap.graph, { recentLimit: 10 }),
         this.refreshGitAndMounts(),
       ]);
       this.model = model;
@@ -148,32 +145,28 @@ export class OakHomeView extends ItemView {
       text: `${m.stats.pages} pages · ${m.stats.public} public · ${m.stats.unlisted} unlisted · ${m.stats.private} private · ${m.stats.redLinks} red links`,
     });
 
-    // Recent
+    // Recent — rendered as cards, sharing the same look as the
+    // per-page "Related" cards (.oak-card / .oak-card-grid).
     if (m.recent.length > 0) {
       const sec = root.createDiv({ cls: "oak-home-section" });
       sec.createEl("h2", { text: "Recent updates" });
-      this.renderEntryList(sec, m.recent);
+      this.renderEntryCards(sec, m.recent);
     }
 
-    // Hubs
-    if (m.hubs.length > 0) {
-      const sec = root.createDiv({ cls: "oak-home-section" });
-      sec.createEl("h2", { text: "Hubs (most-linked-to)" });
-      this.renderEntryList(sec, m.hubs);
-    }
-
-    // Group by visibility
-    const grouped: Record<string, HomeEntry[]> = {
+    // Visibility groups (private hidden — the home view is a working
+    // index and private pages are intentionally noise here).
+    const grouped: Record<"public" | "unlisted", HomeEntry[]> = {
       public: [],
       unlisted: [],
-      private: [],
     };
     for (const p of m.pages) {
-      grouped[p.visibility]?.push(p);
+      if (p.visibility === "public" || p.visibility === "unlisted") {
+        grouped[p.visibility].push(p);
+      }
     }
-    for (const v of ["public", "unlisted", "private"] as const) {
+    for (const v of ["public", "unlisted"] as const) {
       const list = grouped[v];
-      if (!list || list.length === 0) continue;
+      if (list.length === 0) continue;
       const sec = root.createDiv({ cls: "oak-home-section" });
       sec.createEl("h2", { text: `${v[0]!.toUpperCase()}${v.slice(1)} (${list.length})` });
       this.renderEntryList(sec, list);
@@ -250,6 +243,39 @@ export class OakHomeView extends ItemView {
         text: ok
           ? "ok"
           : `${m.linkExists ? "" : "link missing "}${m.targetExists ? "" : "target missing"}`.trim(),
+      });
+    }
+  }
+
+  private renderEntryCards(parent: HTMLElement, entries: HomeEntry[]): void {
+    const grid = parent.createDiv({ cls: "oak-card-grid" });
+    for (const e of entries) {
+      const card = grid.createDiv({ cls: "oak-card" });
+      card.setAttr("role", "link");
+      card.setAttr("tabindex", "0");
+      card.createEl("div", { cls: "oak-card-title", text: e.title });
+      if (e.excerpt.length > 0) {
+        card.createEl("p", { cls: "oak-card-excerpt", text: e.excerpt });
+      }
+      const metaParts: string[] = [];
+      if (e.updatedAt) metaParts.push(`updated ${e.updatedAt.slice(0, 10)}`);
+      if (e.inboundCount > 0) metaParts.push(`${e.inboundCount} backlinks`);
+      if (metaParts.length > 0) {
+        card.createEl("div", {
+          cls: "oak-card-meta",
+          text: metaParts.join(" · "),
+        });
+      }
+      const open = (newTab: boolean) =>
+        this.openByRelPath(e.vaultRelPath, newTab);
+      card.addEventListener("click", (ev) => {
+        open(ev.metaKey || ev.ctrlKey);
+      });
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          open(ev.metaKey || ev.ctrlKey);
+        }
       });
     }
   }

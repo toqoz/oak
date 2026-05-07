@@ -40,16 +40,14 @@ export type HomeViewModel = {
   stats: HomeStats;
   pages: HomeEntry[]; // sorted by title (case-insensitive)
   recent: HomeEntry[]; // sorted by updatedAt desc, capped to recentLimit
-  hubs: HomeEntry[]; // sorted by inboundCount desc, capped to hubLimit
 };
 
 export type HomeViewOptions = {
   recentLimit?: number;
-  hubLimit?: number;
   excerptMaxChars?: number;
   // Optional filter to restrict which pages appear in `pages` /
-  // `recent` / `hubs`. The publisher passes `["public", "unlisted"]`
-  // so only publishable pages leak to the static site.
+  // `recent`. The publisher passes `["public", "unlisted"]` so only
+  // publishable pages leak to the static site.
   visibilityFilter?: Visibility[];
 };
 
@@ -104,7 +102,7 @@ function countResolvedOutgoing(links: ResolvedLink[]): number {
 
 function countInbound(backlinks: Backlink[]): number {
   // Distinct source pages: a single page that links twice still counts
-  // as one inbound for ranking purposes.
+  // as one inbound.
   const set = new Set<string>();
   for (const b of backlinks) set.add(b.fromId);
   return set.size;
@@ -116,7 +114,6 @@ export async function homeViewModel(
   options: HomeViewOptions = {},
 ): Promise<HomeViewModel> {
   const recentLimit = options.recentLimit ?? 10;
-  const hubLimit = options.hubLimit ?? 10;
   const excerptMax = options.excerptMaxChars ?? 200;
   const filter = options.visibilityFilter
     ? new Set<Visibility>(options.visibilityFilter)
@@ -166,20 +163,11 @@ export async function homeViewModel(
     .filter((e): e is HomeEntry & { updatedAt: string } => e.updatedAt !== null)
     .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
     .slice(0, recentLimit);
-  const hubs = [...all]
-    .filter((e) => e.inboundCount > 0)
-    .sort(
-      (a, b) =>
-        b.inboundCount - a.inboundCount ||
-        a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
-    )
-    .slice(0, hubLimit);
 
   return {
     generatedAt: new Date().toISOString(),
     stats,
     pages,
     recent,
-    hubs,
   };
 }
