@@ -42,7 +42,11 @@ appears in `todoKeywords` / `doneKeywords`.
 ## TODO [#A] Write the report :work:urgent:
 ```
 
-- `[#A]` — priority (configurable letters).
+- `[#A]` — priority. Letters between `priorities.highest` and
+  `priorities.lowest` (inclusive) are recognized; out-of-range
+  letters stay in the title as literal text. Sort comparison treats
+  `A < B < C` (so `A` is highest). Unprioritized entries sort as if
+  they had `priorities.default`.
 - `:work:urgent:` — trailing tag block.
 
 A heading is included in the agenda only if it has a TODO keyword, a
@@ -66,7 +70,9 @@ it to body text.
 - Inactive: `[2026-05-07 Thu 18:30]` — never shown in agenda; used for
   `CLOSED` and logbook entries.
 - With time: `<2026-05-07 Thu 10:00>` or range `<… 10:00-11:30>`.
-- Date range: `<2026-05-07 Thu>--<2026-05-09 Sat>`.
+- Date range: `<2026-05-07 Thu>--<2026-05-09 Sat>` (or
+  `[…]--[…]` for inactive ranges, which the parser still recognizes
+  but the agenda never displays).
 - Repeater: `+1d`, `++1w`, `.+2d` (every-N / catch-up / from-completion).
 - Warning: `-2d` shifts the deadline pre-warning window.
 - Units: `h` `d` `w` `m` `y`.
@@ -76,13 +82,20 @@ it to body text.
 ```
 :PROPERTIES:
 :CATEGORY: ops
+:ID: stable-handle-001
 :CUSTOM_KEY: value
 :END:
 ```
 
 `:PROPERTIES:` populates `entry.properties` (and `CATEGORY` overrides
-the default category, which is the filename). `:LOGBOOK:` and any
-other `:NAME: … :END:` drawer is parsed and skipped.
+the default category, which is the filename). `:ID:` overrides the
+auto-derived entry handle — set this when you have duplicate sibling
+headings or want the handle to survive heading-text edits. `:LOGBOOK:`
+and any other `:NAME: … :END:` drawer is parsed and skipped.
+
+Without an explicit `:ID:`, the handle is derived from the file path
+plus the heading hierarchy. Duplicate sibling headings are
+auto-disambiguated by appending the heading line number.
 
 ### Tag inheritance
 
@@ -97,15 +110,18 @@ heading with the desired tags instead.
   planning line.
 - Repeater present: keyword stays, `SCHEDULED` / `DEADLINE` are
   advanced according to the repeater kind, and a state-change line is
-  appended under `:LOGBOOK:` (the drawer is created if missing).
+  prepended to `:LOGBOOK:` (the drawer is created if missing).
 
-Files are written atomically (temp file + rename).
+Files are written atomically (temp file + rename); symlinked files
+are resolved to their target so the link itself isn't replaced.
 
 ## Find input syntax
 
-The Find view's input dispatches on the first character:
+Press `Enter` in the Find input to apply the query. The first
+character chooses the dialect:
 
-- Starts with `+`, `-`, `@`, or `(` → tag/property match expression.
+- Starts with `+`, `-`, `@`, `#`, or `%` → tag/property match
+  expression.
 - Otherwise → case-insensitive regex over title + body.
 
 Match grammar:
@@ -115,11 +131,14 @@ expr  := term ( ('+' | '-' | '&') term )*
 term  := TAG | PROP '=' VALUE | PROP '<>' VALUE
 ```
 
-`+` / `&` mean AND; `-` means AND NOT. Trailing `/STATE` filters by
-TODO keyword (`/!STATE` for "not equal").
+`+` / `&` mean AND; `-` means AND NOT. Tag names may contain `@`,
+`#`, `%` (the same characters the parser accepts in `:tag:` blocks).
+Trailing `/STATE` filters by TODO keyword (`/!STATE` for "not
+equal"). Grouping parentheses are not supported.
 
 Examples:
 - `+work-someday` — tagged `work` and not `someday`.
+- `@home` — tagged `@home`.
 - `urgent+OWNER="alice"` — tag `urgent` and property `OWNER` equals `alice`.
 - `project/NEXT` — TODO keyword must be `NEXT`.
 
@@ -139,5 +158,20 @@ weekStartsOn: 1              # 0 = Sun, 1 = Mon
 priorities: { highest: A, lowest: C, default: B }
 skipDeadlinePrewarningIfScheduled: pre-scheduled  # false | true | pre-scheduled
 ```
+
+`agendaFiles` / `agendaFilesExclude` accept a list of paths relative
+to the vault root. Each entry matches an exact file or a directory
+prefix:
+
+```yaml
+agendaFiles: [projects, tasks.md]   # only these are scanned
+agendaFilesExclude: [projects/archive, templates]
+```
+
+Globs (`*`, `**`) are not supported.
+
+`priorities.default` is the priority used for sort comparison when an
+entry has no explicit `[#X]` — set it to the same letter you reach
+for most often so unprioritized items rank with their natural cohort.
 
 Edits to this file are picked up on the next vault refresh (`r`).
