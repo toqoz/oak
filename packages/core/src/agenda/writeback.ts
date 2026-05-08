@@ -10,8 +10,17 @@
 //      (first one in config.doneKeywords) and insert/replace a CLOSED
 //      planning line on the line after the heading.
 
-import { readFile, realpath, writeFile, rename } from "node:fs/promises";
+import {
+  chmod,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
 import matter from "gray-matter";
 
 import { parseAgendaPage, parsePlanningLine } from "./parse.js";
@@ -30,6 +39,7 @@ export class WriteBackError extends Error {
       | "entry-not-found"
       | "no-todo-state"
       | "already-done"
+      | "conflict"
       | "io-error",
   ) {
     super(message);
@@ -92,9 +102,21 @@ export async function markDone(
   now: Date = new Date(),
   relPath?: string,
 ): Promise<MarkDoneResult> {
-  let raw: string;
+  // Resolve symlinks once and use the realpath for both the read and
+  // the conflict check so the mtime comparison is meaningful even when
+  // the caller passed a vault-relative symlink target.
+  let resolvedPath: string;
   try {
-    raw = await readFile(filePath, "utf8");
+    resolvedPath = await realpath(filePath);
+  } catch {
+    resolvedPath = filePath;
+  }
+  let raw: string;
+  let preMtimeMs: number;
+  try {
+    const st = await stat(resolvedPath);
+    preMtimeMs = st.mtimeMs;
+    raw = await readFile(resolvedPath, "utf8");
   } catch (err) {
     throw new WriteBackError(
       `failed to read ${filePath}: ${(err as Error).message}`,
@@ -221,7 +243,7 @@ export async function markDone(
   }
 
   const updated = lines.join("\n");
-  await atomicWrite(filePath, updated);
+  await atomicWrite(resolvedPath, updated, preMtimeMs);
 
   return {
     filePath,
@@ -298,26 +320,67 @@ function insertLogbookEntry(
   lines.splice(insertAt, 0, ":LOGBOOK:", entry, ":END:");
 }
 
-async function atomicWrite(filePath: string, content: string): Promise<void> {
-  // Resolve symlinks so the rename targets the real file. Without
-  // this, `rename` on a symlinked vault entry would replace the link
-  // with a regular file, severing the link. Falls back to the raw
-  // path when the file does not exist yet (rare for writeback but
-  // possible in tests).
-  let target: string;
+// Write `content` to `target` atomically: stage to a unique tmp file
+// alongside the target, copy the original mode bits, then `rename` —
+// which is atomic within the same directory on POSIX. Two safety checks
+// before the rename:
+//   - `expectedMtimeMs` must still match `target`'s mtime, otherwise we
+//     refuse the write (someone else edited the file between read and
+//     write) so optimistic edits surface as a conflict instead of
+//     silently clobbering the user's work
+//   - the tmp name embeds pid + 8 random bytes to avoid two concurrent
+//     `markDone` calls racing on the same `.oak-tmp` path
+async function atomicWrite(
+  target: string,
+  content: string,
+  expectedMtimeMs: number,
+): Promise<void> {
+  let mode: number | undefined;
   try {
-    target = await realpath(filePath);
-  } catch {
-    target = filePath;
+    const cur = await stat(target);
+    if (Math.abs(cur.mtimeMs - expectedMtimeMs) > 0.5) {
+      throw new WriteBackError(
+        `${target} was modified externally between read and write`,
+        "conflict",
+      );
+    }
+    mode = cur.mode;
+  } catch (err) {
+    if (err instanceof WriteBackError) throw err;
+    throw new WriteBackError(
+      `failed to stat ${target}: ${(err as Error).message}`,
+      "io-error",
+    );
   }
-  const tmp = join(dirname(target), `.${basename(target)}.oak-tmp`);
+  const suffix = `${process.pid}.${randomBytes(8).toString("hex")}`;
+  const tmp = join(dirname(target), `.${basename(target)}.oak-tmp.${suffix}`);
   try {
     await writeFile(tmp, content, "utf8");
+    if (mode !== undefined) {
+      try {
+        await chmod(tmp, mode & 0o7777);
+      } catch {
+        // best-effort: a chmod failure (e.g. exotic filesystem) shouldn't
+        // block the write, the file content is still correct.
+      }
+    }
     await rename(tmp, target);
   } catch (err) {
+    // If rename failed mid-flight, leave no orphan tmp behind.
+    try {
+      await unlink(tmp);
+    } catch {
+      // ignore: tmp may already be gone (e.g. successful rename above
+      // that then errored on a follow-up).
+    }
+    if (err instanceof WriteBackError) throw err;
     throw new WriteBackError(
       `failed to write ${target}: ${(err as Error).message}`,
       "io-error",
     );
   }
 }
+
+// Test-only handle for the conflict-detection plumbing. Production code
+// must not import this — `markDone` already wires the real flow.
+export const _internal = { atomicWrite };

@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_AGENDA_CONFIG } from "../../src/agenda/config.js";
 import { parseAgendaPage } from "../../src/agenda/parse.js";
-import { markDone } from "../../src/agenda/writeback.js";
+import { _internal, markDone } from "../../src/agenda/writeback.js";
 import type { OakPage } from "../../src/types.js";
 
 function makePage(filePath: string, body: string): OakPage {
@@ -137,5 +144,38 @@ SCHEDULED: <2026-05-01 Fri .+1w>
     await expect(
       markDone(filePath, "deadbeef", DEFAULT_AGENDA_CONFIG),
     ).rejects.toMatchObject({ code: "entry-not-found" });
+  });
+
+  it("rejects a stale write when expectedMtimeMs disagrees with the on-disk mtime", async () => {
+    // The mtime CAS is what protects users from overwrites when an
+    // external edit lands between markDone's read and write. The
+    // window is too narrow to drive reliably from a black-box test,
+    // so we exercise the same code path directly through `_internal`
+    // with a deliberately wrong `expectedMtimeMs`.
+    const filePath = join(dir, "task.md");
+    writeFileSync(filePath, `original\n`, "utf8");
+    const original = readFileSync(filePath, "utf8");
+    const wrongMtime = statSync(filePath).mtimeMs - 10_000;
+    await expect(
+      _internal.atomicWrite(filePath, "intruder\n", wrongMtime),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(readFileSync(filePath, "utf8")).toBe(original);
+  });
+
+  it("preserves file mode across the atomic rename", async () => {
+    const filePath = join(dir, "task.md");
+    writeFileSync(filePath, `# TODO Modes\n`, "utf8");
+    chmodSync(filePath, 0o640);
+    const before = statSync(filePath).mode & 0o7777;
+    const page = makePage(filePath, readFileSync(filePath, "utf8"));
+    const [target] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    await markDone(
+      filePath,
+      target!.entryId,
+      DEFAULT_AGENDA_CONFIG,
+      new Date("2026-05-06T09:30:00Z"),
+    );
+    const after = statSync(filePath).mode & 0o7777;
+    expect(after).toBe(before);
   });
 });
