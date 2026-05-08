@@ -1026,53 +1026,217 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   display: none;
 }
 
-/* SCHEDULED / DEADLINE tooltip on TODO heading lines.
- * Rendered via CodeMirror's `showTooltip` facet. Three-step flow:
- *   1. pick field (SCHEDULED / DEADLINE)
- *   2. pick date preset (today / tomorrow / next mon / +7d / cal)
- *   3. (only if `cal`) month grid
- * The wrapper holds a body column on the left and a close button on
- * the right; the body's contents swap as the user steps through. */
-.oak-agenda-tooltip {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  padding: 6px 6px 6px 8px;
-  font-size: var(--font-ui-small);
+/* SCHEDULED / DEADLINE editor for TODO heading lines.
+ *
+ * Two surfaces:
+ *   1. an inline calendar icon — `Decoration.widget` rendered at
+ *      `line.from`, positioned absolutely so it hangs into the left
+ *      padding without shifting the heading text. Only present while
+ *      the cursor sits on the heading.
+ *   2. a tooltip below the heading — opened by clicking the icon.
+ *      Shows current SCHEDULED + DEADLINE values, each row offering
+ *      edit (presets + month grid) and clear.
+ */
+
+/* Icon + line anchor.
+ * `.oak-agenda-line-anchor` adds `position: relative` so the
+ * absolutely-positioned `.oak-agenda-line-icon` can be placed
+ * relative to the heading line itself. The icon hangs into the left
+ * margin, vertically centered on the heading's line box (regardless
+ * of heading size), without disturbing the heading position. */
+.cm-line.oak-agenda-line-anchor {
+  position: relative;
 }
-.oak-agenda-tooltip-body {
+button.oak-agenda-line-icon {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  /* Sit far enough left to clear Obsidian's fold-arrow column (which
+     hangs into the heading line's left margin) without bumping into
+     the editor pane's outer padding. */
+  left: -3.2em;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.6;
+  box-shadow: none;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+button.oak-agenda-line-icon:hover {
+  opacity: 1;
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+button.oak-agenda-line-icon svg {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+/* Tooltip frame. CodeMirror 6 applies `.cm-tooltip` directly to our
+ * own root element (we are the tooltip — there is no extra wrapper).
+ * CM ships a default `.ͼN .cm-tooltip` rule with a near-white
+ * background and a `#bbb` border, scoped through its dynamic theme
+ * class, so we need both classes plus `!important` to win the
+ * cascade against that scoped default. */
+.oak-agenda-tooltip.cm-tooltip {
+  background: var(--background-secondary) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 6px !important;
+  color: var(--text-normal) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 0;
+  padding: 8px 10px;
+  min-width: 16em;
+  font-size: var(--font-ui-small);
 }
-.oak-agenda-tooltip-row {
+.oak-agenda-tooltip-header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
 }
-.oak-agenda-tooltip-btn {
-  font-size: inherit;
-  padding: 2px 8px;
-  cursor: pointer;
+.oak-agenda-tooltip-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.85em;
+  color: var(--text-muted);
 }
-.oak-agenda-tooltip-back {
-  margin-left: auto;
-  opacity: 0.7;
-}
-.oak-agenda-tooltip-close {
-  align-self: flex-start;
+button.oak-agenda-tooltip-close {
+  appearance: none;
+  -webkit-appearance: none;
   font-size: 1.1em;
   line-height: 1;
   padding: 2px 6px;
   background: transparent;
   border: none;
+  box-shadow: none;
   cursor: pointer;
   opacity: 0.6;
+  color: var(--text-muted);
 }
-.oak-agenda-tooltip-close:hover {
+button.oak-agenda-tooltip-close:hover {
   opacity: 1;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* One row per planning field. View mode keeps everything on one line;
+ * presets mode wraps button rows; cal mode swaps the row content for a
+ * column with the month header + grid. */
+.oak-agenda-tooltip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.oak-agenda-tooltip-row-cal {
+  flex-direction: column;
+  align-items: stretch;
+}
+.oak-agenda-tooltip-label {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  min-width: 5.5em;
+}
+/* The value is rendered as a `<button>` when a date is set (clicking
+ * it opens the picker — there's no separate `edit` button). When
+ * empty it falls back to a plain `<span>` showing `—`. Strip
+ * Obsidian's default button chrome so the value reads as text, not
+ * a control. */
+.oak-agenda-tooltip-value {
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-normal);
+  text-align: left;
+}
+button.oak-agenda-tooltip-value {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  height: auto;
+  line-height: inherit;
+  cursor: pointer;
+}
+button.oak-agenda-tooltip-value:hover {
+  color: var(--text-accent);
+  background: none;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.oak-agenda-tooltip-value.is-empty {
+  color: var(--text-faint);
+}
+
+button.oak-agenda-tooltip-btn {
+  font-size: inherit;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+/* Inline text-link affordances (edit / set / clear) — quiet and word-
+ * sized so they don't compete with the actual value to their left.
+ * Selectors lead with `button.` so they win against Obsidian's
+ * default `.workspace-leaf-content button` rule, which otherwise
+ * gives every <button> an opaque background + box-shadow. */
+button.oak-agenda-tooltip-link {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  height: auto;
+  line-height: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+button.oak-agenda-tooltip-link:hover {
+  color: var(--text-accent);
+  background: none;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+button.oak-agenda-tooltip-clear {
+  color: var(--text-faint);
+}
+button.oak-agenda-tooltip-clear:hover {
+  color: var(--text-error);
+}
+
+button.oak-agenda-tooltip-back {
+  margin-left: auto;
+  opacity: 0.7;
 }
 
 .oak-agenda-tooltip-cal-header {
@@ -1085,6 +1249,16 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+/* Quick-pick row above the month grid. Keeps `today` / `next mon` a
+ * single click without forcing the user to hunt through the grid. */
+.oak-agenda-tooltip-cal-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 2px 0 4px;
+  border-bottom: 1px dashed var(--background-modifier-border);
+  margin-bottom: 2px;
+}
 .oak-agenda-tooltip-cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 2em);
@@ -1096,7 +1270,9 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   opacity: 0.6;
   padding: 2px 0;
 }
-.oak-agenda-tooltip-cal-day {
+button.oak-agenda-tooltip-cal-day {
+  appearance: none;
+  -webkit-appearance: none;
   font: inherit;
   padding: 2px 0;
   text-align: center;
@@ -1104,14 +1280,17 @@ body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 3px;
+  box-shadow: none;
+  color: var(--text-normal);
 }
-.oak-agenda-tooltip-cal-day:hover {
+button.oak-agenda-tooltip-cal-day:hover {
   background: var(--background-modifier-hover);
+  box-shadow: none;
 }
-.oak-agenda-tooltip-cal-day.is-off-month {
+button.oak-agenda-tooltip-cal-day.is-off-month {
   opacity: 0.35;
 }
-.oak-agenda-tooltip-cal-day.is-today {
+button.oak-agenda-tooltip-cal-day.is-today {
   border-color: var(--interactive-accent);
 }
 

@@ -1,28 +1,50 @@
-// CodeMirror extension that shows a small popover next to a TODO
-// heading, letting the user attach SCHEDULED or DEADLINE without
-// leaving the editor.
+// CodeMirror extension for editing SCHEDULED / DEADLINE on TODO
+// heading lines.
 //
-// Trigger: cursor is a single point on a line that matches
-//   ^#{1,6}\s+<TODO-keyword>\b
+// UX:
+//   - Cursor anywhere inside a TODO heading's scope    → a calendar
+//     icon appears in the left margin of the heading line. "Scope"
+//     means the heading line itself or any line of its body content
+//     (including nested non-TODO subsections), per org-mode's
+//     ancestor semantics.
+//   - Click the icon                                   → a tooltip
+//     opens below the heading, displaying the current SCHEDULED and
+//     DEADLINE and offering edit / clear on each.
+//   - Move the cursor out of the scope or press Esc    → the tooltip
+//     and icon both disappear.
+//
 // The TODO keyword set comes from the live agenda config (.oak/agenda.yml)
 // via the `todoKeywords` callback the plugin passes in.
 //
-// Flow:
-//   1. pick field          [SCHEDULED] [DEADLINE]
-//   2. pick date preset    [today] [tomorrow] [next mon] [+7d] [cal]   ← back
-//   3. (only if `cal`)     month grid; ◀ / ▶ navigates months
+// Each tooltip row independently transitions between two states:
+//   view  →  shows the current value (or `—`) plus `edit`/`set`/`clear`
+//   cal   →  month grid with ◀ / ▶ navigation, plus quick-pick links
+//            (today / tomorrow / next mon / +7d) above the grid
 //
-// On commit:
-//   - if a planning line already sits below the heading, replace it with
-//     a merged version (using core's parsePlanningLine so we keep the
-//     same semantics writeback uses)
-//   - otherwise insert a new planning line on the next line
+// Commit reuses core's parsePlanningLine + formatTimestamp so the
+// resulting line stays equivalent to whatever writeback would produce.
 
-import { EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
-import { EditorView, keymap, showTooltip, type Tooltip } from "@codemirror/view";
+import {
+  EditorState,
+  Prec,
+  StateEffect,
+  StateField,
+} from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  type TooltipView,
+  type ViewUpdate,
+  WidgetType,
+  keymap,
+  showTooltip,
+  type Tooltip,
+} from "@codemirror/view";
 
 import {
   addUnits,
+  dateOnly,
   dayOfWeek,
   formatTimestamp,
   parsePlanningLine,
@@ -35,20 +57,10 @@ const MS_PER_DAY = 86_400_000;
 
 type PlanningField = "SCHEDULED" | "DEADLINE";
 
-type FieldVal = {
-  tooltips: readonly Tooltip[];
-  // Stable key for the current heading position. When unchanged across
-  // updates we keep the same Tooltip object so CM6 doesn't tear down
-  // and recreate the DOM (which would reset the step state mid-flow).
-  key: string | null;
-  // The key the user last explicitly dismissed (Esc / × button). While
-  // this matches `key` we suppress the tooltip; moving the cursor to a
-  // different heading line clears it.
-  dismissedKey: string | null;
-};
-
-// Dispatched by the tooltip's close button / Escape handler.
-const dismissAgendaTooltip = StateEffect.define<void>();
+// Toggle: open if not already open at this line, otherwise close.
+const toggleAgendaTooltip = StateEffect.define<{ line: number }>();
+// Force-close (Esc, dismiss button).
+const closeAgendaTooltip = StateEffect.define<void>();
 
 export type AgendaTooltipOpts = {
   todoKeywords: () => readonly string[];
@@ -56,23 +68,127 @@ export type AgendaTooltipOpts = {
   weekStartsOn: () => 0 | 1;
 };
 
+// Inline calendar icon — same lucide-style stroke set Obsidian itself
+// uses, kept tiny so it sits in the left margin without crowding the
+// heading.
+const CALENDAR_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>';
+
+class IconWidget extends WidgetType {
+  constructor(public readonly line: number) {
+    super();
+  }
+  override eq(other: WidgetType): boolean {
+    return other instanceof IconWidget && other.line === this.line;
+  }
+  override toDOM(view: EditorView): HTMLElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "oak-agenda-line-icon";
+    btn.setAttribute("aria-label", "Edit SCHEDULED / DEADLINE");
+    btn.innerHTML = CALENDAR_SVG;
+    // Suppress mousedown so clicking the icon doesn't move the editor
+    // caret (which would close the tooltip a tick later when the
+    // cursor lands somewhere else inside the widget).
+    btn.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+    });
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      view.dispatch({ effects: toggleAgendaTooltip.of({ line: this.line }) });
+    });
+    return btn;
+  }
+  override ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+type FieldVal = {
+  cursorLine: number | null;
+  decorations: DecorationSet;
+  openLine: number | null;
+  tooltips: readonly Tooltip[];
+};
+
+const EMPTY_FV: FieldVal = {
+  cursorLine: null,
+  decorations: Decoration.none,
+  openLine: null,
+  tooltips: [],
+};
+
+// Find the nearest TODO heading whose scope contains the cursor.
+// "Scope" follows org-mode parent semantics: walk back from the
+// cursor line through ancestor headings (each strictly higher in the
+// hierarchy than the last one seen). The first such heading whose
+// keyword is in `todoKeywords` is the answer.
+//
+// Returns null when there is no TODO ancestor — e.g., the cursor is
+// in a section under a non-TODO heading at the top level, or the
+// cursor sits in front-matter / a code fence above any heading.
+function detectCursorHeading(
+  state: EditorState,
+  todoKeywords: readonly string[],
+): { line: number; from: number } | null {
+  const sel = state.selection.main;
+  if (!sel.empty) return null;
+  const startLine = state.doc.lineAt(sel.head).number;
+
+  // Acceptable headings shrink as we walk back: once we see a
+  // heading at level L, only strictly higher-level (smaller number)
+  // headings can be ancestors of the cursor's location.
+  let acceptableLevel = 7;
+  for (let n = startLine; n >= 1; n--) {
+    const l = state.doc.line(n);
+    const m = l.text.match(HEADING_RE);
+    if (!m) continue;
+    const level = m[1]!.length;
+    if (level >= acceptableLevel) continue;
+    const firstWord = m[2]!;
+    if (todoKeywords.includes(firstWord)) {
+      return { line: n, from: l.from };
+    }
+    acceptableLevel = level;
+  }
+  return null;
+}
+
 export function agendaTooltipExtension(opts: AgendaTooltipOpts) {
   const field = StateField.define<FieldVal>({
     create(state) {
-      return computeFV(state, opts, null);
+      return computeFV(state, opts, EMPTY_FV);
     },
     update(prev, tr) {
-      let next = prev;
+      let openOverride: number | null | undefined;
       for (const e of tr.effects) {
-        if (e.is(dismissAgendaTooltip) && prev.key) {
-          next = { ...next, dismissedKey: prev.key };
+        if (e.is(toggleAgendaTooltip)) {
+          openOverride =
+            prev.openLine === e.value.line ? null : e.value.line;
+        } else if (e.is(closeAgendaTooltip)) {
+          openOverride = null;
         }
       }
-      if (!tr.docChanged && !tr.selection && next === prev) return prev;
-      return computeFV(tr.state, opts, next);
+      const intermediate =
+        openOverride === undefined
+          ? prev
+          : { ...prev, openLine: openOverride };
+      if (
+        !tr.docChanged &&
+        !tr.selection &&
+        openOverride === undefined
+      ) {
+        return prev;
+      }
+      return computeFV(tr.state, opts, intermediate);
     },
-    provide: (f) => showTooltip.computeN([f], (s) => s.field(f).tooltips),
+    provide: (f) => [
+      EditorView.decorations.compute([f], (s) => s.field(f).decorations),
+      showTooltip.computeN([f], (s) => s.field(f).tooltips),
+    ],
   });
+
   // Capture Escape only while our tooltip is visible. When it isn't,
   // returning false lets the keystroke through so other Esc handlers
   // (Obsidian's own, vim mode, etc.) still work normally.
@@ -83,7 +199,7 @@ export function agendaTooltipExtension(opts: AgendaTooltipOpts) {
         run: (view) => {
           const fv = view.state.field(field, false);
           if (!fv || fv.tooltips.length === 0) return false;
-          view.dispatch({ effects: dismissAgendaTooltip.of(undefined) });
+          view.dispatch({ effects: closeAgendaTooltip.of(undefined) });
           return true;
         },
       },
@@ -95,140 +211,208 @@ export function agendaTooltipExtension(opts: AgendaTooltipOpts) {
 function computeFV(
   state: EditorState,
   opts: AgendaTooltipOpts,
-  prev: FieldVal | null,
+  prev: FieldVal,
 ): FieldVal {
-  const dismissedKey = prev?.dismissedKey ?? null;
-  const empty = (key: string | null): FieldVal => ({
-    tooltips: [],
-    key,
-    // Forget the dismissal as soon as the cursor leaves the dismissed
-    // heading — moving back to it should re-open the tooltip.
-    dismissedKey: dismissedKey === key ? key : null,
-  });
+  const detected = detectCursorHeading(state, opts.todoKeywords());
+  if (!detected) return EMPTY_FV;
 
-  const sel = state.selection.main;
-  if (!sel.empty) return empty(null);
-  const line = state.doc.lineAt(sel.head);
-  const m = line.text.match(HEADING_RE);
-  if (!m) return empty(null);
-  const firstWord = m[2]!;
-  if (!opts.todoKeywords().includes(firstWord)) return empty(null);
+  const sameLine = prev.cursorLine === detected.line;
 
-  const key = `${line.number} ${line.text}`;
-  if (dismissedKey === key) {
-    return { tooltips: [], key, dismissedKey: key };
+  // Tooltip only stays open while the cursor remains on the same
+  // heading line that opened it. Any cursor move outside the line
+  // tears it down (handled by the EMPTY_FV early-return above for
+  // non-heading lines, and here for moves between headings).
+  let openLine = prev.openLine;
+  if (openLine !== null && openLine !== detected.line) openLine = null;
+
+  let decorations = prev.decorations;
+  if (!sameLine || decorations === Decoration.none) {
+    decorations = Decoration.set(
+      [
+        Decoration.line({ class: "oak-agenda-line-anchor" }).range(
+          detected.from,
+        ),
+        // side: 1 keeps the widget on this line (vs. trailing the
+        // previous line's break). Block widgets would push the heading
+        // text down; we want the icon inline so it can hang into the
+        // left padding without disturbing the heading position.
+        Decoration.widget({
+          widget: new IconWidget(detected.line),
+          side: 1,
+        }).range(detected.from),
+      ],
+      true,
+    );
   }
-  // Same key as before and not dismissed: hand back the previous value
-  // so the Tooltip identity is preserved and CM6 keeps the existing
-  // DOM (and the step state inside it).
-  if (prev && prev.key === key && prev.tooltips.length > 0) return prev;
 
-  const headingFrom = line.from;
-  const tooltip: Tooltip = {
-    pos: headingFrom,
-    above: false,
-    strictSide: false,
-    arrow: false,
-    create: (view) => makeTooltipDom(view, headingFrom, opts),
+  let tooltips: readonly Tooltip[] = [];
+  if (openLine === detected.line) {
+    if (
+      prev.openLine === detected.line &&
+      prev.tooltips.length > 0 &&
+      sameLine
+    ) {
+      // Preserve the tooltip identity so CM6 keeps the existing DOM
+      // (and any per-row state inside it) instead of remounting on
+      // every keystroke.
+      tooltips = prev.tooltips;
+    } else {
+      const headingFrom = detected.from;
+      tooltips = [
+        {
+          pos: headingFrom,
+          above: false,
+          strictSide: false,
+          arrow: false,
+          create: (view) => makeTooltipView(view, headingFrom, opts),
+        },
+      ];
+    }
+  }
+
+  return {
+    cursorLine: detected.line,
+    decorations,
+    openLine,
+    tooltips,
   };
-  return { tooltips: [tooltip], key, dismissedKey: null };
 }
 
-type Step =
-  | { kind: "field" }
-  | { kind: "date"; field: PlanningField }
-  | { kind: "cal"; field: PlanningField; year: number; month: number };
+type RowMode =
+  | { kind: "view" }
+  | { kind: "cal"; year: number; month: number };
 
-function makeTooltipDom(
+function makeTooltipView(
   view: EditorView,
   headingFrom: number,
   opts: AgendaTooltipOpts,
-): { dom: HTMLElement } {
+): TooltipView {
   const wrapper = document.createElement("div");
   wrapper.className = "oak-agenda-tooltip";
 
-  let step: Step = { kind: "field" };
+  const rowModes: Record<PlanningField, RowMode> = {
+    SCHEDULED: { kind: "view" },
+    DEADLINE: { kind: "view" },
+  };
 
   const dismiss = () => {
-    view.dispatch({ effects: dismissAgendaTooltip.of(undefined) });
+    view.dispatch({ effects: closeAgendaTooltip.of(undefined) });
     view.focus();
   };
 
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "oak-agenda-tooltip-close";
-  close.setAttribute("aria-label", "Close");
-  close.textContent = "×";
-  close.addEventListener("click", (ev) => {
-    ev.preventDefault();
-    dismiss();
-  });
+  const renderAll = () => {
+    wrapper.replaceChildren();
 
-  const body = document.createElement("div");
-  body.className = "oak-agenda-tooltip-body";
-
-  wrapper.append(body, close);
-
-  const render = () => {
-    body.replaceChildren();
-    if (step.kind === "field") renderField();
-    else if (step.kind === "date") renderDate(step.field);
-    else renderCal(step.field, step.year, step.month);
-  };
-
-  const renderField = () => {
-    const row = makeRow();
-    for (const f of ["SCHEDULED", "DEADLINE"] as PlanningField[]) {
-      row.appendChild(
-        makeBtn(f, () => {
-          step = { kind: "date", field: f };
-          render();
-        }),
-      );
-    }
-    body.appendChild(row);
-  };
-
-  const renderDate = (field: PlanningField) => {
-    const today = todayIso(new Date());
-    const presets: { label: string; iso: string }[] = [
-      { label: "today", iso: today },
-      { label: "tomorrow", iso: addUnits(today, 1, "d") },
-      { label: "next mon", iso: nextMonday(today) },
-      { label: "+7d", iso: addUnits(today, 7, "d") },
-    ];
-    const row = makeRow();
-    for (const p of presets) {
-      row.appendChild(
-        makeBtn(p.label, () => {
-          commit(field, { iso: p.iso, hasTime: false, active: true });
-        }),
-      );
-    }
-    row.appendChild(
-      makeBtn("cal", () => {
-        const t = splitYearMonth(today);
-        step = { kind: "cal", field, year: t.year, month: t.month };
-        render();
-      }),
-    );
-    const back = makeBtn("←", () => {
-      step = { kind: "field" };
-      render();
+    const header = document.createElement("div");
+    header.className = "oak-agenda-tooltip-header";
+    const title = document.createElement("span");
+    title.className = "oak-agenda-tooltip-title";
+    title.textContent = "Plan";
+    header.appendChild(title);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "oak-agenda-tooltip-close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "×";
+    close.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      dismiss();
     });
-    back.classList.add("oak-agenda-tooltip-back");
-    row.appendChild(back);
-    body.appendChild(row);
+    header.appendChild(close);
+    wrapper.appendChild(header);
+
+    const planning = readPlanningTimestamps(view, headingFrom);
+
+    for (const field of ["SCHEDULED", "DEADLINE"] as PlanningField[]) {
+      const row = document.createElement("div");
+      row.className = "oak-agenda-tooltip-row";
+
+      const label = document.createElement("span");
+      label.className = "oak-agenda-tooltip-label";
+      label.textContent = field;
+      row.appendChild(label);
+
+      const ts =
+        field === "SCHEDULED" ? planning.scheduled : planning.deadline;
+      const mode = rowModes[field];
+
+      if (mode.kind === "view") {
+        renderViewMode(row, field, ts);
+      } else {
+        renderCalMode(row, field, mode.year, mode.month);
+      }
+
+      wrapper.appendChild(row);
+    }
   };
 
-  const renderCal = (field: PlanningField, year: number, month: number) => {
+  const renderViewMode = (
+    row: HTMLElement,
+    field: PlanningField,
+    ts: AgendaTimestamp | undefined,
+  ): void => {
+    // The value itself is the affordance to open the picker — no
+    // separate "edit" button. When the field is empty there is
+    // nothing to click on, so we fall back to a `set` link.
+    const openPicker = () => {
+      const seed = splitYearMonth(
+        ts ? dateOnly(ts.iso) : todayIso(new Date()),
+      );
+      rowModes[field] = { kind: "cal", year: seed.year, month: seed.month };
+      renderAll();
+    };
+
+    if (ts) {
+      const value = document.createElement("button");
+      value.type = "button";
+      value.className = "oak-agenda-tooltip-value";
+      value.textContent = formatTsForDisplay(ts);
+      value.setAttribute("aria-label", `Edit ${field}`);
+      value.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        openPicker();
+      });
+      row.appendChild(value);
+
+      const clear = makeLink("clear", () => {
+        // Same ordering caveat as `commit`: reset the row mode before
+        // dispatching so the synchronous re-render sees "view".
+        rowModes[field] = { kind: "view" };
+        clearPlanningField(view, headingFrom, field);
+      });
+      clear.classList.add("oak-agenda-tooltip-clear");
+      clear.setAttribute("aria-label", `Clear ${field}`);
+      row.appendChild(clear);
+    } else {
+      const empty = document.createElement("span");
+      empty.className = "oak-agenda-tooltip-value is-empty";
+      empty.textContent = "—";
+      row.appendChild(empty);
+
+      const setBtn = makeLink("set", openPicker);
+      row.appendChild(setBtn);
+    }
+  };
+
+  const renderCalMode = (
+    row: HTMLElement,
+    field: PlanningField,
+    year: number,
+    month: number,
+  ): void => {
+    row.classList.add("oak-agenda-tooltip-row-cal");
+
     const header = document.createElement("div");
     header.className = "oak-agenda-tooltip-cal-header";
     header.appendChild(
       makeBtn("◀", () => {
         const next = shiftMonth(year, month, -1);
-        step = { kind: "cal", field, year: next.year, month: next.month };
-        render();
+        rowModes[field] = {
+          kind: "cal",
+          year: next.year,
+          month: next.month,
+        };
+        renderAll();
       }),
     );
     const label = document.createElement("span");
@@ -238,17 +422,42 @@ function makeTooltipDom(
     header.appendChild(
       makeBtn("▶", () => {
         const next = shiftMonth(year, month, 1);
-        step = { kind: "cal", field, year: next.year, month: next.month };
-        render();
+        rowModes[field] = {
+          kind: "cal",
+          year: next.year,
+          month: next.month,
+        };
+        renderAll();
       }),
     );
-    const back = makeBtn("←", () => {
-      step = { kind: "date", field };
-      render();
+    const cancel = makeBtn("cancel", () => {
+      rowModes[field] = { kind: "view" };
+      renderAll();
     });
-    back.classList.add("oak-agenda-tooltip-back");
-    header.appendChild(back);
-    body.appendChild(header);
+    cancel.classList.add("oak-agenda-tooltip-back");
+    header.appendChild(cancel);
+    row.appendChild(header);
+
+    // Quick-pick shortcuts above the grid — keeps `today` / `next mon`
+    // a single click instead of forcing the user to hunt through the
+    // grid and switch months.
+    const today = todayIso(new Date());
+    const presets: { label: string; iso: string }[] = [
+      { label: "today", iso: today },
+      { label: "tomorrow", iso: addUnits(today, 1, "d") },
+      { label: "next mon", iso: nextMonday(today) },
+      { label: "+7d", iso: addUnits(today, 7, "d") },
+    ];
+    const presetRow = document.createElement("div");
+    presetRow.className = "oak-agenda-tooltip-cal-presets";
+    for (const p of presets) {
+      presetRow.appendChild(
+        makeLink(p.label, () => {
+          commit(field, { iso: p.iso, hasTime: false, active: true });
+        }),
+      );
+    }
+    row.appendChild(presetRow);
 
     const grid = document.createElement("div");
     grid.className = "oak-agenda-tooltip-cal-grid";
@@ -263,7 +472,6 @@ function makeTooltipDom(
       cell.textContent = d;
       grid.appendChild(cell);
     }
-    const today = todayIso(new Date());
     const cells = monthGrid(year, month, weekStart);
     for (const c of cells) {
       const btn = document.createElement("button");
@@ -278,14 +486,15 @@ function makeTooltipDom(
       });
       grid.appendChild(btn);
     }
-    body.appendChild(grid);
+    row.appendChild(grid);
   };
 
   const commit = (field: PlanningField, ts: AgendaTimestamp) => {
+    // Reset the row mode *before* dispatching, since dispatch can
+    // synchronously trigger our `update()` callback — which renders
+    // from `rowModes` and would otherwise still see "presets" / "cal".
+    rowModes[field] = { kind: "view" };
     insertPlanningField(view, headingFrom, field, ts);
-    step = { kind: "field" };
-    render();
-    view.focus();
   };
 
   wrapper.addEventListener("keydown", (ev) => {
@@ -294,8 +503,17 @@ function makeTooltipDom(
     dismiss();
   });
 
-  render();
-  return { dom: wrapper };
+  renderAll();
+
+  return {
+    dom: wrapper,
+    update: (update: ViewUpdate) => {
+      // Re-render after a doc change so SCHEDULED / DEADLINE values
+      // displayed in the tooltip stay in sync with whatever was just
+      // written.
+      if (update.docChanged) renderAll();
+    },
+  };
 }
 
 function makeRow(): HTMLDivElement {
@@ -308,6 +526,18 @@ function makeBtn(label: string, onClick: () => void): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "oak-agenda-tooltip-btn";
+  btn.textContent = label;
+  btn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    onClick();
+  });
+  return btn;
+}
+
+function makeLink(label: string, onClick: () => void): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "oak-agenda-tooltip-link";
   btn.textContent = label;
   btn.addEventListener("click", (ev) => {
     ev.preventDefault();
@@ -381,6 +611,51 @@ export function monthGrid(
   return out;
 }
 
+// Strip the surrounding `<…>` / `[…]` brackets that `formatTimestamp`
+// emits, since the tooltip frame already supplies the visual chrome
+// and brackets just add noise inline.
+function formatTsForDisplay(ts: AgendaTimestamp): string {
+  return formatTimestamp(ts).replace(/^[<\[]/, "").replace(/[>\]]$/, "");
+}
+
+function findPlanningLineBelow(
+  state: EditorState,
+  headingLineNumber: number,
+): { from: number; to: number; text: string } | null {
+  let probeNum = headingLineNumber + 1;
+  while (probeNum <= state.doc.lines) {
+    const l = state.doc.line(probeNum);
+    if (l.text.trim().length === 0) {
+      probeNum++;
+      continue;
+    }
+    const parsed = parsePlanningLine(l.text);
+    if (parsed.matched) return { from: l.from, to: l.to, text: l.text };
+    return null;
+  }
+  return null;
+}
+
+function readPlanningTimestamps(
+  view: EditorView,
+  headingFrom: number,
+): {
+  scheduled?: AgendaTimestamp;
+  deadline?: AgendaTimestamp;
+  closed?: AgendaTimestamp;
+} {
+  const state = view.state;
+  const headingLine = state.doc.lineAt(headingFrom);
+  const pl = findPlanningLineBelow(state, headingLine.number);
+  if (!pl) return {};
+  const parsed = parsePlanningLine(pl.text);
+  const out: ReturnType<typeof readPlanningTimestamps> = {};
+  if (parsed.scheduled) out.scheduled = parsed.scheduled;
+  if (parsed.deadline) out.deadline = parsed.deadline;
+  if (parsed.closed) out.closed = parsed.closed;
+  return out;
+}
+
 export function insertPlanningField(
   view: EditorView,
   headingFrom: number,
@@ -389,25 +664,7 @@ export function insertPlanningField(
 ): void {
   const state = view.state;
   const headingLine = state.doc.lineAt(headingFrom);
-
-  // Find an existing planning line directly below the heading. We
-  // skip blank lines but stop at the first non-blank that isn't a
-  // pure planning line — that one is body content and shouldn't be
-  // touched.
-  let probeNum = headingLine.number + 1;
-  let planningLine: { from: number; to: number; text: string } | null = null;
-  while (probeNum <= state.doc.lines) {
-    const l = state.doc.line(probeNum);
-    if (l.text.trim().length === 0) {
-      probeNum++;
-      continue;
-    }
-    const parsed = parsePlanningLine(l.text);
-    if (parsed.matched) {
-      planningLine = { from: l.from, to: l.to, text: l.text };
-    }
-    break;
-  }
+  const planningLine = findPlanningLineBelow(state, headingLine.number);
 
   let scheduled: AgendaTimestamp | undefined;
   let deadline: AgendaTimestamp | undefined;
@@ -423,12 +680,7 @@ export function insertPlanningField(
   if (field === "SCHEDULED") scheduled = ts;
   else deadline = ts;
 
-  const parts: string[] = [];
-  if (scheduled) parts.push(`SCHEDULED: ${formatTimestamp(scheduled)}`);
-  if (deadline) parts.push(`DEADLINE: ${formatTimestamp(deadline)}`);
-  if (closed) parts.push(`CLOSED: ${formatTimestamp(closed)}`);
-  const newLine = `${indent}${parts.join(" ")}`;
-
+  const newLine = renderPlanningLine(indent, scheduled, deadline, closed);
   if (planningLine) {
     view.dispatch({
       changes: {
@@ -444,3 +696,61 @@ export function insertPlanningField(
     });
   }
 }
+
+export function clearPlanningField(
+  view: EditorView,
+  headingFrom: number,
+  field: PlanningField,
+): void {
+  const state = view.state;
+  const headingLine = state.doc.lineAt(headingFrom);
+  const planningLine = findPlanningLineBelow(state, headingLine.number);
+  if (!planningLine) return;
+
+  const parsed = parsePlanningLine(planningLine.text);
+  let scheduled = parsed.scheduled;
+  let deadline = parsed.deadline;
+  const closed = parsed.closed;
+  if (field === "SCHEDULED") scheduled = undefined;
+  else deadline = undefined;
+  const indent = planningLine.text.match(/^\s*/)?.[0] ?? "";
+
+  if (!scheduled && !deadline && !closed) {
+    // No tokens left: remove the entire planning line, including the
+    // newline that separates it from the heading. Falling back to
+    // trimming the trailing newline keeps the doc tidy when the
+    // planning line is the very last line in the buffer.
+    let from = planningLine.from;
+    let to = planningLine.to;
+    if (from > 0) from -= 1;
+    else if (to < state.doc.length) to += 1;
+    view.dispatch({ changes: { from, to, insert: "" } });
+    return;
+  }
+
+  const newLine = renderPlanningLine(indent, scheduled, deadline, closed);
+  view.dispatch({
+    changes: {
+      from: planningLine.from,
+      to: planningLine.to,
+      insert: newLine,
+    },
+  });
+}
+
+function renderPlanningLine(
+  indent: string,
+  scheduled: AgendaTimestamp | undefined,
+  deadline: AgendaTimestamp | undefined,
+  closed: AgendaTimestamp | undefined,
+): string {
+  const parts: string[] = [];
+  if (scheduled) parts.push(`SCHEDULED: ${formatTimestamp(scheduled)}`);
+  if (deadline) parts.push(`DEADLINE: ${formatTimestamp(deadline)}`);
+  if (closed) parts.push(`CLOSED: ${formatTimestamp(closed)}`);
+  return `${indent}${parts.join(" ")}`;
+}
+
+// Re-exported but unused; kept so callers that previously imported
+// `makeRow` from this module don't break.
+export { makeRow };
