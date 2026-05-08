@@ -84,4 +84,10 @@ describe("compileMatch", () => {
     expect(f(makeEntry({ tags: ["work"] }))).toBe(true);
     expect(f(makeEntry({ tags: ["work", "@someday"] }))).toBe(false);
   });
+
+  it("matches Unicode tag names", () => {
+    const f = compileMatch("日本語");
+    expect(f(makeEntry({ tags: ["日本語"] }))).toBe(true);
+    expect(f(makeEntry({ tags: ["english"] }))).toBe(false);
+  });
 });

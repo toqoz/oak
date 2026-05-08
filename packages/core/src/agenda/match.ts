@@ -34,11 +34,13 @@ type Term =
 
 export type MatchPredicate = (entry: AgendaEntry) => boolean;
 
-// Identifiers do not include `-`, since `-` is reserved as the
-// "exclude" connector between terms. `@`, `#`, `%` are allowed so
-// queries can target tags that contain those characters (the parser's
-// TAG_BLOCK_RE accepts the same set).
-const IDENT_RE = /^[A-Za-z_@#%][A-Za-z0-9_@#%]*/;
+// Identifiers exclude DSL operators (`+ - & = < > " /`), whitespace,
+// and `:` (the tag-block separator). Everything else — Unicode
+// letters/numbers, emoji, and the `_@#%` ASCII punctuation org-mode
+// uses — is fair game so a query can target whatever tag the parser
+// actually accepted. The first char additionally forbids ASCII
+// digits so trailing `+1d` style tokens don't get swallowed.
+const IDENT_RE = /^[^\s+\-&=<>"/:0-9][^\s+\-&=<>"/:]*/u;
 
 export function compileMatch(expression: string): MatchPredicate {
   let body = expression.trim();

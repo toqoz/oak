@@ -58,7 +58,13 @@ type Pending = {
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const FENCE_RE = /^(?:`{3,}|~{3,})/;
-const TAG_BLOCK_RE = /\s+(:[A-Za-z0-9_@#%]+(?::[A-Za-z0-9_@#%]+)*:)\s*$/;
+// Tag block: each tag is "any non-whitespace, non-colon run". This
+// admits Unicode letters (`:日本語:`) and emoji (`:🚀:`) without
+// forcing us to enumerate every relevant Unicode category. The
+// outermost colons delimit the tag block; the tags themselves use
+// internal colons as separators, which is why the inner class
+// excludes `:` explicitly.
+const TAG_BLOCK_RE = /\s+(:[^\s:]+(?::[^\s:]+)*:)\s*$/u;
 const PRIORITY_RE = /^\[#([A-Z])\]\s*/;
 const PROP_OPEN_RE = /^\s*:([A-Z_][A-Z0-9_]*):\s*$/;
 const END_DRAWER_RE = /^\s*:END:\s*$/i;

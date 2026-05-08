@@ -46,6 +46,13 @@ describe("parseAgendaPage", () => {
     });
   });
 
+  it("accepts Unicode and emoji tags", () => {
+    const page = makePage("# TODO Plan trip :日本語:🚀:work:");
+    const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    expect(entries[0]!.ownTags).toEqual(["日本語", "🚀", "work"]);
+    expect(entries[0]!.title).toBe("Plan trip");
+  });
+
   it("parses combined planning line", () => {
     const body = `# TODO Renew passport
 SCHEDULED: <2026-05-10 Sun> DEADLINE: <2026-05-15 Fri -3d>`;
