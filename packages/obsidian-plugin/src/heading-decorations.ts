@@ -1,25 +1,34 @@
 // CodeMirror extension that highlights org-style markup inside
 // markdown headings.
 //
-// Two kinds of marks are added per visible heading line:
+// Two kinds of decorations are added per visible heading line:
 //   - the leading word (TODO / DONE / WAITING / …) when it matches
-//     a configured keyword. Open and closed states get separate
-//     classes so CSS can paint them in different palettes.
-//   - the priority cookie `[#A]` / `[#B]` / `[#C]`. Recognised when
-//     it appears immediately after the keyword (or as the first
-//     word, for plain prioritised headings without a keyword).
+//     a configured keyword. A `Decoration.mark` adds classes for
+//     the keyword bucket and the literal name; CSS paints the
+//     pill. Marks don't replace the underlying chars, so editing
+//     and search continue to see the literal heading.
+//   - the priority cookie `[#A]` / `[#B]` / `[#C]`. We use
+//     `Decoration.replace` at the highest precedence here, not a
+//     plain mark: Obsidian's Live Preview parser treats the
+//     `[…]` brackets as link / reference syntax and adds its own
+//     decorations on top, which clip our mark and collapse the
+//     pill into a tiny coloured rectangle. Owning the range with
+//     our own widget at `Prec.highest` (same trick `heading-
+//     markers.ts` uses for `#`) renders the literal `[#X]` in
+//     full and the pill stays intact.
 //
-// The decorations are pure overlays via `Decoration.mark`: the
-// underlying heading text is unchanged, so the parser, editing, and
-// search behavior stay identical.
+// The keyword path stays a `mark` because the keyword text itself
+// (TODO, NEXT, …) doesn't trip up Obsidian's parser the way the
+// bracketed priority does.
 
-import { RangeSetBuilder } from "@codemirror/state";
+import { Prec, RangeSetBuilder } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
   EditorView,
   ViewPlugin,
   type ViewUpdate,
+  WidgetType,
 } from "@codemirror/view";
 
 const HEADING_RE = /^(#{1,6})(\s+)(\S+)/;
@@ -30,24 +39,56 @@ export type HeadingDecorationsOpts = {
   doneKeywords: () => readonly string[];
 };
 
+class PriorityWidget extends WidgetType {
+  constructor(
+    public readonly text: string,
+    public readonly letter: string,
+    public readonly key: string,
+  ) {
+    super();
+  }
+  override eq(other: WidgetType): boolean {
+    return (
+      other instanceof PriorityWidget &&
+      other.text === this.text &&
+      other.letter === this.letter &&
+      other.key === this.key
+    );
+  }
+  override toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = `oak-md-priority oak-md-priority-${this.letter}`;
+    span.textContent = this.text;
+    return span;
+  }
+  // Pointer events pass through so a click on the pill places
+  // the editor caret at its boundary, the same way clicking on
+  // any other decorated text does.
+  override ignoreEvent(): boolean {
+    return false;
+  }
+}
+
 export function headingDecorationsExtension(
   opts: HeadingDecorationsOpts,
 ) {
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet;
-      constructor(view: EditorView) {
-        this.decorations = build(view, opts);
-      }
-      update(u: ViewUpdate) {
-        if (u.docChanged || u.viewportChanged) {
-          this.decorations = build(u.view, opts);
+  return Prec.highest(
+    ViewPlugin.fromClass(
+      class {
+        decorations: DecorationSet;
+        constructor(view: EditorView) {
+          this.decorations = build(view, opts);
         }
-      }
-    },
-    {
-      decorations: (v) => v.decorations,
-    },
+        update(u: ViewUpdate) {
+          if (u.docChanged || u.viewportChanged) {
+            this.decorations = build(u.view, opts);
+          }
+        }
+      },
+      {
+        decorations: (v) => v.decorations,
+      },
+    ),
   );
 }
 
@@ -95,8 +136,8 @@ function processLine(
       }),
     );
     // After a keyword, optionally a priority cookie. Skip
-    // intervening whitespace so the mark range covers exactly
-    // `[#X]` (no leading space).
+    // intervening whitespace so the replace range covers
+    // exactly `[#X]` (no leading space).
     let cursor = wordEnd;
     while (
       cursor < text.length &&
@@ -107,14 +148,7 @@ function processLine(
     if (cursor >= text.length) return;
     const pm = text.slice(cursor).match(/^\[#([A-Z])\]/);
     if (!pm) return;
-    const letter = pm[1]!.toLowerCase();
-    builder.add(
-      lineFrom + cursor,
-      lineFrom + cursor + 4,
-      Decoration.mark({
-        class: `oak-md-priority oak-md-priority-${letter}`,
-      }),
-    );
+    addPriorityReplace(builder, lineFrom + cursor, pm[0], pm[1]!);
     return;
   }
 
@@ -123,13 +157,26 @@ function processLine(
   // with the keyword slot, so we don't look further on this branch.
   const pm = firstWord.match(PRIORITY_BLOCK_RE);
   if (pm) {
-    const letter = pm[1]!.toLowerCase();
-    builder.add(
-      lineFrom + wordStart,
-      lineFrom + wordEnd,
-      Decoration.mark({
-        class: `oak-md-priority oak-md-priority-${letter}`,
-      }),
-    );
+    addPriorityReplace(builder, lineFrom + wordStart, firstWord, pm[1]!);
   }
+}
+
+function addPriorityReplace(
+  builder: RangeSetBuilder<Decoration>,
+  from: number,
+  text: string,
+  letter: string,
+): void {
+  builder.add(
+    from,
+    from + text.length,
+    Decoration.replace({
+      widget: new PriorityWidget(
+        text,
+        letter.toLowerCase(),
+        String(from),
+      ),
+      inclusive: false,
+    }),
+  );
 }
