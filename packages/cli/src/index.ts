@@ -935,7 +935,19 @@ async function cmdAgenda(
     case "a": {
       const fromArg = getString(flags, "from");
       const daysArg = getString(flags, "days");
-      const days = daysArg ? Math.max(1, parseInt(daysArg, 10)) : 7;
+      let days = 7;
+      if (daysArg !== undefined) {
+        // `parseInt` happily returns `NaN` on garbage input. Without a
+        // guard `--days=foo` silently builds a 0-bucket weekly view
+        // and exits 0; reject explicitly so the user sees the typo.
+        if (!/^\d+$/.test(daysArg)) {
+          process.stderr.write(
+            `oak agenda: --days expects a positive integer, got \`${daysArg}\`\n`,
+          );
+          return 1;
+        }
+        days = Math.max(1, parseInt(daysArg, 10));
+      }
       const today = todayIso(now);
       const from = fromArg
         ? fromArg
