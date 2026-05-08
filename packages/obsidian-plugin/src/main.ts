@@ -28,9 +28,12 @@ import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
 import { OakAgendaView, VIEW_TYPE_OAK_AGENDA } from "./views/agenda.js";
 import { OakSearchView, VIEW_TYPE_OAK_SEARCH } from "./views/search.js";
 import {
+  clearScratch,
   createNewPage,
   createPageFromRedlink,
+  ensureScratchFile,
   extractSelectionToPage,
+  openScratch,
   runCheckpoint,
   runMount,
   runPublish,
@@ -54,7 +57,7 @@ import { headingDecorationsExtension } from "./heading-decorations.js";
 import { headingMarkersExtension } from "./heading-markers.js";
 import { describeBacklinks, describeTwoHop } from "./format.js";
 import { ensureBlankAfterFrontmatter } from "./frontmatter-normalize.js";
-import { vaultRoot } from "./paths.js";
+import { SCRATCH_VAULT_REL_PATH, vaultRoot } from "./paths.js";
 import type { OakOpenFile } from "./open-file.js";
 import { commitTitleChange } from "./title-commit.js";
 
@@ -180,6 +183,7 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
+        this.applyScratchButton();
       }),
     );
     this.registerEvent(
@@ -190,6 +194,7 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
+        this.applyScratchButton();
       }),
     );
     this.registerEvent(
@@ -324,6 +329,16 @@ export default class OakPlugin extends Plugin {
       name: "Search vault",
       callback: () => void this.openSearch(),
     });
+    this.addCommand({
+      id: "oak-open-scratch",
+      name: "Open scratch",
+      callback: () => void openScratch(this),
+    });
+    this.addCommand({
+      id: "oak-clear-scratch",
+      name: "Clear scratch",
+      callback: () => void clearScratch(this),
+    });
 
     // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.
     // Reads `todoKeywords` lazily so changes to .oak/agenda.yml take
@@ -369,6 +384,7 @@ export default class OakPlugin extends Plugin {
       this.applyHomeButton();
       this.applyAgendaButton();
       this.applySearchButton();
+      this.applyScratchButton();
     });
   }
 
@@ -390,6 +406,7 @@ export default class OakPlugin extends Plugin {
     this.applyHomeButton();
     this.applyAgendaButton();
     this.applySearchButton();
+    this.applyScratchButton();
   }
 
   async loadSettings(): Promise<void> {
@@ -1239,10 +1256,10 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToHome(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
-    // Keep order home → agenda → search regardless of which apply
-    // was called first.
+    // Keep order home → agenda → search → scratch regardless of
+    // which apply was called first.
     const successor = navButtons.querySelector<HTMLElement>(
-      ".oak-agenda-button, .oak-search-button",
+      ".oak-agenda-button, .oak-search-button, .oak-scratch-button",
     );
     navButtons.insertBefore(button, successor ?? null);
   }
@@ -1321,13 +1338,13 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToAgenda(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
-    // Insert before the search button when present so the order in
-    // every header is home → agenda → search regardless of which
-    // button was applied first.
-    const searchButton = navButtons.querySelector<HTMLElement>(
-      ".oak-search-button",
+    // Insert before the search/scratch buttons when present so the
+    // order in every header is home → agenda → search → scratch
+    // regardless of which button was applied first.
+    const successor = navButtons.querySelector<HTMLElement>(
+      ".oak-search-button, .oak-scratch-button",
     );
-    navButtons.insertBefore(button, searchButton ?? null);
+    navButtons.insertBefore(button, successor ?? null);
   }
 
   private async navigateLeafToAgenda(leaf: WorkspaceLeaf): Promise<void> {
@@ -1388,7 +1405,13 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToSearch(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
-    navButtons.appendChild(button);
+    // Insert before the scratch button when present so the order in
+    // every header is home → agenda → search → scratch regardless
+    // of which button was applied first.
+    const scratchButton = navButtons.querySelector<HTMLElement>(
+      ".oak-scratch-button",
+    );
+    navButtons.insertBefore(button, scratchButton ?? null);
   }
 
   // Browser-tab semantics for opening search: replace `leaf` in
@@ -1415,6 +1438,74 @@ export default class OakPlugin extends Plugin {
   async openSearch(): Promise<void> {
     const leaf = this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
     await this.navigateLeafToSearch(leaf);
+  }
+
+  // Twin of applyHomeButton — sits at the right end of the nav row.
+  // Unlike home/agenda/search the scratch target is a regular markdown
+  // file, so "is current" is computed against the leaf's MarkdownView
+  // file path rather than a custom view type.
+  private applyScratchButton(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as { containerEl?: HTMLElement };
+      const root = view.containerEl;
+      if (!root) return;
+      const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
+      if (!headerLeft) return;
+      const isCurrent =
+        leaf.view instanceof MarkdownView &&
+        leaf.view.file?.path === SCRATCH_VAULT_REL_PATH;
+      this.applyScratchButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
+    });
+  }
+
+  private applyScratchButtonForHeader(
+    headerLeft: HTMLElement,
+    leaf: WorkspaceLeaf,
+    oakMode: boolean,
+    isCurrent: boolean,
+  ): void {
+    const existing =
+      headerLeft.querySelector<HTMLButtonElement>(".oak-scratch-button");
+    if (!oakMode) {
+      existing?.remove();
+      return;
+    }
+    if (existing) {
+      this.setNavButtonCurrent(existing, isCurrent);
+      return;
+    }
+    const navButtons = headerLeft.querySelector<HTMLElement>(
+      ".view-header-nav-buttons",
+    );
+    if (!navButtons) return;
+    const button = document.createElement("button");
+    button.classList.add("clickable-icon", "oak-scratch-button");
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-label", "Oak Scratch");
+    setIcon(button, "pencil");
+    button.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.navigateLeafToScratch(leaf);
+    });
+    this.setNavButtonCurrent(button, isCurrent);
+    // Scratch sits at the right end — nothing follows it.
+    navButtons.appendChild(button);
+  }
+
+  private async navigateLeafToScratch(leaf: WorkspaceLeaf): Promise<void> {
+    if (!this.isLeafAlive(leaf)) return;
+    const view = leaf.view;
+    if (
+      view instanceof MarkdownView &&
+      view.file?.path === SCRATCH_VAULT_REL_PATH
+    ) {
+      this.app.workspace.revealLeaf(leaf);
+      return;
+    }
+    const file = await ensureScratchFile(this.app);
+    await leaf.openFile(file);
+    this.app.workspace.revealLeaf(leaf);
   }
 
   // Walk one step back in the active leaf's history. Used by the

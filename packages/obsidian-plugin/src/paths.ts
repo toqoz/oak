@@ -24,3 +24,9 @@ export function vaultRoot(app: App): string {
 export function fileAbsPath(app: App, file: TFile): string {
   return `${vaultRoot(app)}/${file.path}`;
 }
+
+// Scratch buffer lives under `.oak/` so it stays invisible to the
+// core indexer (parseVault skips dotfile entries) and therefore
+// never appears in search, the home view, or the graph.
+export const SCRATCH_VAULT_REL_PATH = ".oak/scratch.md";
+export const SCRATCH_HISTORY_REL_DIR = ".oak/scratch.history";

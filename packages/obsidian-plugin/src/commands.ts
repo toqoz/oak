@@ -27,7 +27,11 @@ import {
 } from "@oak/core";
 
 import type OakPlugin from "./main.js";
-import { vaultRoot } from "./paths.js";
+import {
+  SCRATCH_HISTORY_REL_DIR,
+  SCRATCH_VAULT_REL_PATH,
+  vaultRoot,
+} from "./paths.js";
 import { findWikiTargetInLine } from "./wiki-cursor.js";
 import { extractFromSelection } from "./extract-selection.js";
 
@@ -429,6 +433,62 @@ export async function runCheckpoint(plugin: OakPlugin): Promise<void> {
   } else {
     new Notice("oak: no changes — checkpoint not recorded");
   }
+}
+
+// Scratch buffer — emacs `*scratch*` analogue. Lives at
+// `.oak/scratch.md` so it stays out of the indexer / search / graph.
+// Obsidian's autosave keeps content alive within a session; the
+// "Clear scratch" command wipes it back to the banner (after backing
+// up the prior contents to `.oak/scratch.history/<ts>.md` so an
+// accidental clear is recoverable).
+
+const SCRATCH_BANNER =
+  '# *scratch*\n\nScratch text. Edits autosave. Run "Oak: Clear scratch" to wipe.\n';
+
+async function ensureFolder(app: App, relPath: string): Promise<void> {
+  if (app.vault.getAbstractFileByPath(relPath)) return;
+  await app.vault.createFolder(relPath);
+}
+
+export async function ensureScratchFile(app: App): Promise<TFile> {
+  const existing = app.vault.getAbstractFileByPath(SCRATCH_VAULT_REL_PATH);
+  if (existing instanceof TFile) return existing;
+  await ensureFolder(app, ".oak");
+  const created = await app.vault.create(SCRATCH_VAULT_REL_PATH, SCRATCH_BANNER);
+  return created;
+}
+
+export async function openScratch(plugin: OakPlugin): Promise<void> {
+  const file = await ensureScratchFile(plugin.app);
+  await plugin.openInBrowseLeaf(file);
+}
+
+function scratchHistoryName(): string {
+  const d = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return (
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.md`
+  );
+}
+
+export async function clearScratch(plugin: OakPlugin): Promise<void> {
+  const file = await ensureScratchFile(plugin.app);
+  const current = await plugin.app.vault.read(file);
+  if (current === SCRATCH_BANNER || current.trim().length === 0) {
+    new Notice("oak: scratch already empty");
+    return;
+  }
+  await ensureFolder(plugin.app, SCRATCH_HISTORY_REL_DIR);
+  const backupPath = `${SCRATCH_HISTORY_REL_DIR}/${scratchHistoryName()}`;
+  try {
+    await plugin.app.vault.create(backupPath, current);
+  } catch (err) {
+    new Notice(`oak: scratch backup failed — ${(err as Error).message}`);
+    return;
+  }
+  await plugin.app.vault.modify(file, SCRATCH_BANNER);
+  new Notice(`oak: scratch cleared (backup at ${backupPath})`);
 }
 
 export async function runMount(plugin: OakPlugin): Promise<void> {
