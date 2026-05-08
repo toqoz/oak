@@ -66,8 +66,60 @@
 // hider runs over the cursor's line too while the editor lacks
 // focus, so we route every line through the single-widget shape
 // and never lose the visible markers.
+//
+// Mid-click is treated the same way. CM6 updates the document
+// selection on `mousedown`, but Obsidian's hider doesn't fall
+// back from the clicked line until `mouseup`. In the gap between
+// those two events the line is "active" from our perspective but
+// still has Obsidian's [0, prefix] hider sitting on it — which
+// triggers exactly the clip-against-occupied dance described
+// above and collapses our per-char widgets down to one visible
+// `#`.
+//
+// We gate the swap with three states so the clip race can never
+// open in either direction:
+//
+//   - `closed`        the default; build picks active vs inactive
+//                     based on the cursor line.
+//   - `open`          set by `mousedown` (capture phase, ahead of
+//                     CM's bubble-phase mousedown handler so it
+//                     beats the `select.pointer` selection
+//                     transaction). build forces the inactive
+//                     single-widget shape across every heading.
+//   - `pendingClose`  set by `mouseup`. We *don't* close
+//                     immediately. Instead we wait ~100 ms and
+//                     then dispatch `closeGateEffect`. The wait
+//                     is a fixed budget rather than a state
+//                     check because the obvious DOM signals
+//                     ("cm-active landed on the new line",
+//                     "Obsidian's empty-widget span is gone")
+//                     all flip too early — Obsidian's hider
+//                     extension takes more than one render
+//                     pulse to drop off the freshly-released
+//                     line, and a state-driven close based on
+//                     those signals fires inside that window
+//                     and exposes the clip race in the
+//                     opposite direction (per-char widgets in
+//                     while the hider is still on the line,
+//                     visible as a single-`#` flash).
+//
+// Capture-phase `mousedown` on `view.dom` opens the gate via a
+// `gateOpen` effect dispatched into CM's update cycle (mutating
+// `this.decorations` from a raw DOM listener doesn't reach the
+// renderer). Capture-phase `mouseup` on `window` (so drags
+// released outside the editor still close) flips the state to
+// `pendingClose` and starts the 100 ms timer.
+//
+// We do *not* arm a wall-clock safety timeout from mousedown:
+// a long-held click (drag-select, double-click, context-menu
+// setup) is a legitimate state, and forcing the close while
+// the button is still down would re-open the clip race exactly
+// when the user is still pressing. If `mouseup` is genuinely
+// lost, the gate stays open until the next mousedown — visually
+// fine (single-widget shape still renders the literal `## `),
+// just no per-char editing on the orphan line.
 
-import { Prec, type Range } from "@codemirror/state";
+import { Prec, type Range, StateEffect } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -83,6 +135,12 @@ import {
 // disappear from the rendering, even though our widget restores
 // the hashes themselves.
 const HEADING_MARKER_RE = /^#{1,6}\s+/;
+
+// Click-gate effects. Dispatched from our DOM mousedown / mouseup
+// listeners so CM picks up the gate state change through its
+// normal update cycle.
+const openGateEffect = StateEffect.define<null>();
+const closeGateEffect = StateEffect.define<null>();
 
 class HeadingMarkerWidget extends WidgetType {
   constructor(
@@ -119,28 +177,112 @@ class HeadingMarkerWidget extends WidgetType {
   }
 }
 
+type GateState = "closed" | "open" | "pendingClose";
+
 export function headingMarkersExtension() {
   return Prec.highest(
     ViewPlugin.fromClass(
       class {
         decorations: DecorationSet;
-        constructor(view: EditorView) {
-          this.decorations = build(view);
+        gateState: GateState = "closed";
+        view: EditorView;
+        cleanup: () => void;
+
+        get gateActive(): boolean {
+          // Both `open` and `pendingClose` keep build() in the
+          // single-widget shape — only `closed` lets the active
+          // line render per-char. pendingClose is the brief
+          // window between `mouseup` and the deferred close
+          // (~100 ms later) where Obsidian's hider may still
+          // be sitting on the freshly-released line.
+          return this.gateState !== "closed";
         }
+
+        constructor(view: EditorView) {
+          this.view = view;
+          this.decorations = build(view, this.gateActive);
+
+          const onMouseDown = () => {
+            // No safety timeout here — a long-held click is a
+            // legitimate state (drag, double-click rituals,
+            // context-menu setup) and forcing the gate closed
+            // mid-press would re-expose the clip race exactly
+            // when the user is still pressing. The pendingClose
+            // path on `mouseup` is what closes us back down.
+            this.view.dispatch({ effects: openGateEffect.of(null) });
+          };
+          const onMouseUp = () => {
+            if (this.gateState !== "open") return;
+            // Don't close yet. Move to pendingClose and let the
+            // close fire after a short delay; closing inline
+            // (or on 1–2 RAFs) consistently lands inside the
+            // window where Obsidian's hider is still on the
+            // freshly-released line, exposing the clip race.
+            this.gateState = "pendingClose";
+            this.scheduleConfirmedClose();
+          };
+          view.dom.addEventListener("mousedown", onMouseDown, true);
+          window.addEventListener("mouseup", onMouseUp, true);
+          this.cleanup = () => {
+            view.dom.removeEventListener("mousedown", onMouseDown, true);
+            window.removeEventListener("mouseup", onMouseUp, true);
+          };
+        }
+
         update(u: ViewUpdate) {
+          let gateChanged = false;
+          for (const tr of u.transactions) {
+            for (const eff of tr.effects) {
+              if (eff.is(openGateEffect)) {
+                this.gateState = "open";
+                gateChanged = true;
+              } else if (eff.is(closeGateEffect)) {
+                this.gateState = "closed";
+                gateChanged = true;
+              }
+            }
+          }
+
           // selectionSet → cursor moved between lines, swapping
           // active-line per-char widgets with inactive single
           // widgets. focusChanged → blur/refocus flips every line
           // between the two modes (Obsidian hides markers across
           // the board when the editor loses focus).
-          if (
+          const shouldRebuild =
             u.docChanged ||
             u.viewportChanged ||
             u.selectionSet ||
-            u.focusChanged
-          ) {
-            this.decorations = build(u.view);
+            u.focusChanged ||
+            gateChanged;
+          if (shouldRebuild) {
+            this.decorations = build(u.view, this.gateActive);
           }
+        }
+
+        scheduleConfirmedClose() {
+          if (this.gateState !== "pendingClose") return;
+          // Empirical delay: closing inline or after one or two
+          // RAFs leaves the per-char widgets racing against
+          // Obsidian's hider — the hider takes longer than a
+          // single render pulse to drop off the freshly-clicked
+          // line, and the clip race produces a visible flash.
+          //
+          // 100 ms is comfortably past the settling window in
+          // the editors we've tested without being long enough
+          // for the user to feel a delay before per-char
+          // editing kicks in. The richer DOM-based signals we
+          // tried (active-line class location, empty-widget
+          // detection) all flip too early to use as proxies
+          // for "Obsidian has settled", so we accept a small
+          // fixed budget instead of polling.
+          setTimeout(() => {
+            if (this.gateState !== "pendingClose") return;
+            this.view.dispatch({ effects: closeGateEffect.of(null) });
+          }, 100);
+        }
+
+        destroy() {
+          this.cleanup();
         }
       },
       {
@@ -150,15 +292,18 @@ export function headingMarkersExtension() {
   );
 }
 
-function build(view: EditorView): DecorationSet {
+function build(view: EditorView, gateActive: boolean): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   // When the editor is unfocused, Obsidian re-applies its hider to
   // every line including the cursor's. Treat that case as inactive
   // across the board so the visible markers are preserved by our
-  // single-widget shape on every heading.
-  const cursorLineNum = view.hasFocus
-    ? view.state.doc.lineAt(view.state.selection.main.head).number
-    : -1;
+  // single-widget shape on every heading. Same goes for an
+  // in-progress pointer selection — until the click settles,
+  // Obsidian's hider hasn't released the freshly-clicked line yet.
+  const cursorLineNum =
+    view.hasFocus && !gateActive
+      ? view.state.doc.lineAt(view.state.selection.main.head).number
+      : -1;
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
     while (pos <= to) {
