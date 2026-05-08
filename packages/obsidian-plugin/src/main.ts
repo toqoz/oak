@@ -1503,7 +1503,13 @@ export default class OakPlugin extends Plugin {
       this.app.workspace.revealLeaf(leaf);
       return;
     }
-    const file = await ensureScratchFile(this.app);
+    let file: TFile;
+    try {
+      file = await ensureScratchFile(this.app);
+    } catch (err) {
+      new Notice(`oak: open scratch failed — ${(err as Error).message}`);
+      return;
+    }
     await leaf.openFile(file);
     this.app.workspace.revealLeaf(leaf);
   }

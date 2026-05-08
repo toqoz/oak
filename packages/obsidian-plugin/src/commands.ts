@@ -445,22 +445,19 @@ export async function runCheckpoint(plugin: OakPlugin): Promise<void> {
 const SCRATCH_BANNER =
   '# *scratch*\n\nScratch text. Edits autosave. Run "Oak: Clear scratch" to wipe.\n';
 
-async function ensureFolder(app: App, relPath: string): Promise<void> {
-  if (app.vault.getAbstractFileByPath(relPath)) return;
-  await app.vault.createFolder(relPath);
-}
-
 export async function ensureScratchFile(app: App): Promise<TFile> {
   const existing = app.vault.getAbstractFileByPath(SCRATCH_VAULT_REL_PATH);
   if (existing instanceof TFile) return existing;
-  await ensureFolder(app, ".oak");
-  const created = await app.vault.create(SCRATCH_VAULT_REL_PATH, SCRATCH_BANNER);
-  return created;
+  return await app.vault.create(SCRATCH_VAULT_REL_PATH, SCRATCH_BANNER);
 }
 
 export async function openScratch(plugin: OakPlugin): Promise<void> {
-  const file = await ensureScratchFile(plugin.app);
-  await plugin.openInBrowseLeaf(file);
+  try {
+    const file = await ensureScratchFile(plugin.app);
+    await plugin.openInBrowseLeaf(file);
+  } catch (err) {
+    new Notice(`oak: open scratch failed — ${(err as Error).message}`);
+  }
 }
 
 function scratchHistoryName(): string {
@@ -473,16 +470,28 @@ function scratchHistoryName(): string {
 }
 
 export async function clearScratch(plugin: OakPlugin): Promise<void> {
-  const file = await ensureScratchFile(plugin.app);
+  let file: TFile;
+  try {
+    file = await ensureScratchFile(plugin.app);
+  } catch (err) {
+    new Notice(`oak: clear scratch failed — ${(err as Error).message}`);
+    return;
+  }
   const current = await plugin.app.vault.read(file);
   if (current === SCRATCH_BANNER || current.trim().length === 0) {
     new Notice("oak: scratch already empty");
     return;
   }
-  await ensureFolder(plugin.app, SCRATCH_HISTORY_REL_DIR);
+  // History lives under `.oak/scratch.history/` — a dotfile directory
+  // Obsidian doesn't index, so we go through `vault.adapter` (the
+  // raw filesystem layer) instead of the indexed `vault.create`.
+  const adapter = plugin.app.vault.adapter;
   const backupPath = `${SCRATCH_HISTORY_REL_DIR}/${scratchHistoryName()}`;
   try {
-    await plugin.app.vault.create(backupPath, current);
+    if (!(await adapter.exists(SCRATCH_HISTORY_REL_DIR))) {
+      await adapter.mkdir(SCRATCH_HISTORY_REL_DIR);
+    }
+    await adapter.write(backupPath, current);
   } catch (err) {
     new Notice(`oak: scratch backup failed — ${(err as Error).message}`);
     return;

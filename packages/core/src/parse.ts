@@ -29,6 +29,14 @@ const SYSTEM_DIRS = new Set([
   "public-site",
 ]);
 
+// Top-level filenames the indexer treats as out-of-band even though
+// they sit in the vault root. `scratch.md` is the emacs-style scratch
+// buffer surfaced by the Obsidian plugin — it lives at the root so
+// Obsidian's editor can open it (the abstract file tree skips
+// dotfile dirs), but it's a transient surface that must not appear
+// in graph, search, validation, or publish.
+const SYSTEM_ROOT_FILES = new Set(["scratch.md"]);
+
 const VALID_VISIBILITIES: ReadonlySet<Visibility> = new Set([
   "private",
   "unlisted",
@@ -194,6 +202,9 @@ async function* walkMarkdown(
       yield* walkMarkdown(full, rootPath);
     } else if (entry.isFile()) {
       if (SYSTEM_DIRS.has(topLevel)) continue;
+      // Root-level system files (e.g. scratch.md) are excluded from
+      // the indexed surface even though they sit alongside real pages.
+      if (dir === rootPath && SYSTEM_ROOT_FILES.has(entry.name)) continue;
       if (extname(entry.name).toLowerCase() === ".md") {
         yield full;
       }
