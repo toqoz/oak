@@ -423,12 +423,17 @@ export default class OakPlugin extends Plugin {
   //   Cmd / Ctrl click  always open a new tab.
   async openInBrowseLeaf(
     file: TFile,
-    opts: { newTab?: boolean } = {},
+    opts: { newTab?: boolean; line?: number } = {},
   ): Promise<void> {
     const leaf = opts.newTab
       ? this.app.workspace.getLeaf("tab")
       : this.currentMainLeaf();
-    await leaf.openFile(file);
+    // Forward `line` as `eState.line` so Obsidian scrolls/centers the
+    // viewport on the heading we want, including in reading mode where
+    // we have no editor handle to call `setCursor` on.
+    const openState =
+      opts.line !== undefined ? { eState: { line: opts.line } } : undefined;
+    await leaf.openFile(file, openState);
     this.app.workspace.revealLeaf(leaf);
   }
 

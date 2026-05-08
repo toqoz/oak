@@ -445,7 +445,7 @@ export class OakAgendaView extends ItemView {
         row.dataset.itemKey = key;
         row.addEventListener("click", () => {
           this.focusedKey = key;
-          this.openItem(item);
+          void this.openItem(item);
           this.render();
         });
         this.renderItem(row, item, todayIsoDate);
@@ -621,32 +621,48 @@ export class OakAgendaView extends ItemView {
 
   private openFocused(): void {
     const item = this.findFocused();
-    if (item) this.openItem(item);
+    if (item) void this.openItem(item);
   }
 
-  private openItem(item: AgendaItem): void {
+  private async openItem(item: AgendaItem): Promise<void> {
     const file = this.app2.vault.getAbstractFileByPath(item.entry.relPath);
     if (!(file instanceof TFile)) {
       new Notice(`oak: ${item.entry.relPath} not found`);
       return;
     }
-    void this.openFile(file, { newTab: false });
-    void this.placeCursorOnEntry(item.entry.line);
+    // `entry.line` is 1-based and body-relative (post-frontmatter).
+    // Obsidian's `eState.line` and `editor.setCursor` both want
+    // 0-based file-relative lines, so we adjust by the frontmatter
+    // line count before navigating.
+    const fileLine = await this.entryFileLine(file, item.entry.line);
+    await this.openFile(file, { newTab: false, line: fileLine });
+    void this.placeCursorAtFileLine(fileLine);
   }
 
-  // Place the editor caret on the heading line of the just-opened
-  // entry. The MarkdownView may not be mounted on the same tick that
-  // openFile resolves (Obsidian sometimes defers leaf rendering),
-  // so we poll briefly before giving up.
-  private async placeCursorOnEntry(entryLine: number): Promise<void> {
-    const targetLine = Math.max(0, entryLine - 1);
+  // Returns the 0-based file-relative line for an entry whose `line`
+  // field is body-relative. Reads from Obsidian's cache so we don't
+  // hit disk; a missing/unparsed frontmatter resolves to offset 0.
+  private async entryFileLine(file: TFile, bodyLine: number): Promise<number> {
+    const raw = await this.app2.vault.cachedRead(file);
+    const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+    const fmLines = m ? (m[0].match(/\n/g) ?? []).length : 0;
+    return Math.max(0, bodyLine - 1 + fmLines);
+  }
+
+  // Place the editor caret on the heading line. The MarkdownView may
+  // not be mounted on the same tick that openFile resolves (Obsidian
+  // sometimes defers leaf rendering), so we poll briefly. eState.line
+  // already handles the initial scroll for fresh opens — this is a
+  // belt-and-suspenders pass for source mode where we want the caret
+  // on the line as well.
+  private async placeCursorAtFileLine(fileLine: number): Promise<void> {
     for (let attempt = 0; attempt < 10; attempt++) {
       const leaf = this.app2.workspace.getMostRecentLeaf();
       const view = leaf?.view as unknown as {
         editor?: { setCursor: (pos: { line: number; ch: number }) => void };
       };
       if (view?.editor) {
-        view.editor.setCursor({ line: targetLine, ch: 0 });
+        view.editor.setCursor({ line: fileLine, ch: 0 });
         return;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 30));
