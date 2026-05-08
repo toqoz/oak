@@ -622,11 +622,27 @@ function findPlanningLineBelow(
   state: EditorState,
   headingLineNumber: number,
 ): { from: number; to: number; text: string } | null {
+  // Walk forward from the heading. We allow planning lines to sit
+  // either right under the heading or immediately after a leading
+  // `:PROPERTIES:`/`:END:` block, which mirrors what `parseAgendaPage`
+  // accepts. Anything beyond the first non-blank, non-planning,
+  // non-PROPERTIES-drawer line means there's no edit-target planning
+  // line for this heading.
   let probeNum = headingLineNumber + 1;
   while (probeNum <= state.doc.lines) {
     const l = state.doc.line(probeNum);
     if (l.text.trim().length === 0) {
       probeNum++;
+      continue;
+    }
+    if (/^\s*:PROPERTIES:\s*$/.test(l.text)) {
+      // Skip past the drawer body to its `:END:` line.
+      probeNum++;
+      while (probeNum <= state.doc.lines) {
+        const inner = state.doc.line(probeNum);
+        probeNum++;
+        if (/^\s*:END:\s*$/i.test(inner.text)) break;
+      }
       continue;
     }
     const parsed = parsePlanningLine(l.text);

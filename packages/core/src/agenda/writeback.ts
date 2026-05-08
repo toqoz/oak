@@ -262,10 +262,26 @@ export async function markDone(
 }
 
 function findPlanningLineIdx(lines: string[], headingIdx: number): number {
+  // Walk forward from the heading. Empty lines are skipped, and a
+  // leading `:PROPERTIES:` drawer is jumped over to its `:END:` line
+  // so the search reaches a planning line that sits *after* the
+  // properties block — `parseAgendaPage` accepts that placement, and
+  // we'd otherwise refuse to rewrite it from `markDone`.
   let i = headingIdx + 1;
-  while (i < lines.length && lines[i]!.trim().length === 0) i++;
-  if (i >= lines.length) return -1;
-  return parsePlanningLine(lines[i]!).matched ? i : -1;
+  while (i < lines.length) {
+    if (lines[i]!.trim().length === 0) {
+      i++;
+      continue;
+    }
+    if (/^\s*:PROPERTIES:\s*$/.test(lines[i]!)) {
+      i++;
+      while (i < lines.length && !/^\s*:END:\s*$/i.test(lines[i]!)) i++;
+      if (i < lines.length) i++;
+      continue;
+    }
+    return parsePlanningLine(lines[i]!).matched ? i : -1;
+  }
+  return -1;
 }
 
 function escapeRegex(s: string): string {

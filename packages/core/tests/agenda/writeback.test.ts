@@ -166,6 +166,33 @@ SCHEDULED: <2026-05-01 Fri .+1w>
     expect(readFileSync(filePath, "utf8")).toBe(original);
   });
 
+  it("rewrites planning when it sits after a :PROPERTIES: drawer", async () => {
+    const filePath = join(dir, "task.md");
+    writeFileSync(
+      filePath,
+      `# TODO Sweep
+:PROPERTIES:
+:CATEGORY: home
+:END:
+SCHEDULED: <2026-05-06 Wed +1w>
+`,
+      "utf8",
+    );
+    const page = makePage(filePath, readFileSync(filePath, "utf8"));
+    const [target] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    await markDone(
+      filePath,
+      target!.entryId,
+      DEFAULT_AGENDA_CONFIG,
+      new Date("2026-05-06T10:00:00Z"),
+    );
+    const updated = readFileSync(filePath, "utf8");
+    // The original SCHEDULED line under :END: must have advanced —
+    // not a fresh planning line inserted between the heading and the
+    // properties drawer.
+    expect(updated).toMatch(/:END:\nSCHEDULED: <2026-05-13[^>]+>/);
+  });
+
   it("counts frontmatter lines identically for LF and CRLF", () => {
     const lf = `---\nid: x\ntitle: y\n---\n# heading\n`;
     const crlf = `---\r\nid: x\r\ntitle: y\r\n---\r\n# heading\r\n`;
