@@ -27,6 +27,9 @@ export {
   getOutboundLinks,
   getBacklinks,
   getTwoHopLinks,
+  isRedlinkTarget,
+  linkTargetId,
+  redlinkTargetId,
 } from "./graph.js";
 export { validateVault, partitionIssues } from "./validate.js";
 export { slugify, normalizeKey } from "./slug.js";

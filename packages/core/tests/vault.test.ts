@@ -8,6 +8,7 @@ import {
   getBacklinks,
   getOutboundLinks,
   getTwoHopLinks,
+  redlinkTargetId,
 } from "../src/graph.js";
 import { partitionIssues, validateVault } from "../src/validate.js";
 
@@ -124,10 +125,10 @@ describe("twohop-redlinks fixture", () => {
     const delta = findPageId(vault, "Delta");
     const gamma = findPageId(vault, "Gamma");
 
-    // The graph must record both casings as referrers of the same key.
-    const bucket = graph.redlinks.get("shared topic");
-    expect(bucket).toBeDefined();
-    expect(bucket!.refs.map((r) => r.fromId).sort()).toEqual(
+    // Both casings ("Shared Topic" / "shared topic") fold to the same
+    // synthetic target id and feed the unified `incoming` index.
+    const refs = getBacklinks(graph, redlinkTargetId("Shared Topic"));
+    expect(refs.map((r) => r.fromId).sort()).toEqual(
       [alpha, beta, delta].sort(),
     );
 

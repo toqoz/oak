@@ -5,7 +5,6 @@ import type {
   Graph,
   LinkResolution,
   RawLink,
-  RedlinkBucket,
   ResolvedLink,
   TwoHop,
   TwoHopBridge,
@@ -14,6 +13,33 @@ import type {
 import { normalizeKey } from "./slug.js";
 
 const EXTERNAL_PREFIX = "_external/";
+
+// Synthetic node id for an unresolved (red) link target. The graph treats
+// real pages and red-link targets as the same kind of node — both have
+// inbound references — so they share one address space. The `redlink:`
+// prefix never collides with a page id (ULIDs don't contain `:`).
+const REDLINK_PREFIX = "redlink:";
+
+export function redlinkTargetId(key: string): string {
+  return REDLINK_PREFIX + normalizeKey(key);
+}
+
+export function isRedlinkTarget(id: string): boolean {
+  return id.startsWith(REDLINK_PREFIX);
+}
+
+// Return the graph node id this link points at, or null if the link has no
+// addressable target (external/invalid). Resolved links point at a page id;
+// unresolved links point at a red-link node id.
+export function linkTargetId(link: ResolvedLink): string | null {
+  const r = link.resolution;
+  if (r.status === "resolved") return r.targetId;
+  if (r.status === "unresolved") {
+    const key = normalizeKey(r.targetKey);
+    return key.length === 0 ? null : REDLINK_PREFIX + key;
+  }
+  return null;
+}
 
 function resolveOne(vault: Vault, link: RawLink): LinkResolution {
   const targetRaw = link.target.trim();
@@ -81,39 +107,24 @@ function lineContextOf(body: string, line: number): string {
 export function buildGraph(vault: Vault): Graph {
   const outgoing = new Map<string, ResolvedLink[]>();
   const incoming = new Map<string, Backlink[]>();
-  const redlinks = new Map<string, RedlinkBucket>();
 
   for (const page of vault.pages.values()) {
     const resolved = resolveLinks(vault, page.links);
     outgoing.set(page.id, resolved);
 
     for (const link of resolved) {
-      const r = link.resolution;
-      if (r.status === "resolved") {
-        const targetId = r.targetId;
-        const list = incoming.get(targetId) ?? [];
-        list.push({
-          fromId: page.id,
-          context: lineContextOf(page.body, link.line),
-        });
-        incoming.set(targetId, list);
-      } else if (r.status === "unresolved") {
-        const key = normalizeKey(r.targetKey);
-        if (key.length === 0) continue;
-        let bucket = redlinks.get(key);
-        if (!bucket) {
-          bucket = { display: r.targetKey.trim(), refs: [] };
-          redlinks.set(key, bucket);
-        }
-        bucket.refs.push({
-          fromId: page.id,
-          context: lineContextOf(page.body, link.line),
-        });
-      }
+      const targetId = linkTargetId(link);
+      if (targetId === null) continue;
+      const list = incoming.get(targetId) ?? [];
+      list.push({
+        fromId: page.id,
+        context: lineContextOf(page.body, link.line),
+      });
+      incoming.set(targetId, list);
     }
   }
 
-  return { outgoing, incoming, redlinks };
+  return { outgoing, incoming };
 }
 
 export function getOutboundLinks(graph: Graph, pageId: string): ResolvedLink[] {
@@ -124,39 +135,14 @@ export function getBacklinks(graph: Graph, pageId: string): Backlink[] {
   return graph.incoming.get(pageId) ?? [];
 }
 
-// Internal: nodes in the 2-hop graph are either real page IDs or virtual
-// red-link nodes. The `redlink:` prefix can never collide with a page ID
-// because page IDs are ULIDs (no `:` in their charset).
-const REDLINK_NODE_PREFIX = "redlink:";
-
-function isRedlinkNode(node: string): boolean {
-  return node.startsWith(REDLINK_NODE_PREFIX);
-}
-
-function redlinkNode(key: string): string {
-  return REDLINK_NODE_PREFIX + key;
-}
-
-function redlinkKey(node: string): string {
-  return node.slice(REDLINK_NODE_PREFIX.length);
-}
-
+// Walk the graph treating both pages and red-link targets uniformly: each
+// has inbound refs (in `incoming`); only pages additionally have outbound
+// links (in `outgoing`).
 function neighborSet(graph: Graph, node: string): Set<string> {
   const set = new Set<string>();
-  if (isRedlinkNode(node)) {
-    // A red-link "node" has no outgoing of its own — its neighbors are
-    // every page that mentions it.
-    const bucket = graph.redlinks.get(redlinkKey(node));
-    for (const ref of bucket?.refs ?? []) set.add(ref.fromId);
-    return set;
-  }
   for (const link of graph.outgoing.get(node) ?? []) {
-    if (link.resolution.status === "resolved") {
-      set.add(link.resolution.targetId);
-    } else if (link.resolution.status === "unresolved") {
-      const key = normalizeKey(link.resolution.targetKey);
-      if (key.length > 0) set.add(redlinkNode(key));
-    }
+    const t = linkTargetId(link);
+    if (t !== null) set.add(t);
   }
   for (const back of graph.incoming.get(node) ?? []) {
     set.add(back.fromId);
@@ -164,13 +150,30 @@ function neighborSet(graph: Graph, node: string): Set<string> {
   return set;
 }
 
+// Find the original (case-preserving) target text for a red-link node by
+// scanning any page known to link to it. Both the source and the candidate
+// link to the bridge, so at least one will appear in `incoming`.
+function redlinkDisplay(graph: Graph, node: string): string {
+  const key = node.slice(REDLINK_PREFIX.length);
+  for (const ref of graph.incoming.get(node) ?? []) {
+    for (const link of graph.outgoing.get(ref.fromId) ?? []) {
+      if (
+        link.resolution.status === "unresolved" &&
+        normalizeKey(link.resolution.targetKey) === key
+      ) {
+        return link.resolution.targetKey.trim();
+      }
+    }
+  }
+  return key;
+}
+
 function bridgeFromNode(graph: Graph, node: string): TwoHopBridge {
-  if (isRedlinkNode(node)) {
-    const key = redlinkKey(node);
+  if (isRedlinkTarget(node)) {
     return {
       kind: "redlink",
-      targetKey: key,
-      display: graph.redlinks.get(key)?.display ?? key,
+      targetKey: node.slice(REDLINK_PREFIX.length),
+      display: redlinkDisplay(graph, node),
     };
   }
   return { kind: "page", pageId: node };
@@ -184,19 +187,19 @@ export function getTwoHopLinks(graph: Graph, pageId: string): TwoHop[] {
   const directNeighbors = neighborSet(graph, pageId);
 
   // Exclude self and any direct page-neighbors as 2-hop candidates. Red-link
-  // bridges are never candidates themselves (they aren't real pages); we
+  // targets are never candidates themselves (no page exists there yet); we
   // only walk *through* them.
   const exclude = new Set<string>();
   exclude.add(pageId);
   for (const n of directNeighbors) {
-    if (!isRedlinkNode(n)) exclude.add(n);
+    if (!isRedlinkTarget(n)) exclude.add(n);
   }
 
   const bridges = new Map<string, TwoHopBridge[]>();
   for (const neighbor of directNeighbors) {
     const bridge = bridgeFromNode(graph, neighbor);
     for (const candidate of neighborSet(graph, neighbor)) {
-      if (isRedlinkNode(candidate)) continue;
+      if (isRedlinkTarget(candidate)) continue;
       if (exclude.has(candidate)) continue;
       const list = bridges.get(candidate) ?? [];
       list.push(bridge);
