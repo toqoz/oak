@@ -50,6 +50,8 @@ import {
   type OakPage,
 } from "@oak/core";
 import { agendaTooltipExtension } from "./agenda-tooltip.js";
+import { headingDecorationsExtension } from "./heading-decorations.js";
+import { headingMarkersExtension } from "./heading-markers.js";
 import { describeBacklinks, describeTwoHop } from "./format.js";
 import { ensureBlankAfterFrontmatter } from "./frontmatter-normalize.js";
 import { vaultRoot } from "./paths.js";
@@ -333,6 +335,21 @@ export default class OakPlugin extends Plugin {
         weekStartsOn: () => this.agendaConfig.weekStartsOn,
       }),
     );
+    // Inline highlight for TODO / DONE keywords + `[#A]` priority
+    // cookies inside markdown headings. Pure overlay: never mutates
+    // the underlying text so editing, search, and the agenda parser
+    // all see the literal heading.
+    this.registerEditorExtension(
+      headingDecorationsExtension({
+        todoKeywords: () => this.agendaConfig.todoKeywords,
+        doneKeywords: () => this.agendaConfig.doneKeywords,
+      }),
+    );
+    // Keep `#` heading markers visible (and copyable) on inactive
+    // lines too — overrides Obsidian's Live Preview hider so the
+    // raw markdown stays selectable text instead of being replaced
+    // by a hidden widget.
+    this.registerEditorExtension(headingMarkersExtension());
 
     this.addSettingTab(new OakSettingTab(this.app, this));
 

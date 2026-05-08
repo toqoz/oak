@@ -759,6 +759,134 @@ body.oak-mode-active .markdown-preview-view {
   position: relative !important;
 }
 
+/* ====================================================================
+ * Heading look (Live Preview / source mode, oak mode only).
+ *
+ * The default Obsidian heading style — bigger font per level + hidden
+ * `#` markers in Live Preview — fights org-style flat structures.
+ * Inside oak mode we:
+ *   - keep the heading at the same size as body text (hierarchy comes
+ *     from the visible markers + bold weight, not a size jump)
+ *   - leave `##` / `###` visible at all times so the level reads at a
+ *     glance whether the cursor is on the line or not
+ *   - dim the markers a touch so they fade into the chrome without
+ *     disappearing entirely
+ *
+ * Selectors target Obsidian's CodeMirror 6 markdown-mode classes:
+ *   - `.cm-line.HyperMD-header[-N]`        the heading line
+ *   - `.cm-header[-N]`                      span around the heading text
+ *   - `.cm-formatting-header[-N]`           span around the `#` chars
+ *
+ * `!important` is required throughout: Obsidian ships heading sizes
+ * via `--h{N}-size` variables fed into rules with both class chain
+ * and theme-variable specificity that a same-class selector can't
+ * beat. */
+body.oak-mode-active .cm-line.HyperMD-header,
+body.oak-mode-active .cm-line.HyperMD-header .cm-header,
+body.oak-mode-active .cm-line.HyperMD-header .cm-formatting-header {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+/* The `#` characters on the *active* heading line are real text
+   (Obsidian doesn't hide them while editing). Dim them so they read
+   as chrome rather than content, matching the inactive widget's
+   color below. */
+body.oak-mode-active .cm-formatting-header {
+  color: var(--text-faint) !important;
+}
+
+/* `headingMarkersExtension` renders one `<span>` per character of
+   the heading prefix (each `#` and the trailing whitespace), so the
+   caret can sit between them and Backspace removes one hash at a
+   time. `display: inline-block` keeps each span as its own layout
+   box — without it, adjacent same-content spans can collapse so
+   only the first one ends up visible in some Obsidian builds.
+   `font-family/-weight/-size: inherit` matches the surrounding
+   heading's typography so the prefix looks like part of the line,
+   not chrome. */
+.oak-md-heading-marker {
+  display: inline-block;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-weight: inherit;
+  font-size: inherit;
+  white-space: pre;
+}
+
+/* TODO / DONE keyword pill inside markdown headings.
+ * `headingDecorationsExtension` wraps the keyword in a span carrying
+ * three classes:
+ *   - `oak-md-keyword`                shared
+ *   - `oak-md-keyword-{open|closed}`  bucket fallback
+ *   - `oak-md-keyword-{lc}`           per-keyword (todo, next, …)
+ * The per-keyword rule wins by source order; the bucket rule is the
+ * default for any user-defined keyword without an explicit color.
+ *
+ * Tuned to read as a label rather than a button — the heading row
+ * still flows like text so editing inside it stays comfortable. */
+.oak-md-keyword {
+  font-weight: 700;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  margin: 0 0.3em 0 0;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  vertical-align: 0.08em;
+}
+.oak-md-keyword-open {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-md-keyword-closed {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.oak-md-keyword-todo {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-md-keyword-next {
+  background: rgba(80, 160, 220, 0.18);
+  color: rgb(50, 130, 200);
+}
+.oak-md-keyword-waiting {
+  background: rgba(200, 130, 60, 0.18);
+  color: rgb(180, 110, 40);
+}
+.oak-md-keyword-done,
+.oak-md-keyword-cancelled {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+/* `[#A]` priority cookie. Same shape as the keyword pill but
+ * narrower padding so the priority sits visually under the keyword. */
+.oak-md-priority {
+  font-weight: 700;
+  font-size: 0.85em;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  margin: 0 0.3em 0 0;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  vertical-align: 0.08em;
+}
+.oak-md-priority-a {
+  background: rgba(220, 80, 80, 0.22);
+  color: rgb(200, 50, 50);
+}
+.oak-md-priority-b {
+  background: rgba(220, 150, 60, 0.22);
+  color: rgb(180, 110, 40);
+}
+.oak-md-priority-c {
+  background: rgba(120, 180, 120, 0.22);
+  color: rgb(80, 140, 80);
+}
+
 /* oak sidebar */
 
 .oak-sidebar {
