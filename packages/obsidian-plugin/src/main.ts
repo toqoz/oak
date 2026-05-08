@@ -34,6 +34,7 @@ import {
   ensureScratchFile,
   extractSelectionToPage,
   openScratch,
+  openScratchHistory,
   runCheckpoint,
   runMount,
   runPublish,
@@ -184,6 +185,7 @@ export default class OakPlugin extends Plugin {
         this.applyAgendaButton();
         this.applySearchButton();
         this.applyScratchButton();
+        this.applyCenteredViewTitle();
       }),
     );
     this.registerEvent(
@@ -195,6 +197,7 @@ export default class OakPlugin extends Plugin {
         this.applyAgendaButton();
         this.applySearchButton();
         this.applyScratchButton();
+        this.applyCenteredViewTitle();
       }),
     );
     this.registerEvent(
@@ -331,7 +334,7 @@ export default class OakPlugin extends Plugin {
     });
     this.addCommand({
       id: "oak-open-scratch",
-      name: "Open scratch",
+      name: "Toggle scratch",
       callback: () => void openScratch(this),
     });
     this.addCommand({
@@ -385,6 +388,7 @@ export default class OakPlugin extends Plugin {
       this.applyAgendaButton();
       this.applySearchButton();
       this.applyScratchButton();
+      this.applyCenteredViewTitle();
     });
   }
 
@@ -407,6 +411,7 @@ export default class OakPlugin extends Plugin {
     this.applyAgendaButton();
     this.applySearchButton();
     this.applyScratchButton();
+    this.applyCenteredViewTitle();
   }
 
   async loadSettings(): Promise<void> {
@@ -780,7 +785,7 @@ export default class OakPlugin extends Plugin {
         ? fmTitleRaw.trim()
         : null;
 
-    const existingRow = view.contentEl.querySelector<HTMLElement>(
+    let existingRow = view.contentEl.querySelector<HTMLElement>(
       ".oak-page-title-row",
     );
     // `titleEl` is a runtime property on Obsidian's View base class
@@ -798,11 +803,122 @@ export default class OakPlugin extends Plugin {
         ? fmVisibilityRaw
         : "private";
 
+    const isScratch = view.file?.path === SCRATCH_VAULT_REL_PATH;
+
+    // The scratch row lives in the view-header bar (replacing the
+    // standard back/forward chrome via CSS); regular oak rows live
+    // inside the cm-scroller. Look up both candidates so we can
+    // clean up a stale row in the wrong place when the leaf
+    // transitions between scratch and a regular page.
+    const headerEl = view.containerEl.querySelector<HTMLElement>(
+      ".view-header",
+    );
+    const headerScratchRow =
+      headerEl?.querySelector<HTMLElement>(
+        ".oak-page-title-row.oak-row-scratch",
+      ) ?? null;
+
+    if (oakMode && isScratch) {
+      // Drop any stale cm-scroller row left over from before this
+      // file became the scratch buffer (or from an earlier version
+      // that injected scratch chrome there).
+      if (existingRow) {
+        existingRow.remove();
+        existingRow = null;
+      }
+      if (!headerEl) return;
+      let row = headerScratchRow;
+      if (!row || row.parentElement !== headerEl) {
+        if (row) row.remove();
+        row = document.createElement("div");
+        row.classList.add("oak-page-title-row", "oak-row-scratch");
+
+        // Left cluster: scratch sub-actions (clear / history). Lives
+        // at the leading edge of the row so the chrome reads as
+        // "actions on the left, title in the middle, close on the
+        // right" — same convention as a typical app window.
+        const actions = document.createElement("div");
+        actions.classList.add("oak-scratch-actions");
+
+        const clearBtn = document.createElement("button");
+        clearBtn.classList.add("clickable-icon", "oak-scratch-clear");
+        clearBtn.setAttribute("type", "button");
+        clearBtn.setAttribute("aria-label", "Clear scratch");
+        setIcon(clearBtn, "eraser");
+        clearBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          void clearScratch(this);
+        });
+        actions.appendChild(clearBtn);
+
+        // History icon — opens a modal listing every backup written
+        // by `clearScratch` (under `.oak/scratch.history/`). The
+        // modal previews each backup as plain text and offers
+        // copy / restore actions.
+        const historyBtn = document.createElement("button");
+        historyBtn.classList.add("clickable-icon", "oak-scratch-history");
+        historyBtn.setAttribute("type", "button");
+        historyBtn.setAttribute("aria-label", "Scratch history");
+        setIcon(historyBtn, "history");
+        historyBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          void openScratchHistory(this);
+        });
+        actions.appendChild(historyBtn);
+
+        row.appendChild(actions);
+
+        // Center column: `Scratch` heading. Wrapped in
+        // `.oak-scratch-title-group` so future sub-elements (e.g. an
+        // unsaved-marker dot) have somewhere to land without
+        // restructuring.
+        const titleGroup = document.createElement("div");
+        titleGroup.classList.add("oak-scratch-title-group");
+        const heading = document.createElement("div");
+        heading.classList.add("oak-scratch-page-title");
+        heading.textContent = "Scratch";
+        titleGroup.appendChild(heading);
+        row.appendChild(titleGroup);
+
+        // Right: × close button. Detaches the scratch leaf —
+        // autosave keeps content on disk, so closing is
+        // non-destructive. Mirrors what clicking the `Scratch`
+        // header link does from another pane (toggle close).
+        const closeBtn = document.createElement("button");
+        closeBtn.classList.add("clickable-icon", "oak-scratch-close");
+        closeBtn.setAttribute("type", "button");
+        closeBtn.setAttribute("aria-label", "Close scratch");
+        setIcon(closeBtn, "x");
+        closeBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          void this.toggleScratch();
+        });
+        row.appendChild(closeBtn);
+
+        headerEl.appendChild(row);
+      }
+      if (tabTitleEl) {
+        tabTitleEl.dataset["oakTitle"] = "Scratch";
+        tabTitleEl.classList.add("oak-tab-title-override");
+      }
+      return;
+    }
+
+    // Non-scratch path: drop any stale scratch row from the view-
+    // header so it doesn't outlive the file transition.
+    if (headerScratchRow) headerScratchRow.remove();
+
     if (oakMode && fmTitle) {
       // Inject the title row *inside* the scroll container so the
       // scrollbar runs the full pane height and so the title
       // scrolls with the content. The row holds the title input on
       // the left and the visibility selector pinned to the right.
+      // Drop a stale scratch row from a prior file before creating
+      // the editable row in its place.
+      if (existingRow && existingRow.classList.contains("oak-row-scratch")) {
+        existingRow.remove();
+        existingRow = null;
+      }
       const target = this.findTitleInjectionTarget(view);
       let row = existingRow;
       if (!row || (target && row.parentElement !== target)) {
@@ -1256,10 +1372,11 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToHome(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
-    // Keep order home → agenda → search → scratch regardless of
-    // which apply was called first.
+    // Keep order home → agenda → search regardless of which apply was
+    // called first. (Scratch lives outside the nav cluster, on the
+    // right edge of the header.)
     const successor = navButtons.querySelector<HTMLElement>(
-      ".oak-agenda-button, .oak-search-button, .oak-scratch-button",
+      ".oak-agenda-button, .oak-search-button",
     );
     navButtons.insertBefore(button, successor ?? null);
   }
@@ -1338,11 +1455,11 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToAgenda(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
-    // Insert before the search/scratch buttons when present so the
-    // order in every header is home → agenda → search → scratch
-    // regardless of which button was applied first.
+    // Insert before the search button when present so the order in
+    // every header is home → agenda → search regardless of which
+    // button was applied first.
     const successor = navButtons.querySelector<HTMLElement>(
-      ".oak-search-button, .oak-scratch-button",
+      ".oak-search-button",
     );
     navButtons.insertBefore(button, successor ?? null);
   }
@@ -1405,13 +1522,9 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToSearch(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
-    // Insert before the scratch button when present so the order in
-    // every header is home → agenda → search → scratch regardless
-    // of which button was applied first.
-    const scratchButton = navButtons.querySelector<HTMLElement>(
-      ".oak-scratch-button",
-    );
-    navButtons.insertBefore(button, scratchButton ?? null);
+    // Search is the last entry in the nav cluster — scratch lives on
+    // the right edge of the header, outside this group.
+    navButtons.appendChild(button);
   }
 
   // Browser-tab semantics for opening search: replace `leaf` in
@@ -1440,67 +1553,136 @@ export default class OakPlugin extends Plugin {
     await this.navigateLeafToSearch(leaf);
   }
 
-  // Twin of applyHomeButton — sits at the right end of the nav row.
-  // Unlike home/agenda/search the scratch target is a regular markdown
-  // file, so "is current" is computed against the leaf's MarkdownView
-  // file path rather than a custom view type.
+  // Scratch lives at the right edge of every view-header as a
+  // `line-squiggle` icon button — same `clickable-icon` chrome as
+  // the back/forward + home/agenda/search nav buttons elsewhere in
+  // the bar, so it visually fits the header row. Clicking is a
+  // toggle: when scratch is closed it opens as a horizontal split
+  // below the trigger leaf (the "bottom pane" affordance) so the
+  // user keeps their main editing context visible; when scratch is
+  // already open it detaches the leaf (autosave keeps the buffer
+  // contents on disk so closing is non-destructive). The icon is
+  // accent-tinted while a scratch leaf is open anywhere in the
+  // workspace.
+  //
+  // We also tag the scratch leaf's container with
+  // `oak-leaf-scratch` so the stylesheet can hide the per-pane tab
+  // strip — the scratch row inside the leaf's own view-header
+  // carries enough identity that the tab is redundant.
   private applyScratchButton(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
+    const isOpen = this.findScratchLeaf() !== null;
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view as { containerEl?: HTMLElement };
       const root = view.containerEl;
       if (!root) return;
-      const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
-      if (!headerLeft) return;
-      const isCurrent =
-        leaf.view instanceof MarkdownView &&
-        leaf.view.file?.path === SCRATCH_VAULT_REL_PATH;
-      this.applyScratchButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
+      const header = root.querySelector<HTMLElement>(".view-header");
+      if (header) this.applyScratchLinkForHeader(header, leaf, oakMode, isOpen);
+      this.applyScratchLeafClass(leaf);
     });
   }
 
-  private applyScratchButtonForHeader(
-    headerLeft: HTMLElement,
+  private applyScratchLinkForHeader(
+    header: HTMLElement,
     leaf: WorkspaceLeaf,
     oakMode: boolean,
-    isCurrent: boolean,
+    isOpen: boolean,
   ): void {
-    const existing =
-      headerLeft.querySelector<HTMLButtonElement>(".oak-scratch-button");
+    const existing = header.querySelector<HTMLButtonElement>(
+      ".oak-scratch-link",
+    );
     if (!oakMode) {
       existing?.remove();
       return;
     }
-    if (existing) {
-      this.setNavButtonCurrent(existing, isCurrent);
-      return;
+    let link = existing;
+    if (!link) {
+      link = document.createElement("button");
+      link.classList.add("clickable-icon", "oak-scratch-link");
+      link.setAttribute("type", "button");
+      link.setAttribute("aria-label", "Oak Scratch");
+      setIcon(link, "line-squiggle");
+      link.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        void this.toggleScratch(leaf);
+      });
+      header.appendChild(link);
     }
-    const navButtons = headerLeft.querySelector<HTMLElement>(
-      ".view-header-nav-buttons",
-    );
-    if (!navButtons) return;
-    const button = document.createElement("button");
-    button.classList.add("clickable-icon", "oak-scratch-button");
-    button.setAttribute("type", "button");
-    button.setAttribute("aria-label", "Oak Scratch");
-    setIcon(button, "pencil");
-    button.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      void this.navigateLeafToScratch(leaf);
-    });
-    this.setNavButtonCurrent(button, isCurrent);
-    // Scratch sits at the right end — nothing follows it.
-    navButtons.appendChild(button);
+    link.classList.toggle("is-active", isOpen);
   }
 
-  private async navigateLeafToScratch(leaf: WorkspaceLeaf): Promise<void> {
-    if (!this.isLeafAlive(leaf)) return;
-    const view = leaf.view;
-    if (
-      view instanceof MarkdownView &&
-      view.file?.path === SCRATCH_VAULT_REL_PATH
-    ) {
-      this.app.workspace.revealLeaf(leaf);
+  // Inject a static, centered title into each oak view's
+  // view-header so the title position doesn't drift with the body
+  // content. Applies to oak-home / oak-agenda / oak-search;
+  // markdown leaves keep their inline editor title (preserving the
+  // plain-text feel of a note). Scratch already has its title in
+  // the view-header via the scratch row.
+  private applyCenteredViewTitle(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as {
+        containerEl?: HTMLElement;
+        getViewType?: () => string;
+      };
+      const root = view.containerEl;
+      if (!root) return;
+      const headerEl = root.querySelector<HTMLElement>(".view-header");
+      if (!headerEl) return;
+      const viewType = view.getViewType?.() ?? "";
+      let label: string | null = null;
+      if (viewType === VIEW_TYPE_OAK_HOME) label = "Home";
+      else if (viewType === VIEW_TYPE_OAK_AGENDA) label = "Agenda";
+      else if (viewType === VIEW_TYPE_OAK_SEARCH) label = "Search";
+      const existing =
+        headerEl.querySelector<HTMLElement>(".oak-view-title");
+      if (!oakMode || !label) {
+        existing?.remove();
+        return;
+      }
+      let el = existing;
+      if (!el) {
+        el = document.createElement("div");
+        el.classList.add("oak-view-title");
+        headerEl.appendChild(el);
+      }
+      if (el.textContent !== label) el.textContent = label;
+    });
+  }
+
+  private applyScratchLeafClass(leaf: WorkspaceLeaf): void {
+    const view = leaf.view as { containerEl?: HTMLElement };
+    const root = view.containerEl;
+    if (!root) return;
+    const isScratch =
+      leaf.view instanceof MarkdownView &&
+      leaf.view.file?.path === SCRATCH_VAULT_REL_PATH;
+    root.classList.toggle("oak-leaf-scratch", isScratch);
+  }
+
+  private findScratchLeaf(): WorkspaceLeaf | null {
+    let found: WorkspaceLeaf | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (found) return;
+      const view = leaf.view;
+      if (
+        view instanceof MarkdownView &&
+        view.file?.path === SCRATCH_VAULT_REL_PATH
+      ) {
+        found = leaf;
+      }
+    });
+    return found;
+  }
+
+  // Toggle scratch: if a scratch leaf is already open anywhere,
+  // detach it (autosave keeps the buffer contents on disk so closing
+  // the pane is non-destructive). Otherwise open scratch in a
+  // horizontal split below `triggerLeaf` — the "bottom pane" so the
+  // user keeps their main editing context visible.
+  async toggleScratch(triggerLeaf?: WorkspaceLeaf): Promise<void> {
+    const existing = this.findScratchLeaf();
+    if (existing) {
+      existing.detach();
       return;
     }
     let file: TFile;
@@ -1510,8 +1692,17 @@ export default class OakPlugin extends Plugin {
       new Notice(`oak: open scratch failed — ${(err as Error).message}`);
       return;
     }
-    await leaf.openFile(file);
-    this.app.workspace.revealLeaf(leaf);
+    const base =
+      triggerLeaf && this.isLeafAlive(triggerLeaf)
+        ? triggerLeaf
+        : this.currentMainLeaf();
+    const newLeaf = this.app.workspace.createLeafBySplit(
+      base,
+      "horizontal",
+      false,
+    );
+    await newLeaf.openFile(file);
+    this.app.workspace.revealLeaf(newLeaf);
   }
 
   // Walk one step back in the active leaf's history. Used by the

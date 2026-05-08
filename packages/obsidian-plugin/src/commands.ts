@@ -436,28 +436,25 @@ export async function runCheckpoint(plugin: OakPlugin): Promise<void> {
 }
 
 // Scratch buffer — emacs `*scratch*` analogue. Lives at
-// `.oak/scratch.md` so it stays out of the indexer / search / graph.
-// Obsidian's autosave keeps content alive within a session; the
-// "Clear scratch" command wipes it back to the banner (after backing
-// up the prior contents to `.oak/scratch.history/<ts>.md` so an
-// accidental clear is recoverable).
+// `scratch.md` (vault root) so Obsidian's indexed `vault.create` API
+// can create and open it. The core indexer (parse.ts SYSTEM_ROOT_FILES)
+// treats it as out-of-band so it stays out of search, graph, validation,
+// and publish. Obsidian's autosave keeps content alive within a session;
+// the "Clear scratch" command wipes it back to empty (after backing up
+// the prior contents to `.oak/scratch.history/<ts>.md` so an accidental
+// clear is recoverable). The buffer ships empty — the "scratch" identity
+// is shown in the header link, not in the file body.
 
-const SCRATCH_BANNER =
-  '# *scratch*\n\nScratch text. Edits autosave. Run "Oak: Clear scratch" to wipe.\n';
+const SCRATCH_INITIAL = "";
 
 export async function ensureScratchFile(app: App): Promise<TFile> {
   const existing = app.vault.getAbstractFileByPath(SCRATCH_VAULT_REL_PATH);
   if (existing instanceof TFile) return existing;
-  return await app.vault.create(SCRATCH_VAULT_REL_PATH, SCRATCH_BANNER);
+  return await app.vault.create(SCRATCH_VAULT_REL_PATH, SCRATCH_INITIAL);
 }
 
 export async function openScratch(plugin: OakPlugin): Promise<void> {
-  try {
-    const file = await ensureScratchFile(plugin.app);
-    await plugin.openInBrowseLeaf(file);
-  } catch (err) {
-    new Notice(`oak: open scratch failed — ${(err as Error).message}`);
-  }
+  await plugin.toggleScratch();
 }
 
 function scratchHistoryName(): string {
@@ -478,7 +475,7 @@ export async function clearScratch(plugin: OakPlugin): Promise<void> {
     return;
   }
   const current = await plugin.app.vault.read(file);
-  if (current === SCRATCH_BANNER || current.trim().length === 0) {
+  if (current.trim().length === 0) {
     new Notice("oak: scratch already empty");
     return;
   }
@@ -496,8 +493,251 @@ export async function clearScratch(plugin: OakPlugin): Promise<void> {
     new Notice(`oak: scratch backup failed — ${(err as Error).message}`);
     return;
   }
-  await plugin.app.vault.modify(file, SCRATCH_BANNER);
+  await plugin.app.vault.modify(file, SCRATCH_INITIAL);
   new Notice(`oak: scratch cleared (backup at ${backupPath})`);
+}
+
+// Render `20260508T123456.md` as `2026-05-08 12:34:56` for the
+// history list. Falls back to the raw filename for anything that
+// doesn't match the expected pattern.
+function formatHistoryName(name: string): string {
+  const m = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.md$/);
+  if (!m) return name;
+  return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
+}
+
+// Browser of past scratch backups (`.oak/scratch.history/*.md`).
+// Reads via `vault.adapter` because the directory is dotfile-prefixed
+// and Obsidian's indexed API skips it. Selecting an entry previews
+// the backup as plain text inside the modal; copy / restore wire
+// the selected backup back out — copy to the clipboard, restore
+// overwrites scratch.md (creating a fresh backup of the current
+// content first via `clearScratch`'s logic isn't called: the user
+// already knows they're discarding the live buffer, and the prior
+// backup chain is intact).
+class ScratchHistoryModal extends Modal {
+  private entries: { path: string; name: string }[] = [];
+  private selectedIdx = 0;
+  private content = "";
+  private listEl!: HTMLElement;
+  private previewEl!: HTMLElement;
+  private copyBtn!: HTMLButtonElement;
+  private restoreBtn!: HTMLButtonElement;
+
+  constructor(private plugin: OakPlugin) {
+    super(plugin.app);
+  }
+
+  override async onOpen(): Promise<void> {
+    this.contentEl.empty();
+    this.contentEl.classList.add("oak-scratch-history-modal");
+    this.titleEl.textContent = "Scratch history";
+
+    this.listEl = this.contentEl.createDiv({
+      cls: "oak-scratch-history-list",
+    });
+    this.previewEl = this.contentEl.createDiv({
+      cls: "oak-scratch-history-preview",
+    });
+    const actions = this.contentEl.createDiv({
+      cls: "oak-scratch-history-actions",
+    });
+    this.copyBtn = actions.createEl("button", {
+      text: "Copy",
+      cls: "oak-scratch-history-action",
+    });
+    this.copyBtn.addEventListener("click", () => void this.copy());
+    this.restoreBtn = actions.createEl("button", {
+      text: "Restore",
+      cls: "oak-scratch-history-action mod-cta",
+    });
+    this.restoreBtn.addEventListener("click", () => void this.restore());
+
+    await this.load();
+    this.renderList();
+    if (this.entries.length > 0) {
+      await this.select(0);
+      // Focus the first item on open so j/k/arrow navigation works
+      // immediately without an extra Tab press.
+      this.focusItem(0);
+    } else {
+      this.renderPreview();
+      this.refreshActions();
+    }
+
+    // Modal-level keyboard navigation. Capture phase so the keys
+    // work no matter what's focused inside (list item, preview, or
+    // one of the action buttons). Bindings:
+    //   j / Ctrl+n / ArrowDown   move selection one entry down
+    //   k / Ctrl+p / ArrowUp     move selection one entry up
+    // Movement updates the preview *and* DOM focus, so the focus
+    // ring tracks the active row.
+    this.contentEl.addEventListener(
+      "keydown",
+      (ev) => this.handleNav(ev),
+      true,
+    );
+  }
+
+  private handleNav(ev: KeyboardEvent): void {
+    if (this.entries.length === 0) return;
+    const target = ev.target as HTMLElement | null;
+    // Don't intercept while typing in a text field. There are none
+    // in this modal today, but the guard is cheap insurance.
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+      return;
+    }
+    let next: number | null = null;
+    if (
+      ev.key === "ArrowDown" ||
+      ev.key === "j" ||
+      (ev.ctrlKey && (ev.key === "n" || ev.key === "N"))
+    ) {
+      next = Math.min(this.selectedIdx + 1, this.entries.length - 1);
+    } else if (
+      ev.key === "ArrowUp" ||
+      ev.key === "k" ||
+      (ev.ctrlKey && (ev.key === "p" || ev.key === "P"))
+    ) {
+      next = Math.max(this.selectedIdx - 1, 0);
+    }
+    if (next === null) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (next === this.selectedIdx) {
+      // Already at the edge — at least keep focus parked on the row
+      // so a follow-up Enter / click still has somewhere to land.
+      this.focusItem(next);
+      return;
+    }
+    // `select` re-renders the list and re-focuses the selected row.
+    void this.select(next);
+  }
+
+  private async load(): Promise<void> {
+    const adapter = this.plugin.app.vault.adapter;
+    if (!(await adapter.exists(SCRATCH_HISTORY_REL_DIR))) {
+      this.entries = [];
+      return;
+    }
+    const listing = await adapter.list(SCRATCH_HISTORY_REL_DIR);
+    this.entries = (listing.files ?? [])
+      .filter((p: string) => p.endsWith(".md"))
+      .map((p: string) => ({ path: p, name: p.split("/").pop() ?? p }))
+      // Newest first: filenames are zero-padded timestamps so
+      // descending lexicographic == descending chronological.
+      .sort((a, b) => b.name.localeCompare(a.name));
+  }
+
+  private renderList(): void {
+    this.listEl.empty();
+    if (this.entries.length === 0) {
+      this.listEl.createDiv({
+        cls: "oak-scratch-history-empty",
+        text: "(no backups yet — clear scratch to record one)",
+      });
+      return;
+    }
+    this.entries.forEach((e, i) => {
+      const item = this.listEl.createDiv({
+        cls: "oak-scratch-history-item",
+        text: formatHistoryName(e.name),
+      });
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+      if (i === this.selectedIdx) item.classList.add("is-selected");
+      item.addEventListener("click", () => void this.select(i));
+      item.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          void this.select(i);
+        }
+        // ArrowUp/Down + j/k + Ctrl+n/p are handled at modal level
+        // (capture phase) so they work from anywhere in the dialog.
+      });
+    });
+  }
+
+  private focusItem(idx: number): void {
+    const items = this.listEl.querySelectorAll<HTMLElement>(
+      ".oak-scratch-history-item",
+    );
+    items[idx]?.focus();
+  }
+
+  private renderPreview(): void {
+    this.previewEl.empty();
+    if (this.entries.length === 0) {
+      this.previewEl.classList.add("is-empty");
+      this.previewEl.textContent = "";
+      return;
+    }
+    this.previewEl.classList.remove("is-empty");
+    const pre = this.previewEl.createEl("pre", {
+      cls: "oak-scratch-history-content",
+    });
+    pre.textContent = this.content;
+  }
+
+  private refreshActions(): void {
+    const hasSelection = this.entries.length > 0;
+    this.copyBtn.disabled = !hasSelection;
+    this.restoreBtn.disabled = !hasSelection;
+  }
+
+  private async select(idx: number): Promise<void> {
+    this.selectedIdx = idx;
+    const entry = this.entries[idx];
+    if (!entry) {
+      this.content = "";
+    } else {
+      try {
+        this.content = await this.plugin.app.vault.adapter.read(entry.path);
+      } catch (err) {
+        this.content = "";
+        new Notice(
+          `oak: failed to read backup — ${(err as Error).message}`,
+        );
+      }
+    }
+    this.renderList();
+    this.renderPreview();
+    this.refreshActions();
+    // `renderList` rebuilds the DOM so the previously-focused item
+    // is gone. Re-focus the selected row so keyboard navigation
+    // stays parked on the active entry.
+    this.focusItem(idx);
+  }
+
+  private async copy(): Promise<void> {
+    if (this.entries.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(this.content);
+      new Notice("oak: copied scratch backup");
+    } catch (err) {
+      new Notice(`oak: copy failed — ${(err as Error).message}`);
+    }
+  }
+
+  private async restore(): Promise<void> {
+    if (this.entries.length === 0) return;
+    try {
+      const file = await ensureScratchFile(this.plugin.app);
+      await this.plugin.app.vault.modify(file, this.content);
+      new Notice("oak: scratch restored from backup");
+      this.close();
+    } catch (err) {
+      new Notice(`oak: restore failed — ${(err as Error).message}`);
+    }
+  }
+
+  override onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+export async function openScratchHistory(plugin: OakPlugin): Promise<void> {
+  new ScratchHistoryModal(plugin).open();
 }
 
 export async function runMount(plugin: OakPlugin): Promise<void> {
