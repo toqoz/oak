@@ -2042,3 +2042,11 @@ button.oak-agenda-tooltip-cal-day.is-today {
   font-size: 0.85em;
   color: var(--text-faint);
 }
+
+/* Custom command palette: visually demote the "open system palette"
+   escape-hatch row so the curated oak commands read as the primary
+   surface and the fallback as secondary. */
+.oak-command-palette .suggestion-item.oak-command-palette-system {
+  color: var(--text-muted);
+  font-style: italic;
+}

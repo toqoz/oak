@@ -42,6 +42,7 @@ import {
   runValidate,
   setVisibility,
 } from "./commands.js";
+import { openOakCommandPalette } from "./command-palette.js";
 import {
   composePage,
   DEFAULT_AGENDA_CONFIG,
@@ -262,6 +263,11 @@ export default class OakPlugin extends Plugin {
       id: "oak-toggle-mode",
       name: "Toggle oak mode",
       callback: () => void this.toggleOakMode(),
+    });
+    this.addCommand({
+      id: "oak-command-palette",
+      name: "Open oak command palette",
+      callback: () => openOakCommandPalette(this.app),
     });
     this.addCommand({
       id: "oak-new-page",
