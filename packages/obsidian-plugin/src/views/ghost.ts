@@ -14,7 +14,7 @@ import {
 } from "obsidian";
 
 import type { VaultSnapshot, VaultState } from "../state.js";
-import { normalizeKey, type OakPage } from "@oak/core";
+import { getBacklinks, redlinkTargetId, type OakPage } from "@oak/core";
 
 export const VIEW_TYPE_OAK_GHOST = "oak-ghost";
 
@@ -173,20 +173,15 @@ export class OakGhostView extends ItemView {
 
   private collectReferences(snap: VaultSnapshot | null): GhostReference[] {
     if (!snap) return [];
-    const targetKey = normalizeKey(this.target);
+    // The unified backlink index keys unresolved targets by `redlink:<key>`,
+    // so we ask `getBacklinks` for that synthetic id the same way a regular
+    // page would. Once the user materialises the target, those links
+    // resolve and naturally drop out of this bucket on the next rebuild.
     const out: GhostReference[] = [];
-    for (const page of snap.vault.pages.values()) {
-      const resolved = snap.graph.outgoing.get(page.id) ?? [];
-      for (let i = 0; i < page.links.length; i++) {
-        const raw = page.links[i]!;
-        if (normalizeKey(raw.target) !== targetKey) continue;
-        const r = resolved[i];
-        // Only count references where the link is *still* unresolved.
-        // (Once we materialise the page, those references will resolve
-        // naturally and drop out of this list.)
-        if (r && r.resolution.status !== "unresolved") continue;
-        out.push({ page, line: raw.line, raw: raw.raw });
-      }
+    for (const back of getBacklinks(snap.graph, redlinkTargetId(this.target))) {
+      const page = snap.vault.pages.get(back.fromId);
+      if (!page) continue;
+      out.push({ page, line: back.line, raw: back.raw });
     }
     return out;
   }

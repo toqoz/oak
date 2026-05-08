@@ -92,6 +92,10 @@ export type Issue = {
 export type Backlink = {
   fromId: string;
   context: string;
+  // Line number (1-based) and the original raw link text inside the source
+  // page. Useful for "jump to reference" / `line N · [[Foo]]` listings.
+  line: number;
+  raw: string;
 };
 
 // A 2-hop bridge is either a real page or a shared red-link target. The

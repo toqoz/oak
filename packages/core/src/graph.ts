@@ -119,6 +119,8 @@ export function buildGraph(vault: Vault): Graph {
       list.push({
         fromId: page.id,
         context: lineContextOf(page.body, link.line),
+        line: link.line,
+        raw: link.raw,
       });
       incoming.set(targetId, list);
     }
