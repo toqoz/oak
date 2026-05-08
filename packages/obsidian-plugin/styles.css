@@ -787,6 +787,17 @@ body.oak-mode-active .cm-line.HyperMD-header .cm-formatting-header {
   font-size: inherit !important;
   line-height: inherit !important;
 }
+/* Drop the top margin Obsidian applies above heading lines (`cm-line`
+   normally inherits `--heading-spacing` for `HyperMD-header-N`).
+   Without this the heading hangs in extra whitespace, which cuts
+   against reading the document as a flat plain-text stream. We keep
+   `padding-top: 0` defensively in case a theme plumbs the spacing
+   through padding instead. */
+body.oak-mode-active .cm-line.HyperMD-header {
+  margin-top: 0 !important;
+  margin-block-start: 0 !important;
+  padding-top: 0 !important;
+}
 /* The `#` characters on the *active* heading line are real text
    (Obsidian doesn't hide them while editing). Dim them so they read
    as chrome rather than content, matching the inactive widget's
