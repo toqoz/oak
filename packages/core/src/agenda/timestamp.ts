@@ -114,7 +114,9 @@ export function addUnits(
   const { y, m, d, hh, mm, hasTime } = splitIso(iso);
   switch (unit) {
     case "h":
-      return isoFromUtc(Date.UTC(y, m - 1, d, hh + n, mm), hasTime || true);
+      // Hour deltas always produce a time-bearing iso, even when the
+      // input was date-only.
+      return isoFromUtc(Date.UTC(y, m - 1, d, hh + n, mm), true);
     case "d":
       return isoFromUtc(Date.UTC(y, m - 1, d + n, hh, mm), hasTime);
     case "w":

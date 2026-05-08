@@ -109,7 +109,13 @@ export async function loadAgendaConfig(rootPath: string): Promise<AgendaConfig> 
     if (
       typeof p["highest"] === "string" &&
       typeof p["lowest"] === "string" &&
-      typeof p["default"] === "string"
+      typeof p["default"] === "string" &&
+      // Highest must sort <= lowest (e.g. "A" <= "C"). When the user
+      // flips them, `splitHeadingText`'s range check becomes
+      // unsatisfiable and every `[#X]` would silently fall through to
+      // the title — fall back to the defaults instead so a typo in
+      // `.oak/agenda.yml` doesn't quietly disable priorities.
+      p["highest"] <= p["lowest"]
     ) {
       partial.priorities = {
         highest: p["highest"],
