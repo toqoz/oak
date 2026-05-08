@@ -133,6 +133,7 @@ export {
   daysBetween,
   extractVaultAgendaEntries,
   formatTimestamp,
+  frontmatterLineCount,
   isPageInAgendaScope,
   loadAgendaConfig,
   markDone,

@@ -13,7 +13,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_AGENDA_CONFIG } from "../../src/agenda/config.js";
 import { parseAgendaPage } from "../../src/agenda/parse.js";
-import { _internal, markDone } from "../../src/agenda/writeback.js";
+import {
+  _internal,
+  frontmatterLineCount,
+  markDone,
+} from "../../src/agenda/writeback.js";
 import type { OakPage } from "../../src/types.js";
 
 function makePage(filePath: string, body: string): OakPage {
@@ -160,6 +164,17 @@ SCHEDULED: <2026-05-01 Fri .+1w>
       _internal.atomicWrite(filePath, "intruder\n", wrongMtime),
     ).rejects.toMatchObject({ code: "conflict" });
     expect(readFileSync(filePath, "utf8")).toBe(original);
+  });
+
+  it("counts frontmatter lines identically for LF and CRLF", () => {
+    const lf = `---\nid: x\ntitle: y\n---\n# heading\n`;
+    const crlf = `---\r\nid: x\r\ntitle: y\r\n---\r\n# heading\r\n`;
+    const none = `# heading\n`;
+    expect(frontmatterLineCount(lf)).toBe(4);
+    // Same opening + closing fences, just CRLF — the `\n` count must
+    // match so writeback and the plugin agree on body offset.
+    expect(frontmatterLineCount(crlf)).toBe(4);
+    expect(frontmatterLineCount(none)).toBe(0);
   });
 
   it("preserves file mode across the atomic rename", async () => {

@@ -54,7 +54,11 @@ export {
   startOfWeek,
 } from "./query.js";
 
-export { markDone, WriteBackError } from "./writeback.js";
+export {
+  frontmatterLineCount,
+  markDone,
+  WriteBackError,
+} from "./writeback.js";
 export type { MarkDoneResult } from "./writeback.js";
 
 import type { Vault } from "../types.js";

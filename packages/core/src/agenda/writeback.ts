@@ -85,14 +85,22 @@ function indexBodyLineToFileLine(
   raw: string,
   bodyLine: number,
 ): number {
-  // gray-matter strips the frontmatter and leaves the body as `content`.
-  // Find the file-line offset by counting newlines up to where the body
-  // begins.
-  const m = raw.match(/^---\n[\s\S]*?\n---\n?/);
-  if (!m) return bodyLine;
-  const fmText = m[0];
-  const fmLines = (fmText.match(/\n/g) ?? []).length;
-  return bodyLine + fmLines;
+  return bodyLine + frontmatterLineCount(raw);
+}
+
+// Number of newlines a YAML frontmatter block consumes at the top of
+// `raw`. Returns 0 when no frontmatter is present, otherwise the count
+// of `\n` between the opening `---` and the first body line. Tolerates
+// both LF and CRLF line endings so plugin-side and core-side line
+// arithmetic agree on Windows-authored files.
+//
+// Exported so the Obsidian plugin's body-line → file-line conversion
+// can stay in lock-step with `markDone`'s. Two implementations would
+// rot apart and silently misnavigate / miswrite once they diverge.
+export function frontmatterLineCount(raw: string): number {
+  const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  if (!m) return 0;
+  return (m[0].match(/\n/g) ?? []).length;
 }
 
 export async function markDone(

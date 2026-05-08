@@ -27,6 +27,7 @@ import {
   DEFAULT_AGENDA_CONFIG,
   daysBetween,
   extractVaultAgendaEntries,
+  frontmatterLineCount,
   loadAgendaConfig,
   markDone,
   runAgenda,
@@ -641,12 +642,12 @@ export class OakAgendaView extends ItemView {
 
   // Returns the 0-based file-relative line for an entry whose `line`
   // field is body-relative. Reads from Obsidian's cache so we don't
-  // hit disk; a missing/unparsed frontmatter resolves to offset 0.
+  // hit disk; the shared `frontmatterLineCount` keeps this in lock-
+  // step with the writeback path so navigate-target and write-target
+  // can never diverge.
   private async entryFileLine(file: TFile, bodyLine: number): Promise<number> {
     const raw = await this.app2.vault.cachedRead(file);
-    const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-    const fmLines = m ? (m[0].match(/\n/g) ?? []).length : 0;
-    return Math.max(0, bodyLine - 1 + fmLines);
+    return Math.max(0, bodyLine - 1 + frontmatterLineCount(raw));
   }
 
   // Place the editor caret on the heading line. The MarkdownView may
