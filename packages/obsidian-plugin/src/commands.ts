@@ -17,12 +17,15 @@ import {
   buildGraph,
   checkpoint,
   composePage,
+  extractVaultAgendaEntries,
+  frontmatterLineCount,
   parseVault,
   partitionIssues,
   publish,
   PublishError,
   snapshot,
   validateVault,
+  type AgendaEntry,
   type Visibility,
 } from "@oak/core";
 
@@ -34,6 +37,7 @@ import {
 } from "./paths.js";
 import { findWikiTargetInLine } from "./wiki-cursor.js";
 import { extractFromSelection } from "./extract-selection.js";
+import { refileEntry } from "./refile.js";
 
 const VISIBILITIES: Visibility[] = ["private", "unlisted", "public"];
 
@@ -738,6 +742,55 @@ class ScratchHistoryModal extends Modal {
 
 export async function openScratchHistory(plugin: OakPlugin): Promise<void> {
   new ScratchHistoryModal(plugin).open();
+}
+
+// Editor entrypoint for `oak-refile`. Resolves the cursor position to
+// the immediately enclosing agenda entry (heading at or above the
+// caret), then opens the target picker. Returns true when an entry was
+// found and the refile flow ran (or cancelled cleanly), false when no
+// suitable entry exists at the cursor — the latter lets
+// `editorCheckCallback` grey the command out.
+export function findEnclosingEntry(
+  plugin: OakPlugin,
+  filePath: string,
+  cursorFileLine: number,
+  raw: string,
+): AgendaEntry | null {
+  const snap = plugin.state.current();
+  if (!snap) return null;
+  const fmLines = frontmatterLineCount(raw);
+  const cursorBodyLine = cursorFileLine - fmLines + 1;
+  if (cursorBodyLine < 1) return null;
+  // Iterate the snapshot's entries for this file. Pick the entry whose
+  // body-line is the largest still <= the cursor body-line; that's the
+  // immediately enclosing heading (the snapshot already deduplicates
+  // sibling entries with line suffixes so duplicates pick the right
+  // one).
+  const entries = extractVaultAgendaEntries(snap.vault, plugin.agendaConfig);
+  let best: AgendaEntry | null = null;
+  for (const e of entries) {
+    if (e.filePath !== filePath) continue;
+    if (e.line > cursorBodyLine) continue;
+    if (!best || e.line > best.line) best = e;
+  }
+  return best;
+}
+
+export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
+  const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
+  if (!view || !view.file) {
+    new Notice("oak: open a markdown file first");
+    return;
+  }
+  const filePath = `${vaultRoot(plugin.app)}/${view.file.path}`;
+  const cursor = view.editor.getCursor();
+  const raw = await plugin.app.vault.cachedRead(view.file);
+  const entry = findEnclosingEntry(plugin, filePath, cursor.line, raw);
+  if (!entry) {
+    new Notice("oak: place the cursor inside an agenda heading to refile");
+    return;
+  }
+  await refileEntry(plugin, entry, plugin.agendaConfig);
 }
 
 export async function runMount(plugin: OakPlugin): Promise<void> {

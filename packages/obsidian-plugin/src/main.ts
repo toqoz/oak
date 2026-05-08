@@ -38,6 +38,7 @@ import {
   runCheckpoint,
   runMount,
   runPublish,
+  runRefileFromEditor,
   runSnapshot,
   runValidate,
   setVisibility,
@@ -72,7 +73,7 @@ export default class OakPlugin extends Plugin {
   // Live copy of `.oak/agenda.yml`. Used by editor extensions (e.g. the
   // SCHEDULED/DEADLINE tooltip) that need to know the active TODO
   // keyword set without re-reading the file on every keystroke.
-  private agendaConfig: AgendaConfig = DEFAULT_AGENDA_CONFIG;
+  agendaConfig: AgendaConfig = DEFAULT_AGENDA_CONFIG;
   // Last redlink target the user clicked plus when. Used by the
   // vault.on("create") fallback to detect a file that Obsidian
   // auto-created in response to the click and roll it back into a
@@ -126,7 +127,7 @@ export default class OakPlugin extends Plugin {
       );
     });
     this.registerView(VIEW_TYPE_OAK_AGENDA, (leaf: WorkspaceLeaf) => {
-      return new OakAgendaView(leaf, this.state, this.app, openFile);
+      return new OakAgendaView(leaf, this.state, this.app, openFile, this);
     });
     this.registerView(VIEW_TYPE_OAK_SEARCH, (leaf: WorkspaceLeaf) => {
       return new OakSearchView(
@@ -326,6 +327,11 @@ export default class OakPlugin extends Plugin {
       id: "oak-agenda",
       name: "Open agenda",
       callback: () => void this.openAgenda(),
+    });
+    this.addCommand({
+      id: "oak-refile",
+      name: "Refile heading at cursor",
+      callback: () => void runRefileFromEditor(this),
     });
     this.addCommand({
       id: "oak-search",

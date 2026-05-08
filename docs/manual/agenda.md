@@ -19,6 +19,7 @@ The agenda view has its own focus scope. While it is focused:
 | `Enter` | Open the focused item at its source line |
 | `d` | Mark focused entry DONE (or advance its repeater) |
 | `r` | Force a vault re-scan |
+| `Shift-R` | Refile focused entry (move heading + subtree elsewhere) |
 
 Click on any row to focus + open it. `Esc` returns focus to Obsidian.
 
@@ -106,6 +107,33 @@ auto-disambiguated by appending the heading line number.
 Tags on an ancestor heading flow down to descendants. Frontmatter tags
 and `#+FILETAGS:` are intentionally not supported — put a top-level
 heading with the desired tags instead.
+
+## Refile (`Shift-R`)
+
+Move a heading and everything beneath it to another location — emacs
+`org-refile` ported to oak. Available two ways:
+
+- From the agenda: focus an entry (`j`/`k` or click) and press
+  `Shift-R`.
+- From the editor: place the cursor anywhere inside an agenda heading
+  and run `Oak: Refile heading at cursor` from the command palette.
+
+Both open a fuzzy picker listing every heading in the vault, prefixed
+by the file's vault path. Each file also offers `(top of file)` to
+refile under the file root (resulting heading becomes top-level).
+
+The picked target receives the source heading as a direct child:
+heading levels in the moved subtree shift so the source heading lands
+at `target.level + 1`. A refile that would push any sub-heading past
+level 6 is refused; so is refiling a heading onto itself or into its
+own subtree.
+
+Cross-file refiles write the destination first, then the source. If
+the source write fails after a successful destination write, the
+subtree exists in both files — recoverable by hand, never silently
+lost. Each side uses the same mtime-CAS atomic write the DONE flow
+uses, so a concurrent external edit surfaces as a conflict instead of
+silently clobbering changes.
 
 ## DONE behavior (`d`)
 
