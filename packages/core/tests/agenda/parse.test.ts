@@ -65,6 +65,24 @@ not a close
     expect(entries.map((e) => e.title)).toEqual(["Above", "Outside"]);
   });
 
+  it("excludes tags from inheritance but keeps them on the owning heading", () => {
+    // Org semantics: a tag in `tagsExcludeFromInheritance` stays on
+    // the heading that wrote it, but does NOT propagate to descendants.
+    // Earlier the exclude list filtered both sides and the parent
+    // lost the tag too.
+    const body = `# TODO Parent :work:someday:
+## TODO Child`;
+    const config = {
+      ...DEFAULT_AGENDA_CONFIG,
+      tagsExcludeFromInheritance: ["someday"],
+    };
+    const entries = parseAgendaPage(makePage(body), config);
+    const parent = entries.find((e) => e.title === "Parent")!;
+    const child = entries.find((e) => e.title === "Child")!;
+    expect(parent.tags).toEqual(["work", "someday"]);
+    expect(child.tags).toEqual(["work"]);
+  });
+
   it("accepts Unicode and emoji tags", () => {
     const page = makePage("# TODO Plan trip :日本語:🚀:work:");
     const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);

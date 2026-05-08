@@ -21,7 +21,11 @@ export function buildEffectiveTags(
   const seen = new Set<string>();
   const exclude = new Set(config.tagsExcludeFromInheritance);
 
-  const push = (t: string): void => {
+  // The exclusion list applies *only* during the inheritance walk —
+  // a tag that the heading owns directly must always survive. This
+  // matches emacs `org-tags-exclude-from-inheritance`: a tag stays
+  // on the heading that wrote it, but children don't pick it up.
+  const pushAncestor = (t: string): void => {
     if (!t) return;
     if (exclude.has(t)) return;
     if (seen.has(t)) return;
@@ -29,11 +33,18 @@ export function buildEffectiveTags(
     out.push(t);
   };
 
+  const pushOwn = (t: string): void => {
+    if (!t) return;
+    if (seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+
   if (config.useTagInheritance) {
     for (const ancestor of ancestorTags) {
-      for (const t of ancestor) push(t);
+      for (const t of ancestor) pushAncestor(t);
     }
   }
-  for (const t of ownTags) push(t);
+  for (const t of ownTags) pushOwn(t);
   return out;
 }
