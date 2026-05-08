@@ -22,9 +22,13 @@ The agenda view has its own focus scope. While it is focused:
 
 Click on any row to focus + open it. `Esc` returns focus to Obsidian.
 
-In the editor, when the cursor is on a `# TODO …` heading line, a
-popover appears for attaching `SCHEDULED` / `DEADLINE`. `Esc` dismisses
-it.
+In the editor, when the cursor sits anywhere inside a `# TODO …`
+heading's scope — the heading line itself or any of its body content,
+including nested non-TODO subsections — a small calendar icon appears
+in the left margin of the heading. Click it to open a popover below
+the heading; the popover shows the current `SCHEDULED` and `DEADLINE`
+values and lets you edit or clear each. Move the cursor out of the
+scope, click the icon again, or press `Esc` to dismiss it.
 
 ## Recognized syntax
 
