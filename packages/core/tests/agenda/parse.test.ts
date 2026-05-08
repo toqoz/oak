@@ -46,6 +46,25 @@ describe("parseAgendaPage", () => {
     });
   });
 
+  it("requires same-char same-or-longer fence to close, not a simple toggle", () => {
+    // The leading ``` opens; the inner ~~~ inside the fenced block
+    // must NOT be treated as a close. The final ``` ends the fence.
+    // The `## TODO Outside` heading after the fence must still be
+    // picked up — under the old toggle implementation it would be
+    // suppressed because the inner ~~~ flipped the flag back off
+    // and the closing ``` flipped it on, leaving everything after
+    // inside a phantom fence.
+    const body = `# TODO Above
+\`\`\`
+~~~
+not a close
+\`\`\`
+
+## TODO Outside`;
+    const entries = parseAgendaPage(makePage(body), DEFAULT_AGENDA_CONFIG);
+    expect(entries.map((e) => e.title)).toEqual(["Above", "Outside"]);
+  });
+
   it("accepts Unicode and emoji tags", () => {
     const page = makePage("# TODO Plan trip :日本語:🚀:work:");
     const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);

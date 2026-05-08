@@ -57,7 +57,12 @@ type Pending = {
 };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
-const FENCE_RE = /^(?:`{3,}|~{3,})/;
+// CommonMark fence rules: an opening fence is a run of `\`` (>=3) or
+// `~` (>=3), optionally indented up to 3 spaces. The closing fence
+// must use the SAME character and be at least as long as the
+// opening one. We capture both the leading indent and the run so
+// the close-check matches the spec.
+const FENCE_RE = /^(\s{0,3})(`{3,}|~{3,})/;
 // Tag block: each tag is "any non-whitespace, non-colon run". This
 // admits Unicode letters (`:日本語:`) and emoji (`:🚀:`) without
 // forcing us to enumerate every relevant Unicode category. The
@@ -186,7 +191,13 @@ export function parseAgendaPage(
   const derivedIdBuckets = new Map<string, AgendaEntry[]>();
 
   // State flags for fence/drawer tracking.
-  let inFence = false;
+  // `fenceState` records the opening fence character and minimum
+  // length required to close — null means "not currently inside a
+  // fence". An unclosed fence at end-of-file does NOT poison the
+  // remaining buffer because the loop ends naturally; the previous
+  // implementation flipped a single boolean and so could lose every
+  // heading after a syntactically broken fence elsewhere in the doc.
+  let fenceState: { ch: "`" | "~"; len: number } | null = null;
   let drawerName: string | null = null;
   // While inside a `:PROPERTIES:` drawer attached to the current
   // pending heading, accumulate key/value into pending.frame.properties.
@@ -308,18 +319,36 @@ export function parseAgendaPage(
     const line = lines[i]!;
     const lineNo = i + 1;
 
-    if (FENCE_RE.test(line.trimStart())) {
-      // Toggle fence and forward to body if pending.
-      inFence = !inFence;
-      const cur = pendingHolder.value;
-      if (cur) {
-        cur.bodyLines.push(line);
-        cur.acceptingPlanning = false;
+    const fenceMatch = line.match(FENCE_RE);
+    if (fenceMatch) {
+      const run = fenceMatch[2]!;
+      const ch = run[0] as "`" | "~";
+      if (fenceState === null) {
+        // Open: remember the char + length. A different char or a
+        // shorter run can't close this fence.
+        fenceState = { ch, len: run.length };
+        const cur = pendingHolder.value;
+        if (cur) {
+          cur.bodyLines.push(line);
+          cur.acceptingPlanning = false;
+        }
+        continue;
       }
-      continue;
+      if (ch === fenceState.ch && run.length >= fenceState.len) {
+        // Matching close: leave the fence.
+        fenceState = null;
+        const cur = pendingHolder.value;
+        if (cur) {
+          cur.bodyLines.push(line);
+          cur.acceptingPlanning = false;
+        }
+        continue;
+      }
+      // Different fence char or too-short run while already inside a
+      // fence: treat as fence body, not a close marker.
     }
 
-    if (inFence) {
+    if (fenceState !== null) {
       const cur = pendingHolder.value;
       if (cur) {
         cur.bodyLines.push(line);
