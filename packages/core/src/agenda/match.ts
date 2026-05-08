@@ -35,8 +35,10 @@ type Term =
 export type MatchPredicate = (entry: AgendaEntry) => boolean;
 
 // Identifiers do not include `-`, since `-` is reserved as the
-// "exclude" connector between terms.
-const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*/;
+// "exclude" connector between terms. `@`, `#`, `%` are allowed so
+// queries can target tags that contain those characters (the parser's
+// TAG_BLOCK_RE accepts the same set).
+const IDENT_RE = /^[A-Za-z_@#%][A-Za-z0-9_@#%]*/;
 
 export function compileMatch(expression: string): MatchPredicate {
   let body = expression.trim();

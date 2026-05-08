@@ -277,6 +277,28 @@ describe("runAgenda — todo", () => {
     const titles = view.buckets[0]!.items.map((it) => it.entry.title);
     expect(titles).toEqual(["High", "Mid"]);
   });
+
+  it("uses config.priorities.default for entries with no explicit priority", () => {
+    // With default 'B', an unprioritized entry sorts level with [#B]
+    // entries — i.e. between [#A] and [#C].
+    const page = makePage(
+      "Tasks.md",
+      `# TODO [#A] High
+# TODO Plain
+# TODO [#C] Low
+`,
+    );
+    const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    const view = runAgenda(
+      entries,
+      { kind: "todo" },
+      DEFAULT_AGENDA_CONFIG,
+      NOW,
+    );
+    const titles = view.buckets[0]!.items.map((it) => it.entry.title);
+    // High < Plain (treated as B) < Low
+    expect(titles).toEqual(["High", "Plain", "Low"]);
+  });
 });
 
 describe("runAgenda — search", () => {

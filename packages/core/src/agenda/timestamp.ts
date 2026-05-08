@@ -16,8 +16,12 @@ import type {
   WarningPeriod,
 } from "./types.js";
 
+// Day-name slot accepts any letter run (Unicode-aware) so localized day
+// names (e.g. `日`, `月`) are tolerated alongside the canonical
+// `Mon`/`Tue`/…. Restricting to letters keeps the repeater/warning
+// tokens (which begin with `+`/`-`) from being accidentally consumed.
 const TIMESTAMP_RE =
-  /([<\[])(\d{4})-(\d{2})-(\d{2})(?:\s+[A-Za-z][A-Za-z]+)?(?:\s+(\d{2}):(\d{2})(?:-(\d{2}):(\d{2}))?)?((?:\s+(?:\+|\+\+|\.\+)\d+[hdwmy])|(?:\s+-\d+[hdwmy]))*\s*([>\]])/;
+  /([<\[])(\d{4})-(\d{2})-(\d{2})(?:\s+\p{L}+)?(?:\s+(\d{2}):(\d{2})(?:-(\d{2}):(\d{2}))?)?((?:\s+(?:\+|\+\+|\.\+)\d+[hdwmy])|(?:\s+-\d+[hdwmy]))*\s*([>\]])/u;
 
 const REPEATER_RE = /(\+|\+\+|\.\+)(\d+)([hdwmy])/;
 const WARNING_RE = /-(\d+)([hdwmy])/;

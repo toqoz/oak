@@ -115,6 +115,7 @@ function splitHeadingText(
   raw: string,
   todoSet: Set<string>,
   doneSet: Set<string>,
+  priorityBounds: { highest: string; lowest: string },
 ): {
   todoState: string | null;
   priority: string | null;
@@ -141,8 +142,17 @@ function splitHeadingText(
   let priority: string | null = null;
   const pri = rest.match(PRIORITY_RE);
   if (pri) {
-    priority = pri[1]!;
-    rest = rest.slice(pri[0].length);
+    const letter = pri[1]!;
+    // Enforce config.priorities.highest..lowest. Out-of-range letters
+    // stay in the title as literal text rather than being adopted as
+    // a priority.
+    if (
+      letter >= priorityBounds.highest &&
+      letter <= priorityBounds.lowest
+    ) {
+      priority = letter;
+      rest = rest.slice(pri[0].length);
+    }
   }
   return { todoState, priority, title: rest.trim(), ownTags };
 }
@@ -161,6 +171,13 @@ export function parseAgendaPage(
   // when we later read `pending` inside the loop.
   const pendingHolder: { value: Pending | null } = { value: null };
   const entries: AgendaEntry[] = [];
+  // Buckets of entries that share a derived (path-hash) entryId. After
+  // the parse loop, any bucket with >1 members gets suffixed with the
+  // entry's line number so duplicate-sibling headings stay
+  // distinguishable. Entries that adopted an explicit `:ID:` from a
+  // PROPERTIES drawer skip this dedup (the user is trusted to keep
+  // those unique).
+  const derivedIdBuckets = new Map<string, AgendaEntry[]>();
 
   // State flags for fence/drawer tracking.
   let inFence = false;
@@ -190,7 +207,15 @@ export function parseAgendaPage(
     if (!category) category = defaultCategoryFromFile(page.relPath);
 
     const properties: Record<string, string> = {};
-    for (const f of stack) Object.assign(properties, f.properties);
+    // Inherit ancestor properties, but exclude `ID` — it identifies a
+    // specific heading and would otherwise leak from a parent that
+    // owns one to its children, making `entry.properties.ID` ambiguous.
+    for (const f of stack) {
+      for (const [key, val] of Object.entries(f.properties)) {
+        if (key === "ID") continue;
+        properties[key] = val;
+      }
+    }
     Object.assign(properties, pending.frame.properties);
     if (!properties["CATEGORY"]) properties["CATEGORY"] = category;
 
@@ -206,8 +231,14 @@ export function parseAgendaPage(
       pending.closed !== undefined ||
       bodyTimestamps.length > 0;
     if (isAgendaWorthy) {
+      // Prefer an explicit `:ID:` over the path-derived hash so users
+      // can stabilize the id across heading-text edits or disambiguate
+      // duplicate sibling headings deterministically.
+      const explicitId = pending.frame.properties["ID"];
+      const derivedId = deriveEntryId(page.relPath, headingPath);
+      const entryId = explicitId && explicitId.length > 0 ? explicitId : derivedId;
       const entry: AgendaEntry = {
-        entryId: deriveEntryId(page.relPath, headingPath),
+        entryId,
         pageId: page.id,
         filePath: page.filePath,
         relPath: page.relPath,
@@ -227,6 +258,14 @@ export function parseAgendaPage(
       if (pending.deadline) entry.deadline = pending.deadline;
       if (pending.closed) entry.closed = pending.closed;
       entries.push(entry);
+      if (!explicitId) {
+        let bucket = derivedIdBuckets.get(derivedId);
+        if (!bucket) {
+          bucket = [];
+          derivedIdBuckets.set(derivedId, bucket);
+        }
+        bucket.push(entry);
+      }
     }
     // Once the heading is closed, its frame becomes an ancestor for
     // any child headings parsed next. The stack-trim in startHeading
@@ -240,7 +279,7 @@ export function parseAgendaPage(
     while (stack.length > 0 && stack[stack.length - 1]!.level >= level) {
       stack.pop();
     }
-    const split = splitHeadingText(raw, todoSet, doneSet);
+    const split = splitHeadingText(raw, todoSet, doneSet, config.priorities);
     const frame: Frame = {
       level,
       titleForId: `${level}:${split.title}`,
@@ -341,5 +380,11 @@ export function parseAgendaPage(
     }
   }
   closePending();
+  for (const bucket of derivedIdBuckets.values()) {
+    if (bucket.length < 2) continue;
+    for (const entry of bucket) {
+      entry.entryId = `${entry.entryId}:${entry.line}`;
+    }
+  }
   return entries;
 }

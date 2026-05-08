@@ -2,17 +2,19 @@
 //
 // Two flavors:
 //   1. Repeater present: leave the keyword as TODO, advance the
-//      SCHEDULED/DEADLINE timestamps, and append a state-change line
-//      under :LOGBOOK:.
+//      SCHEDULED/DEADLINE timestamps, and prepend a state-change line
+//      to the :LOGBOOK: drawer (created if missing). Newest entry
+//      sits at the top so a user reading the drawer top-to-bottom
+//      sees the most recent transition first.
 //   2. No repeater: rewrite the keyword to the configured DONE keyword
 //      (first one in config.doneKeywords) and insert/replace a CLOSED
 //      planning line on the line after the heading.
 
-import { readFile, writeFile, rename } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, realpath, writeFile, rename } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import matter from "gray-matter";
 
-import { parseAgendaPage } from "./parse.js";
+import { parseAgendaPage, parsePlanningLine } from "./parse.js";
 import {
   advanceRepeater,
   formatTimestamp,
@@ -145,6 +147,12 @@ export async function markDone(
 
   let next: AgendaEntry;
 
+  // Locate the planning line below the heading. We require the line
+  // to actually parse as a planning line (only SCHEDULED/DEADLINE/
+  // CLOSED tokens, nothing else) to avoid clobbering body prose that
+  // happens to contain one of the keywords.
+  const planningIdx = findPlanningLineIdx(lines, headingIdx);
+
   if (hasRepeater) {
     // 1. Advance timestamps in their planning lines.
     const newSched = target.scheduled
@@ -158,18 +166,7 @@ export async function markDone(
         : target.deadline
       : undefined;
 
-    // Find planning line below heading (allowing leading whitespace).
-    let planningIdx = headingIdx + 1;
-    while (
-      planningIdx < lines.length &&
-      lines[planningIdx]!.trim().length === 0
-    ) {
-      planningIdx++;
-    }
-    if (
-      planningIdx < lines.length &&
-      /(SCHEDULED|DEADLINE|CLOSED):/.test(lines[planningIdx]!)
-    ) {
+    if (planningIdx !== -1) {
       lines[planningIdx] = rewritePlanningLine(
         lines[planningIdx]!,
         newSched,
@@ -188,29 +185,29 @@ export async function markDone(
       ...(newDead !== undefined ? { deadline: newDead } : {}),
     };
   } else {
-    // Replace keyword and add CLOSED planning line.
+    // Replace keyword and add CLOSED planning line. We assert the
+    // replacement actually fired — a no-op replace would silently
+    // leave the keyword unchanged while still inserting a CLOSED
+    // line, which would be a confusing partial update.
     const doneKeyword = config.doneKeywords[0] ?? "DONE";
-    lines[headingIdx] = headingLine.replace(
+    const replaced = headingLine.replace(
       new RegExp(`^(#{1,6}\\s+)${escapeRegex(target.todoState)}(\\b)`),
       `$1${doneKeyword}$2`,
     );
-
-    let planningIdx = headingIdx + 1;
-    while (
-      planningIdx < lines.length &&
-      lines[planningIdx]!.trim().length === 0
-    ) {
-      planningIdx++;
+    if (replaced === headingLine) {
+      throw new WriteBackError(
+        `entry ${entryId} heading no longer carries TODO keyword \`${target.todoState}\` (file edited?)`,
+        "entry-not-found",
+      );
     }
+    lines[headingIdx] = replaced;
+
     const closedTs: AgendaTimestamp = {
       iso: nowIso,
       hasTime: true,
       active: false,
     };
-    if (
-      planningIdx < lines.length &&
-      /(SCHEDULED|DEADLINE|CLOSED):/.test(lines[planningIdx]!)
-    ) {
+    if (planningIdx !== -1) {
       lines[planningIdx] = rewritePlanningLine(
         lines[planningIdx]!,
         target.scheduled,
@@ -232,6 +229,13 @@ export async function markDone(
     repeated: hasRepeater,
     next,
   };
+}
+
+function findPlanningLineIdx(lines: string[], headingIdx: number): number {
+  let i = headingIdx + 1;
+  while (i < lines.length && lines[i]!.trim().length === 0) i++;
+  if (i >= lines.length) return -1;
+  return parsePlanningLine(lines[i]!).matched ? i : -1;
 }
 
 function escapeRegex(s: string): string {
@@ -277,7 +281,7 @@ function insertLogbookEntry(
   let insertAt = headingIdx + 1;
   while (
     insertAt < lines.length &&
-    /(SCHEDULED|DEADLINE|CLOSED):/.test(lines[insertAt]!)
+    parsePlanningLine(lines[insertAt]!).matched
   ) {
     insertAt++;
   }
@@ -295,13 +299,24 @@ function insertLogbookEntry(
 }
 
 async function atomicWrite(filePath: string, content: string): Promise<void> {
-  const tmp = join(dirname(filePath), `.${(filePath.split(/[\\/]/).pop() ?? "tmp")}.oak-tmp`);
+  // Resolve symlinks so the rename targets the real file. Without
+  // this, `rename` on a symlinked vault entry would replace the link
+  // with a regular file, severing the link. Falls back to the raw
+  // path when the file does not exist yet (rare for writeback but
+  // possible in tests).
+  let target: string;
+  try {
+    target = await realpath(filePath);
+  } catch {
+    target = filePath;
+  }
+  const tmp = join(dirname(target), `.${basename(target)}.oak-tmp`);
   try {
     await writeFile(tmp, content, "utf8");
-    await rename(tmp, filePath);
+    await rename(tmp, target);
   } catch (err) {
     throw new WriteBackError(
-      `failed to write ${filePath}: ${(err as Error).message}`,
+      `failed to write ${target}: ${(err as Error).message}`,
       "io-error",
     );
   }

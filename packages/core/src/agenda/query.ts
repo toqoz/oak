@@ -82,14 +82,19 @@ function endTimeOf(ts: AgendaTimestamp): string | null {
   return ts.endIso.slice(11, 16);
 }
 
-function compareItems(a: AgendaItem, b: AgendaItem): number {
+function compareItems(
+  a: AgendaItem,
+  b: AgendaItem,
+  defaultPriority: string,
+): number {
   // time-up
   const at = a.time ?? "99:99";
   const bt = b.time ?? "99:99";
   if (at !== bt) return at < bt ? -1 : 1;
-  // priority-down (A < B < C means A is higher)
-  const ap = a.entry.priority ?? "Z";
-  const bp = b.entry.priority ?? "Z";
+  // priority-down (A < B < C means A is higher). Entries without an
+  // explicit priority sort as if they had `config.priorities.default`.
+  const ap = a.entry.priority ?? defaultPriority;
+  const bp = b.entry.priority ?? defaultPriority;
   if (ap !== bp) return ap < bp ? -1 : 1;
   // category-keep
   if (a.entry.category !== b.entry.category) {
@@ -222,7 +227,7 @@ export function buildWeeklyAgenda(
       }
     }
 
-    items.sort(compareItems);
+    items.sort((a, b) => compareItems(a, b, config.priorities.default));
     buckets.push({
       key: dateIso,
       label: bucketLabel(dateIso, todayIsoDate),
@@ -265,10 +270,11 @@ export function buildTodoView(
         : null,
     endTime: null,
   }));
+  const defaultPri = config.priorities.default;
   items.sort((a, b) => {
     // Priority-down then date-up then alpha.
-    const ap = a.entry.priority ?? "Z";
-    const bp = b.entry.priority ?? "Z";
+    const ap = a.entry.priority ?? defaultPri;
+    const bp = b.entry.priority ?? defaultPri;
     if (ap !== bp) return ap < bp ? -1 : 1;
     const ad = a.date ?? "9999-99-99";
     const bd = b.date ?? "9999-99-99";
@@ -291,6 +297,7 @@ export function buildTodoView(
 export function buildMatchView(
   entries: AgendaEntry[],
   expression: string,
+  config: AgendaConfig,
 ): AgendaView {
   const predicate = compileMatch(expression);
   const items: AgendaItem[] = entries
@@ -307,9 +314,10 @@ export function buildMatchView(
       time: entry.scheduled ? timeOf(entry.scheduled) : null,
       endTime: null,
     }));
+  const defaultPri = config.priorities.default;
   items.sort((a, b) => {
-    const ap = a.entry.priority ?? "Z";
-    const bp = b.entry.priority ?? "Z";
+    const ap = a.entry.priority ?? defaultPri;
+    const bp = b.entry.priority ?? defaultPri;
     if (ap !== bp) return ap < bp ? -1 : 1;
     return a.entry.title < b.entry.title ? -1 : 1;
   });
@@ -376,7 +384,7 @@ export function runAgenda(
           : {}),
       });
     case "match":
-      return buildMatchView(entries, query.expression);
+      return buildMatchView(entries, query.expression, config);
     case "search":
       return buildSearchView(entries, query.regex);
   }

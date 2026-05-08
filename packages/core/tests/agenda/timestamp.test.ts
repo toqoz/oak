@@ -48,6 +48,18 @@ describe("parseTimestamp", () => {
     expect(ts!.warn).toEqual({ n: 3, unit: "d" });
   });
 
+  it("accepts non-ASCII day names", () => {
+    const ts = parseTimestamp("<2026-05-06 水>");
+    expect(ts).toMatchObject({ iso: "2026-05-06", active: true });
+  });
+
+  it("does not consume repeater token as a day name", () => {
+    // Day-name slot is optional; a bare repeater must still be parsed
+    // as a repeater rather than swallowed by the day-name regex.
+    const ts = parseTimestamp("<2026-05-15 +1d>");
+    expect(ts!.repeater).toEqual({ kind: "+", n: 1, unit: "d" });
+  });
+
   it("parses ++ repeater", () => {
     const ts = parseTimestamp("<2026-05-15 Fri ++1w>");
     expect(ts!.repeater).toEqual({ kind: "++", n: 1, unit: "w" });

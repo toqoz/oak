@@ -126,4 +126,75 @@ real body`;
     )[0]!;
     expect(a.entryId).toBe(b.entryId);
   });
+
+  it("disambiguates duplicate sibling headings via line suffix", () => {
+    const body = `# TODO Foo\n# TODO Foo\n`;
+    const [a, b] = parseAgendaPage(makePage(body), DEFAULT_AGENDA_CONFIG);
+    expect(a!.entryId).not.toBe(b!.entryId);
+    expect(a!.entryId.endsWith(`:${a!.line}`)).toBe(true);
+    expect(b!.entryId.endsWith(`:${b!.line}`)).toBe(true);
+  });
+
+  it("honors explicit :ID: from PROPERTIES drawer", () => {
+    const body = `# TODO Foo
+:PROPERTIES:
+:ID: stable-handle-123
+:END:`;
+    const [entry] = parseAgendaPage(makePage(body), DEFAULT_AGENDA_CONFIG);
+    expect(entry!.entryId).toBe("stable-handle-123");
+  });
+
+  it("rejects priority letters outside priorities.highest..lowest", () => {
+    // Default config: highest=A, lowest=C. `[#D]` should be left in
+    // the title rather than adopted as a priority.
+    const [entry] = parseAgendaPage(
+      makePage("# TODO [#D] Foo"),
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(entry!.priority).toBeNull();
+    expect(entry!.title).toBe("[#D] Foo");
+  });
+
+  it("accepts priorities up to a wider configured range", () => {
+    const [entry] = parseAgendaPage(
+      makePage("# TODO [#D] Foo"),
+      {
+        ...DEFAULT_AGENDA_CONFIG,
+        priorities: { highest: "A", lowest: "F", default: "B" },
+      },
+    );
+    expect(entry!.priority).toBe("D");
+    expect(entry!.title).toBe("Foo");
+  });
+
+  it("does not inherit :ID: from an ancestor heading", () => {
+    const body = `# Section
+:PROPERTIES:
+:ID: parent-id
+:CATEGORY: ops
+:END:
+## TODO Child
+some text`;
+    const [entry] = parseAgendaPage(makePage(body), DEFAULT_AGENDA_CONFIG);
+    // CATEGORY is inherited as before…
+    expect(entry!.properties["CATEGORY"]).toBe("ops");
+    // …but ID is not.
+    expect(entry!.properties["ID"]).toBeUndefined();
+    // The child therefore falls back to a derived entryId (not parent-id).
+    expect(entry!.entryId).not.toBe("parent-id");
+  });
+
+  it("explicit :ID: skips sibling disambiguation", () => {
+    const body = `# TODO Foo
+:PROPERTIES:
+:ID: pinned-a
+:END:
+# TODO Foo
+:PROPERTIES:
+:ID: pinned-b
+:END:`;
+    const [a, b] = parseAgendaPage(makePage(body), DEFAULT_AGENDA_CONFIG);
+    expect(a!.entryId).toBe("pinned-a");
+    expect(b!.entryId).toBe("pinned-b");
+  });
 });

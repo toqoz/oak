@@ -72,4 +72,16 @@ describe("compileMatch", () => {
     const f = compileMatch("");
     expect(f(makeEntry({}))).toBe(true);
   });
+
+  it("supports @-prefixed tag names", () => {
+    const f = compileMatch("@home");
+    expect(f(makeEntry({ tags: ["@home"] }))).toBe(true);
+    expect(f(makeEntry({ tags: ["home"] }))).toBe(false);
+  });
+
+  it("supports @-prefixed tag in negation", () => {
+    const f = compileMatch("work-@someday");
+    expect(f(makeEntry({ tags: ["work"] }))).toBe(true);
+    expect(f(makeEntry({ tags: ["work", "@someday"] }))).toBe(false);
+  });
 });
