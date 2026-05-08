@@ -149,6 +149,16 @@ export function parseTimestamp(raw: string): AgendaTimestamp | null {
   const m = raw.match(TIMESTAMP_RE);
   if (!m) return null;
   const [, openBracket, ys, mo, d, hh, mm, eh, em] = m;
+  // Reject mixed brackets (`<…]` / `[…>`). The capture group only
+  // holds the opening bracket; the closing bracket sits at the tail
+  // of `m[0]` since the regex anchors `\s*([>\]])` before the end.
+  const closeBracket = m[0]!.slice(-1);
+  if (
+    (openBracket === "<" && closeBracket !== ">") ||
+    (openBracket === "[" && closeBracket !== "]")
+  ) {
+    return null;
+  }
   const active = openBracket === "<";
   const date = `${ys}-${mo}-${d}`;
   const hasTime = hh !== undefined && mm !== undefined;
@@ -216,29 +226,30 @@ export function parseRangeTimestamp(raw: string): AgendaTimestamp | null {
 // appearance is preserved. Range timestamps (`<…>--<…>`) collapse into
 // one entry.
 export function parseAllTimestamps(body: string): AgendaTimestamp[] {
-  const out: AgendaTimestamp[] = [];
-  // First sweep range timestamps.
-  const consumed: Array<[number, number]> = [];
+  type Hit = { start: number; end: number; ts: AgendaTimestamp };
+  const hits: Hit[] = [];
+  // Sweep ranges first to claim their byte spans, then sweep singles
+  // and skip any that overlap a claimed range. Both sweeps push into
+  // `hits` with their position; we sort by `start` at the end so
+  // appearance order is preserved regardless of which regex emitted
+  // the match first.
   const RANGE_RE =
     /(<\d{4}-\d{2}-\d{2}[^>]*>--<\d{4}-\d{2}-\d{2}[^>]*>)|(\[\d{4}-\d{2}-\d{2}[^\]]*\]--\[\d{4}-\d{2}-\d{2}[^\]]*\])/g;
   for (const m of body.matchAll(RANGE_RE)) {
     const t = parseRangeTimestamp(m[0]);
-    if (t) {
-      out.push(t);
-      consumed.push([m.index!, m.index! + m[0].length]);
-    }
+    if (t) hits.push({ start: m.index!, end: m.index! + m[0].length, ts: t });
   }
-  // Then standalone single timestamps that don't overlap a range.
   const SINGLE_RE =
     /(<\d{4}-\d{2}-\d{2}[^>]*>)|(\[\d{4}-\d{2}-\d{2}[^\]]*\])/g;
   for (const m of body.matchAll(SINGLE_RE)) {
     const start = m.index!;
     const end = start + m[0].length;
-    if (consumed.some(([a, b]) => start >= a && end <= b)) continue;
+    if (hits.some((h) => start >= h.start && end <= h.end)) continue;
     const t = parseTimestamp(m[0]);
-    if (t) out.push(t);
+    if (t) hits.push({ start, end, ts: t });
   }
-  return out;
+  hits.sort((a, b) => a.start - b.start);
+  return hits.map((h) => h.ts);
 }
 
 // --- Formatting ------------------------------------------------------------

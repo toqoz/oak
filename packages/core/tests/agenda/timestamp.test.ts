@@ -65,6 +65,11 @@ describe("parseTimestamp", () => {
     expect(ts!.repeater).toEqual({ kind: "++", n: 1, unit: "w" });
   });
 
+  it("rejects mixed brackets", () => {
+    expect(parseTimestamp("<2026-05-06 Wed]")).toBeNull();
+    expect(parseTimestamp("[2026-05-06 Wed>")).toBeNull();
+  });
+
   it("parses .+ repeater", () => {
     const ts = parseTimestamp("<2026-05-15 Fri .+2d>");
     expect(ts!.repeater).toEqual({ kind: ".+", n: 2, unit: "d" });
@@ -88,6 +93,19 @@ describe("parseAllTimestamps", () => {
     expect(tss[0]!.endIso).toBe("2026-05-08");
     expect(tss[1]!.active).toBe(false);
     expect(tss[2]!.iso).toBe("2026-05-10");
+  });
+
+  it("preserves source order when a single precedes a range", () => {
+    // Without the position-merge step, the range sweep would push
+    // first and the result would come back range-then-single.
+    const text =
+      "first <2026-05-01 Fri>, then <2026-05-06 Wed>--<2026-05-08 Fri>";
+    const tss = parseAllTimestamps(text);
+    expect(tss).toHaveLength(2);
+    expect(tss[0]!.iso).toBe("2026-05-01");
+    expect(tss[0]!.endIso).toBeUndefined();
+    expect(tss[1]!.iso).toBe("2026-05-06");
+    expect(tss[1]!.endIso).toBe("2026-05-08");
   });
 });
 
