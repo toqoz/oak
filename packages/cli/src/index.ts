@@ -32,11 +32,14 @@ import {
   checkpoint,
   createPage,
   ensureGitRepo,
+  extractVaultAgendaEntries,
   getBacklinks,
   getTwoHopLinks,
   gitStatus,
   listAgentTasks,
   listMountStatus,
+  loadAgendaConfig,
+  markDone,
   mountDoctor,
   parseVault,
   partitionIssues,
@@ -45,10 +48,17 @@ import {
   recentCommits,
   rejectAgentTask,
   reviewAgentTask,
+  runAgenda,
   snapshot,
   startAgentTask,
+  startOfWeek,
+  todayIso,
   validateVault,
   writeIndex,
+  WriteBackError,
+  type AgendaItem,
+  type AgendaQuery,
+  type AgendaView,
   type LlmPolicy,
   type Visibility,
 } from "@oak/core";
@@ -83,6 +93,13 @@ Commands:
   agent accept <task>        Merge the agent worktree into main, clean up
   agent reject <task>        Discard the agent worktree and branch
   agent context [--focus ID] LLM-policy-filtered vault snapshot (JSON)
+
+  agenda                     Weekly agenda starting today (default)
+  agenda a [--from D] [--days N]  Daily/weekly agenda view
+  agenda t [--keyword K] [--all]  Global TODO list
+  agenda m <expr>            Match by tags/properties (e.g. work+urgent-someday)
+  agenda s <regex>           Search entry titles + bodies
+  agenda done <path>:<line>  Mark an entry DONE; advances repeaters
 
 Common options:
   --vault <path>             Vault root (default: current directory)
@@ -138,6 +155,8 @@ async function main(argv: string[]): Promise<number> {
       return await cmdCheckpoint(vaultPath, parsed.positional, json);
     case "log":
       return await cmdLog(vaultPath, parsed.flags, json);
+    case "agenda":
+      return await cmdAgenda(vaultPath, parsed.positional, parsed.flags, json);
     default:
       process.stderr.write(`Unknown command: ${parsed.command}\n\n`);
       process.stdout.write(HELP);
@@ -891,6 +910,259 @@ async function cmdAgentContext(
   // Always machine-readable: this output is meant to feed an LLM.
   process.stdout.write(JSON.stringify(ctx, null, 2) + "\n");
   return 0;
+}
+
+async function cmdAgenda(
+  vaultPath: string,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const sub = positional[0] ?? "a";
+  const args = positional.slice(1);
+
+  if (sub === "done") {
+    return await cmdAgendaDone(vaultPath, args, json);
+  }
+
+  const config = await loadAgendaConfig(vaultPath);
+  const vault = await parseVault(vaultPath);
+  const entries = extractVaultAgendaEntries(vault, config);
+  const now = new Date();
+
+  let query: AgendaQuery;
+  switch (sub) {
+    case "a": {
+      const fromArg = getString(flags, "from");
+      const daysArg = getString(flags, "days");
+      let days = 7;
+      if (daysArg !== undefined) {
+        // `parseInt` happily returns `NaN` on garbage input. Without a
+        // guard `--days=foo` silently builds a 0-bucket weekly view
+        // and exits 0; reject explicitly so the user sees the typo.
+        if (!/^\d+$/.test(daysArg)) {
+          process.stderr.write(
+            `oak agenda: --days expects a positive integer, got \`${daysArg}\`\n`,
+          );
+          return 1;
+        }
+        days = Math.max(1, parseInt(daysArg, 10));
+      }
+      const today = todayIso(now);
+      const from = fromArg
+        ? fromArg
+        : startOfWeek(today, config.weekStartsOn);
+      query = { kind: "weekly", from, days };
+      break;
+    }
+    case "t": {
+      const keyword = getString(flags, "keyword");
+      const includeDone = getBool(flags, "all");
+      query = {
+        kind: "todo",
+        ...(keyword !== undefined ? { keyword } : {}),
+        ...(includeDone ? { includeDone: true } : {}),
+      };
+      break;
+    }
+    case "m": {
+      const expr = args.join(" ").trim();
+      if (!expr) {
+        process.stderr.write("Usage: oak agenda m <match-expression>\n");
+        return 1;
+      }
+      query = { kind: "match", expression: expr };
+      break;
+    }
+    case "s": {
+      const regex = args.join(" ").trim();
+      if (!regex) {
+        process.stderr.write("Usage: oak agenda s <regex>\n");
+        return 1;
+      }
+      query = { kind: "search", regex };
+      break;
+    }
+    default:
+      process.stderr.write(
+        `Unknown agenda subcommand: ${sub}. Try a|t|m|s|done.\n`,
+      );
+      return 1;
+  }
+
+  let view: AgendaView;
+  try {
+    view = runAgenda(entries, query, config, now);
+  } catch (err) {
+    process.stderr.write(`oak agenda: ${(err as Error).message}\n`);
+    return 1;
+  }
+
+  if (json) {
+    process.stdout.write(
+      JSON.stringify(serialiseView(view), null, 2) + "\n",
+    );
+    return 0;
+  }
+  process.stdout.write(renderAgendaView(view));
+  return 0;
+}
+
+async function cmdAgendaDone(
+  vaultPath: string,
+  args: string[],
+  json: boolean,
+): Promise<number> {
+  const ref = args[0];
+  if (!ref) {
+    process.stderr.write("Usage: oak agenda done <relPath>:<line>\n");
+    return 1;
+  }
+  const colon = ref.lastIndexOf(":");
+  if (colon === -1) {
+    process.stderr.write(
+      "Usage: oak agenda done <relPath>:<line> (missing line number)\n",
+    );
+    return 1;
+  }
+  const relPath = ref.slice(0, colon);
+  const line = parseInt(ref.slice(colon + 1), 10);
+  if (!Number.isFinite(line)) {
+    process.stderr.write("oak agenda done: line must be a number\n");
+    return 1;
+  }
+
+  const config = await loadAgendaConfig(vaultPath);
+  const vault = await parseVault(vaultPath);
+  const entries = extractVaultAgendaEntries(vault, config);
+  const target = entries.find(
+    (e) => e.relPath === relPath && e.line === line,
+  );
+  if (!target) {
+    process.stderr.write(
+      `oak agenda done: no entry at ${relPath}:${line}\n`,
+    );
+    return 1;
+  }
+  try {
+    const result = await markDone(
+      target.filePath,
+      target.entryId,
+      config,
+      undefined,
+      target.relPath,
+    );
+    if (json) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            filePath: result.filePath,
+            entryId: result.entryId,
+            repeated: result.repeated,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+      return 0;
+    }
+    process.stdout.write(
+      `${result.repeated ? "Advanced repeater on" : "Marked DONE"} ${target.title}\n` +
+        `  file: ${target.relPath}:${target.line}\n`,
+    );
+    return 0;
+  } catch (err) {
+    if (err instanceof WriteBackError) {
+      process.stderr.write(`oak agenda done: ${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+}
+
+function serialiseView(view: AgendaView): unknown {
+  return {
+    query: view.query,
+    generatedAt: view.generatedAt,
+    buckets: view.buckets.map((b) => ({
+      key: b.key,
+      label: b.label,
+      items: b.items.map((it) => ({
+        entryId: it.entry.entryId,
+        relPath: it.entry.relPath,
+        line: it.entry.line,
+        title: it.entry.title,
+        todoState: it.entry.todoState,
+        priority: it.entry.priority,
+        category: it.entry.category,
+        tags: it.entry.tags,
+        scheduled: it.entry.scheduled?.iso ?? null,
+        deadline: it.entry.deadline?.iso ?? null,
+        date: it.date,
+        marker: it.marker,
+        daysDelta: it.daysDelta,
+        time: it.time,
+        endTime: it.endTime,
+      })),
+    })),
+  };
+}
+
+function renderAgendaView(view: AgendaView): string {
+  const lines: string[] = [];
+  for (const bucket of view.buckets) {
+    lines.push(bucket.label);
+    if (bucket.items.length === 0) {
+      lines.push("  (nothing)");
+    } else {
+      for (const item of bucket.items) {
+        lines.push(`  ${renderItem(item)}`);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function renderItem(item: AgendaItem): string {
+  const cat = padRight(item.entry.category, 10);
+  const time = item.time
+    ? item.endTime
+      ? padRight(`${item.time}-${item.endTime}`, 12)
+      : padRight(`${item.time}......`, 12)
+    : padRight("", 12);
+  const marker = renderMarker(item);
+  const state = item.entry.todoState
+    ? padRight(item.entry.todoState, 8)
+    : padRight("", 8);
+  const pri = item.entry.priority ? `[#${item.entry.priority}] ` : "";
+  const tags = item.entry.tags.length > 0
+    ? `  :${item.entry.tags.join(":")}:`
+    : "";
+  return `${cat}  ${time}${marker}${state}${pri}${item.entry.title}${tags}`;
+}
+
+function padRight(s: string, n: number): string {
+  if (s.length >= n) return s;
+  return s + " ".repeat(n - s.length);
+}
+
+function renderMarker(item: AgendaItem): string {
+  if (!item.marker) return padRight("", 14);
+  switch (item.marker) {
+    case "scheduled":
+      return padRight("Scheduled:", 14);
+    case "scheduled-overdue":
+      return padRight(`Sched.${item.daysDelta}xD:`, 14);
+    case "deadline":
+      return padRight("Deadline:", 14);
+    case "deadline-warning":
+      return padRight(`In ${item.daysDelta} d.:`, 14);
+    case "deadline-overdue":
+      return padRight(`${item.daysDelta} d. ago:`, 14);
+    case "timestamp":
+      return padRight("", 14);
+  }
 }
 
 main(process.argv.slice(2)).then(

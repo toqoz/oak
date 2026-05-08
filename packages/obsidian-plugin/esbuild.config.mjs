@@ -23,6 +23,10 @@ const options = {
   external: [
     "obsidian",
     "electron",
+    // CodeMirror is a peer of `obsidian` — Electron's renderer resolves
+    // these from the Obsidian runtime, so they must not be bundled.
+    "@codemirror/state",
+    "@codemirror/view",
     // Node built-ins (with and without `node:` prefix) are resolved by
     // Electron at runtime; bundling them would break.
     "node:*",

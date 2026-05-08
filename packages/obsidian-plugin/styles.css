@@ -101,6 +101,22 @@ body.oak-mode-active .status-bar {
   display: none !important;
 }
 
+/* Header nav buttons for the three oak entry points. They sit in
+   every view header (alongside ← / →) so the user always knows
+   where the row is. The button matching the current view is
+   rendered disabled and tinted with the oak accent — a quiet "you
+   are here" marker, no background fill or hover swap. */
+body.oak-mode-active .clickable-icon.oak-home-button:disabled,
+body.oak-mode-active .clickable-icon.oak-agenda-button:disabled,
+body.oak-mode-active .clickable-icon.oak-search-button:disabled,
+body.oak-mode-active .clickable-icon.oak-home-button:disabled:hover,
+body.oak-mode-active .clickable-icon.oak-agenda-button:disabled:hover,
+body.oak-mode-active .clickable-icon.oak-search-button:disabled:hover {
+  color: var(--text-accent);
+  background: transparent;
+  cursor: default;
+}
+
 /* "Related" footer — sits *inside* the scroll container (alongside
    `.cm-content` for source / live-preview, alongside
    `.markdown-preview-section` for reading mode), so the cards
@@ -743,6 +759,145 @@ body.oak-mode-active .markdown-preview-view {
   position: relative !important;
 }
 
+/* ====================================================================
+ * Heading look (Live Preview / source mode, oak mode only).
+ *
+ * The default Obsidian heading style — bigger font per level + hidden
+ * `#` markers in Live Preview — fights org-style flat structures.
+ * Inside oak mode we:
+ *   - keep the heading at the same size as body text (hierarchy comes
+ *     from the visible markers + bold weight, not a size jump)
+ *   - leave `##` / `###` visible at all times so the level reads at a
+ *     glance whether the cursor is on the line or not
+ *   - dim the markers a touch so they fade into the chrome without
+ *     disappearing entirely
+ *
+ * Selectors target Obsidian's CodeMirror 6 markdown-mode classes:
+ *   - `.cm-line.HyperMD-header[-N]`        the heading line
+ *   - `.cm-header[-N]`                      span around the heading text
+ *   - `.cm-formatting-header[-N]`           span around the `#` chars
+ *
+ * `!important` is required throughout: Obsidian ships heading sizes
+ * via `--h{N}-size` variables fed into rules with both class chain
+ * and theme-variable specificity that a same-class selector can't
+ * beat. */
+body.oak-mode-active .cm-line.HyperMD-header,
+body.oak-mode-active .cm-line.HyperMD-header .cm-header,
+body.oak-mode-active .cm-line.HyperMD-header .cm-formatting-header {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+/* Drop the top margin Obsidian applies above heading lines (`cm-line`
+   normally inherits `--heading-spacing` for `HyperMD-header-N`).
+   Without this the heading hangs in extra whitespace, which cuts
+   against reading the document as a flat plain-text stream. We keep
+   `padding-top: 0` defensively in case a theme plumbs the spacing
+   through padding instead. */
+body.oak-mode-active .cm-line.HyperMD-header {
+  margin-top: 0 !important;
+  margin-block-start: 0 !important;
+  padding-top: 0 !important;
+}
+/* The `#` characters on the *active* heading line are real text
+   (Obsidian doesn't hide them while editing). Dim them so they read
+   as chrome rather than content, matching the inactive widget's
+   color below. */
+body.oak-mode-active .cm-formatting-header {
+  color: var(--text-faint) !important;
+}
+
+/* `headingMarkersExtension` renders one `<span>` per character of
+   the heading prefix (each `#` and the trailing whitespace), so the
+   caret can sit between them and Backspace removes one hash at a
+   time. `display: inline-block` keeps each span as its own layout
+   box — without it, adjacent same-content spans can collapse so
+   only the first one ends up visible in some Obsidian builds.
+   `font-family/-weight/-size: inherit` matches the surrounding
+   heading's typography so the prefix looks like part of the line,
+   not chrome. */
+.oak-md-heading-marker {
+  display: inline-block;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-weight: inherit;
+  font-size: inherit;
+  white-space: pre;
+}
+
+/* TODO / DONE keyword pill inside markdown headings.
+ * `headingDecorationsExtension` wraps the keyword in a span carrying
+ * three classes:
+ *   - `oak-md-keyword`                shared
+ *   - `oak-md-keyword-{open|closed}`  bucket fallback
+ *   - `oak-md-keyword-{lc}`           per-keyword (todo, next, …)
+ * The per-keyword rule wins by source order; the bucket rule is the
+ * default for any user-defined keyword without an explicit color.
+ *
+ * Tuned to read as a label rather than a button — the heading row
+ * still flows like text so editing inside it stays comfortable. */
+.oak-md-keyword {
+  font-weight: 700;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  margin: 0 0.3em 0 0;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  vertical-align: 0.08em;
+}
+.oak-md-keyword-open {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-md-keyword-closed {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.oak-md-keyword-todo {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-md-keyword-next {
+  background: rgba(80, 160, 220, 0.18);
+  color: rgb(50, 130, 200);
+}
+.oak-md-keyword-waiting {
+  background: rgba(200, 130, 60, 0.18);
+  color: rgb(180, 110, 40);
+}
+.oak-md-keyword-done,
+.oak-md-keyword-cancelled {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+/* `[#A]` priority cookie. Same shape as the keyword pill but
+ * narrower padding so the priority sits visually under the keyword. */
+.oak-md-priority {
+  font-weight: 700;
+  font-size: 0.85em;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  margin: 0 0.3em 0 0;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  vertical-align: 0.08em;
+}
+.oak-md-priority-a {
+  background: rgba(220, 80, 80, 0.22);
+  color: rgb(200, 50, 50);
+}
+.oak-md-priority-b {
+  background: rgba(220, 150, 60, 0.22);
+  color: rgb(180, 110, 40);
+}
+.oak-md-priority-c {
+  background: rgba(120, 180, 120, 0.22);
+  color: rgb(80, 140, 80);
+}
+
 /* oak sidebar */
 
 .oak-sidebar {
@@ -1008,4 +1163,605 @@ body.oak-mode-active
 body.oak-mode-active .markdown-preview-view > .frontmatter + p:empty,
 body.oak-mode-active .markdown-preview-view > .frontmatter-container + p:empty {
   display: none;
+}
+
+/* SCHEDULED / DEADLINE editor for TODO heading lines.
+ *
+ * Two surfaces:
+ *   1. an inline calendar icon — `Decoration.widget` rendered at
+ *      `line.from`, positioned absolutely so it hangs into the left
+ *      padding without shifting the heading text. Only present while
+ *      the cursor sits on the heading.
+ *   2. a tooltip below the heading — opened by clicking the icon.
+ *      Shows current SCHEDULED + DEADLINE values, each row offering
+ *      edit (presets + month grid) and clear.
+ */
+
+/* Icon + line anchor.
+ * `.oak-agenda-line-anchor` adds `position: relative` so the
+ * absolutely-positioned `.oak-agenda-line-icon` can be placed
+ * relative to the heading line itself. The icon hangs into the left
+ * margin, vertically centered on the heading's line box (regardless
+ * of heading size), without disturbing the heading position. */
+.cm-line.oak-agenda-line-anchor {
+  position: relative;
+}
+button.oak-agenda-line-icon {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  /* Sit far enough left to clear Obsidian's fold-arrow column (which
+     hangs into the heading line's left margin) without bumping into
+     the editor pane's outer padding. */
+  left: -3.2em;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.6;
+  box-shadow: none;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+button.oak-agenda-line-icon:hover {
+  opacity: 1;
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+button.oak-agenda-line-icon svg {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+/* Tooltip frame. CodeMirror 6 applies `.cm-tooltip` directly to our
+ * own root element (we are the tooltip — there is no extra wrapper).
+ * CM ships a default `.ͼN .cm-tooltip` rule with a near-white
+ * background and a `#bbb` border, scoped through its dynamic theme
+ * class, so we need both classes plus `!important` to win the
+ * cascade against that scoped default. */
+.oak-agenda-tooltip.cm-tooltip {
+  background: var(--background-secondary) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 6px !important;
+  color: var(--text-normal) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  min-width: 16em;
+  font-size: var(--font-ui-small);
+}
+.oak-agenda-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.oak-agenda-tooltip-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+button.oak-agenda-tooltip-close {
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 2px 6px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+  opacity: 0.6;
+  color: var(--text-muted);
+}
+button.oak-agenda-tooltip-close:hover {
+  opacity: 1;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* One row per planning field. View mode keeps everything on one line;
+ * presets mode wraps button rows; cal mode swaps the row content for a
+ * column with the month header + grid. */
+.oak-agenda-tooltip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.oak-agenda-tooltip-row-cal {
+  flex-direction: column;
+  align-items: stretch;
+}
+.oak-agenda-tooltip-label {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  min-width: 5.5em;
+}
+/* The value is rendered as a `<button>` when a date is set (clicking
+ * it opens the picker — there's no separate `edit` button). When
+ * empty it falls back to a plain `<span>` showing `—`. Strip
+ * Obsidian's default button chrome so the value reads as text, not
+ * a control. */
+.oak-agenda-tooltip-value {
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-normal);
+  text-align: left;
+}
+button.oak-agenda-tooltip-value {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  height: auto;
+  line-height: inherit;
+  cursor: pointer;
+}
+button.oak-agenda-tooltip-value:hover {
+  color: var(--text-accent);
+  background: none;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.oak-agenda-tooltip-value.is-empty {
+  color: var(--text-faint);
+}
+
+button.oak-agenda-tooltip-btn {
+  font-size: inherit;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+/* Inline text-link affordances (edit / set / clear) — quiet and word-
+ * sized so they don't compete with the actual value to their left.
+ * Selectors lead with `button.` so they win against Obsidian's
+ * default `.workspace-leaf-content button` rule, which otherwise
+ * gives every <button> an opaque background + box-shadow. */
+button.oak-agenda-tooltip-link {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  height: auto;
+  line-height: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+button.oak-agenda-tooltip-link:hover {
+  color: var(--text-accent);
+  background: none;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+button.oak-agenda-tooltip-clear {
+  color: var(--text-faint);
+}
+button.oak-agenda-tooltip-clear:hover {
+  color: var(--text-error);
+}
+
+button.oak-agenda-tooltip-back {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+.oak-agenda-tooltip-cal-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.oak-agenda-tooltip-cal-label {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* Quick-pick row above the month grid. Keeps `today` / `next mon` a
+ * single click without forcing the user to hunt through the grid. */
+.oak-agenda-tooltip-cal-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 2px 0 4px;
+  border-bottom: 1px dashed var(--background-modifier-border);
+  margin-bottom: 2px;
+}
+.oak-agenda-tooltip-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 2em);
+  gap: 2px;
+}
+.oak-agenda-tooltip-cal-dow {
+  text-align: center;
+  font-size: 0.85em;
+  opacity: 0.6;
+  padding: 2px 0;
+}
+button.oak-agenda-tooltip-cal-day {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  padding: 2px 0;
+  text-align: center;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  box-shadow: none;
+  color: var(--text-normal);
+}
+button.oak-agenda-tooltip-cal-day:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+button.oak-agenda-tooltip-cal-day.is-off-month {
+  opacity: 0.35;
+}
+button.oak-agenda-tooltip-cal-day.is-today {
+  border-color: var(--interactive-accent);
+}
+
+/* ====================================================================
+ * Agenda view (`OakAgendaView`).
+ * Single Upcoming surface with quiet `·`-separated text-link controls.
+ * Layout is a vertical stack:
+ *   header  (title + per-view controls + nav links)
+ *   main    (day buckets / item rows)
+ *   footer  (key hint)
+ * Visual aim is "static page", not dashboard chrome — no chip pills,
+ * no tab tabs, no count badges. The active control is differentiated
+ * with weight + accent color rather than fill. */
+
+.oak-agenda {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* Horizontal gutter matches the home / search views (4rem) so all
+     three oak surfaces line up at the same column. `!important` is
+     needed to win over Obsidian's default `.view-content` padding —
+     `.oak-agenda` *is* the `.view-content` element, so without it
+     the theme's padding takes precedence and the row sits closer
+     to the left edge. */
+  padding: 1em 4rem !important;
+  gap: 14px;
+  overflow: hidden;
+}
+.oak-agenda-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.oak-agenda-titlerow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+.oak-agenda-title {
+  margin: 0;
+  font-size: 1.4em;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+.oak-agenda-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.oak-agenda button.oak-agenda-action {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.oak-agenda button.oak-agenda-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  box-shadow: none;
+}
+.oak-agenda button.oak-agenda-action.is-active {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.oak-agenda button.oak-agenda-action .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Per-view controls under the title row: span links for Upcoming,
+ * state links for TODO, an inline input for Find. The `·` separator
+ * comes from `.oak-agenda-link::after` below. */
+.oak-agenda-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  min-height: 1.2em;
+}
+.oak-agenda-controls:empty {
+  display: none;
+}
+
+/* Obsidian gives every <button> in a view its own background/border/
+ * box-shadow; we have to reset all three to land plain text. The
+ * selectors lead with `.oak-agenda` for specificity to beat the
+ * default `.workspace-leaf-content button` rule. */
+.oak-agenda button.oak-agenda-link {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  height: auto;
+  line-height: inherit;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.oak-agenda button.oak-agenda-link:hover {
+  color: var(--text-normal);
+  background: none;
+  box-shadow: none;
+}
+.oak-agenda button.oak-agenda-link.is-active {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+.oak-agenda button.oak-agenda-link:not(:last-child)::after {
+  content: " · ";
+  color: var(--text-faint);
+  font-weight: normal;
+  margin: 0 0.25em;
+}
+
+.oak-agenda input.oak-agenda-input {
+  flex: 1;
+  min-width: 14em;
+  max-width: 32em;
+  font: inherit;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--text-normal);
+}
+.oak-agenda input.oak-agenda-input:focus {
+  outline: none;
+  border-bottom-color: var(--interactive-accent);
+  box-shadow: none;
+}
+
+.oak-agenda-main {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.oak-agenda-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.oak-agenda-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.oak-agenda-bucket-label {
+  margin: 0;
+  font-size: 0.95em;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--background-modifier-border);
+  font-variant-numeric: tabular-nums;
+}
+.oak-agenda-bucket-empty {
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--text-faint);
+  font-size: 0.9em;
+}
+
+.oak-agenda-list {
+  display: flex;
+  flex-direction: column;
+}
+.oak-agenda-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95em;
+}
+.oak-agenda-item:hover {
+  background: var(--background-modifier-hover);
+}
+.oak-agenda-item.is-focused {
+  background: var(--background-secondary);
+}
+
+.oak-agenda-cat {
+  flex-shrink: 0;
+  min-width: 6em;
+  max-width: 12em;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oak-agenda-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9em;
+  color: var(--text-normal);
+  min-width: 4.5em;
+}
+.oak-agenda-marker {
+  flex-shrink: 0;
+  font-size: 0.8em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.oak-marker-deadline,
+.oak-marker-deadline-overdue {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-marker-deadline-warning {
+  background: rgba(220, 150, 60, 0.18);
+  color: rgb(190, 130, 40);
+}
+.oak-marker-scheduled-overdue {
+  background: rgba(200, 130, 60, 0.18);
+  color: rgb(180, 110, 40);
+}
+
+.oak-agenda-keyword {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.oak-keyword-todo {
+  background: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+.oak-keyword-next {
+  background: rgba(80, 160, 220, 0.18);
+  color: rgb(50, 130, 200);
+}
+.oak-keyword-waiting {
+  background: rgba(200, 130, 60, 0.18);
+  color: rgb(180, 110, 40);
+}
+.oak-keyword-done,
+.oak-keyword-cancelled {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.oak-agenda-priority {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 700;
+  background: var(--background-modifier-border);
+}
+.oak-priority-a {
+  background: rgba(220, 80, 80, 0.22);
+  color: rgb(200, 50, 50);
+}
+.oak-priority-b {
+  background: rgba(220, 150, 60, 0.22);
+  color: rgb(180, 110, 40);
+}
+.oak-priority-c {
+  background: rgba(120, 180, 120, 0.22);
+  color: rgb(80, 140, 80);
+}
+
+.oak-agenda-item-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oak-agenda-item-date {
+  flex-shrink: 0;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.oak-agenda-item-date.is-today {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+.oak-agenda-item-date.is-past {
+  color: rgb(200, 60, 60);
+}
+.oak-agenda-tag-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.oak-agenda-tag {
+  font-size: 0.78em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.oak-agenda-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 6px;
+  font-size: 0.85em;
+  color: var(--text-faint);
 }

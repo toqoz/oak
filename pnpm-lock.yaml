@@ -55,6 +55,12 @@ importers:
         specifier: ^2.3.0
         version: 2.4.0
     devDependencies:
+      '@codemirror/state':
+        specifier: ^6.5.0
+        version: 6.5.0
+      '@codemirror/view':
+        specifier: ^6.38.6
+        version: 6.38.6
       esbuild:
         specifier: ^0.21.5
         version: 0.21.5

@@ -25,6 +25,7 @@ import { VaultState, type VaultSnapshot } from "./state.js";
 import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
 import { OakHomeView, VIEW_TYPE_OAK_HOME } from "./views/home.js";
 import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
+import { OakAgendaView, VIEW_TYPE_OAK_AGENDA } from "./views/agenda.js";
 import { OakSearchView, VIEW_TYPE_OAK_SEARCH } from "./views/search.js";
 import {
   createNewPage,
@@ -39,12 +40,18 @@ import {
 } from "./commands.js";
 import {
   composePage,
+  DEFAULT_AGENDA_CONFIG,
   ensureGitRepo,
   excerptFrom,
+  loadAgendaConfig,
   slugify,
   snapshot,
+  type AgendaConfig,
   type OakPage,
 } from "@oak/core";
+import { agendaTooltipExtension } from "./agenda-tooltip.js";
+import { headingDecorationsExtension } from "./heading-decorations.js";
+import { headingMarkersExtension } from "./heading-markers.js";
 import { describeBacklinks, describeTwoHop } from "./format.js";
 import { ensureBlankAfterFrontmatter } from "./frontmatter-normalize.js";
 import { vaultRoot } from "./paths.js";
@@ -58,6 +65,10 @@ export default class OakPlugin extends Plugin {
   private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
   private sidebarRef: OakSidebarView | null = null;
   private linksUnsubscribe: (() => void) | null = null;
+  // Live copy of `.oak/agenda.yml`. Used by editor extensions (e.g. the
+  // SCHEDULED/DEADLINE tooltip) that need to know the active TODO
+  // keyword set without re-reading the file on every keystroke.
+  private agendaConfig: AgendaConfig = DEFAULT_AGENDA_CONFIG;
   // Last redlink target the user clicked plus when. Used by the
   // vault.on("create") fallback to detect a file that Obsidian
   // auto-created in response to the click and roll it back into a
@@ -109,6 +120,9 @@ export default class OakPlugin extends Plugin {
           }
         },
       );
+    });
+    this.registerView(VIEW_TYPE_OAK_AGENDA, (leaf: WorkspaceLeaf) => {
+      return new OakAgendaView(leaf, this.state, this.app, openFile);
     });
     this.registerView(VIEW_TYPE_OAK_SEARCH, (leaf: WorkspaceLeaf) => {
       return new OakSearchView(
@@ -164,6 +178,7 @@ export default class OakPlugin extends Plugin {
         this.applyLinksCards();
         this.applyPageMeta();
         this.applyHomeButton();
+        this.applyAgendaButton();
         this.applySearchButton();
       }),
     );
@@ -173,6 +188,7 @@ export default class OakPlugin extends Plugin {
         this.applyLinksCards();
         this.applyPageMeta();
         this.applyHomeButton();
+        this.applyAgendaButton();
         this.applySearchButton();
       }),
     );
@@ -188,6 +204,9 @@ export default class OakPlugin extends Plugin {
     this.linksUnsubscribe = this.state.subscribe(() => {
       this.applyLinksCards();
       this.applyPageMeta();
+      // The user may have edited `.oak/agenda.yml` to change TODO
+      // keywords; pick that up on the next vault refresh.
+      void this.refreshAgendaConfig();
     });
 
     // Intercept red-link clicks while in oak mode and route them to
@@ -296,10 +315,41 @@ export default class OakPlugin extends Plugin {
       callback: () => void runMount(this),
     });
     this.addCommand({
+      id: "oak-agenda",
+      name: "Open agenda",
+      callback: () => void this.openAgenda(),
+    });
+    this.addCommand({
       id: "oak-search",
       name: "Search vault",
       callback: () => void this.openSearch(),
     });
+
+    // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.
+    // Reads `todoKeywords` lazily so changes to .oak/agenda.yml take
+    // effect on the next state refresh without re-registering the
+    // extension.
+    this.registerEditorExtension(
+      agendaTooltipExtension({
+        todoKeywords: () => this.agendaConfig.todoKeywords,
+        weekStartsOn: () => this.agendaConfig.weekStartsOn,
+      }),
+    );
+    // Inline highlight for TODO / DONE keywords + `[#A]` priority
+    // cookies inside markdown headings. Pure overlay: never mutates
+    // the underlying text so editing, search, and the agenda parser
+    // all see the literal heading.
+    this.registerEditorExtension(
+      headingDecorationsExtension({
+        todoKeywords: () => this.agendaConfig.todoKeywords,
+        doneKeywords: () => this.agendaConfig.doneKeywords,
+      }),
+    );
+    // Keep `#` heading markers visible (and copyable) on inactive
+    // lines too — overrides Obsidian's Live Preview hider so the
+    // raw markdown stays selectable text instead of being replaced
+    // by a hidden widget.
+    this.registerEditorExtension(headingMarkersExtension());
 
     this.addSettingTab(new OakSettingTab(this.app, this));
 
@@ -307,6 +357,7 @@ export default class OakPlugin extends Plugin {
     // so the active file detection works on the first sidebar render.
     this.app.workspace.onLayoutReady(() => {
       void this.state.refresh();
+      void this.refreshAgendaConfig();
       this.applyAutoSnapshot();
       // If a previous session left oak views in the workspace state,
       // Obsidian has just re-instantiated them. Re-attach the chrome
@@ -316,6 +367,7 @@ export default class OakPlugin extends Plugin {
       this.applyLinksCards();
       this.applyPageMeta();
       this.applyHomeButton();
+      this.applyAgendaButton();
       this.applySearchButton();
     });
   }
@@ -336,6 +388,7 @@ export default class OakPlugin extends Plugin {
     this.applyLinksCards();
     this.applyPageMeta();
     this.applyHomeButton();
+    this.applyAgendaButton();
     this.applySearchButton();
   }
 
@@ -361,6 +414,15 @@ export default class OakPlugin extends Plugin {
     }, ms);
   }
 
+  private async refreshAgendaConfig(): Promise<void> {
+    try {
+      this.agendaConfig = await loadAgendaConfig(vaultRoot(this.app));
+    } catch (err) {
+      console.warn("oak: loadAgendaConfig failed", err);
+      this.agendaConfig = DEFAULT_AGENDA_CONFIG;
+    }
+  }
+
   private async ensureGitInBackground(): Promise<void> {
     try {
       await ensureGitRepo(vaultRoot(this.app));
@@ -378,12 +440,17 @@ export default class OakPlugin extends Plugin {
   //   Cmd / Ctrl click  always open a new tab.
   async openInBrowseLeaf(
     file: TFile,
-    opts: { newTab?: boolean } = {},
+    opts: { newTab?: boolean; line?: number } = {},
   ): Promise<void> {
     const leaf = opts.newTab
       ? this.app.workspace.getLeaf("tab")
       : this.currentMainLeaf();
-    await leaf.openFile(file);
+    // Forward `line` as `eState.line` so Obsidian scrolls/centers the
+    // viewport on the heading we want, including in reading mode where
+    // we have no editor handle to call `setCursor` on.
+    const openState =
+      opts.line !== undefined ? { eState: { line: opts.line } } : undefined;
+    await leaf.openFile(file, openState);
     this.app.workspace.revealLeaf(leaf);
   }
 
@@ -1121,19 +1188,19 @@ export default class OakPlugin extends Plugin {
   // Inject a "go to oak home" icon button right after the ← / →
   // history buttons in every visible view header. Clicking the
   // button turns *that* tab into the home view (browser-tab
-  // semantics) rather than focusing a separate home tab. Skipped
-  // on the oak-home view itself (its header is hidden in oak
-  // mode anyway, but a guard keeps the intent explicit).
+  // semantics). Rendered on every view including the home view
+  // itself — when the view matches, the button shows up disabled
+  // so the icon row stays in a fixed position.
   private applyHomeButton(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
       const root = view.containerEl;
       if (!root) return;
-      if (view.getViewType?.() === VIEW_TYPE_OAK_HOME) return;
       const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
       if (!headerLeft) return;
-      this.applyHomeButtonForHeader(headerLeft, leaf, oakMode);
+      const isCurrent = view.getViewType?.() === VIEW_TYPE_OAK_HOME;
+      this.applyHomeButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
     });
   }
 
@@ -1141,13 +1208,18 @@ export default class OakPlugin extends Plugin {
     headerLeft: HTMLElement,
     leaf: WorkspaceLeaf,
     oakMode: boolean,
+    isCurrent: boolean,
   ): void {
-    const existing = headerLeft.querySelector<HTMLElement>(".oak-home-button");
+    const existing =
+      headerLeft.querySelector<HTMLButtonElement>(".oak-home-button");
     if (!oakMode) {
       existing?.remove();
       return;
     }
-    if (existing) return;
+    if (existing) {
+      this.setNavButtonCurrent(existing, isCurrent);
+      return;
+    }
     const navButtons = headerLeft.querySelector<HTMLElement>(
       ".view-header-nav-buttons",
     );
@@ -1166,7 +1238,26 @@ export default class OakPlugin extends Plugin {
       ev.preventDefault();
       void this.navigateLeafToHome(leaf);
     });
-    navButtons.appendChild(button);
+    this.setNavButtonCurrent(button, isCurrent);
+    // Keep order home → agenda → search regardless of which apply
+    // was called first.
+    const successor = navButtons.querySelector<HTMLElement>(
+      ".oak-agenda-button, .oak-search-button",
+    );
+    navButtons.insertBefore(button, successor ?? null);
+  }
+
+  // Mark a nav button as representing the current view: visually
+  // de-emphasised (looks "you are here, no-op") and disabled so a
+  // click can't fire.
+  private setNavButtonCurrent(
+    button: HTMLButtonElement,
+    isCurrent: boolean,
+  ): void {
+    button.disabled = isCurrent;
+    button.classList.toggle("is-active", isCurrent);
+    if (isCurrent) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   }
 
   // Replace the contents of `leaf` with the oak-home view. We do
@@ -1183,20 +1274,87 @@ export default class OakPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  // Twin of applyHomeButton — sits right after the home icon in the
-  // view header. Skipped on the search view itself (re-clicking would
-  // be a no-op) and on the home / ghost / sidebar where their own
-  // headers already get covered by the iterator.
+  // Twin of applyHomeButton — sits between the home and search icons
+  // in the view header. Rendered on every view including the agenda
+  // view itself (disabled there) so the icon row stays in a fixed
+  // position.
+  private applyAgendaButton(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
+      const root = view.containerEl;
+      if (!root) return;
+      const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
+      if (!headerLeft) return;
+      const isCurrent = view.getViewType?.() === VIEW_TYPE_OAK_AGENDA;
+      this.applyAgendaButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
+    });
+  }
+
+  private applyAgendaButtonForHeader(
+    headerLeft: HTMLElement,
+    leaf: WorkspaceLeaf,
+    oakMode: boolean,
+    isCurrent: boolean,
+  ): void {
+    const existing =
+      headerLeft.querySelector<HTMLButtonElement>(".oak-agenda-button");
+    if (!oakMode) {
+      existing?.remove();
+      return;
+    }
+    if (existing) {
+      this.setNavButtonCurrent(existing, isCurrent);
+      return;
+    }
+    const navButtons = headerLeft.querySelector<HTMLElement>(
+      ".view-header-nav-buttons",
+    );
+    if (!navButtons) return;
+    const button = document.createElement("button");
+    button.classList.add("clickable-icon", "oak-agenda-button");
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-label", "Oak Agenda");
+    setIcon(button, "calendar-days");
+    button.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.navigateLeafToAgenda(leaf);
+    });
+    this.setNavButtonCurrent(button, isCurrent);
+    // Insert before the search button when present so the order in
+    // every header is home → agenda → search regardless of which
+    // button was applied first.
+    const searchButton = navButtons.querySelector<HTMLElement>(
+      ".oak-search-button",
+    );
+    navButtons.insertBefore(button, searchButton ?? null);
+  }
+
+  private async navigateLeafToAgenda(leaf: WorkspaceLeaf): Promise<void> {
+    if (!this.isLeafAlive(leaf)) return;
+    if (leaf.view.getViewType() === VIEW_TYPE_OAK_AGENDA) {
+      this.app.workspace.revealLeaf(leaf);
+      return;
+    }
+    await leaf.setViewState({ type: VIEW_TYPE_OAK_AGENDA, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    // Make sure the vault has been parsed at least once.
+    void this.state.refresh();
+  }
+
+  // Twin of applyHomeButton — sits right after the agenda icon in the
+  // view header. Rendered on every view including the search view
+  // itself (disabled there) so the icon row stays in a fixed position.
   private applySearchButton(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view as { containerEl?: HTMLElement; getViewType?: () => string };
       const root = view.containerEl;
       if (!root) return;
-      if (view.getViewType?.() === VIEW_TYPE_OAK_SEARCH) return;
       const headerLeft = root.querySelector<HTMLElement>(".view-header-left");
       if (!headerLeft) return;
-      this.applySearchButtonForHeader(headerLeft, leaf, oakMode);
+      const isCurrent = view.getViewType?.() === VIEW_TYPE_OAK_SEARCH;
+      this.applySearchButtonForHeader(headerLeft, leaf, oakMode, isCurrent);
     });
   }
 
@@ -1204,13 +1362,18 @@ export default class OakPlugin extends Plugin {
     headerLeft: HTMLElement,
     leaf: WorkspaceLeaf,
     oakMode: boolean,
+    isCurrent: boolean,
   ): void {
-    const existing = headerLeft.querySelector<HTMLElement>(".oak-search-button");
+    const existing =
+      headerLeft.querySelector<HTMLButtonElement>(".oak-search-button");
     if (!oakMode) {
       existing?.remove();
       return;
     }
-    if (existing) return;
+    if (existing) {
+      this.setNavButtonCurrent(existing, isCurrent);
+      return;
+    }
     const navButtons = headerLeft.querySelector<HTMLElement>(
       ".view-header-nav-buttons",
     );
@@ -1224,6 +1387,7 @@ export default class OakPlugin extends Plugin {
       ev.preventDefault();
       void this.navigateLeafToSearch(leaf);
     });
+    this.setNavButtonCurrent(button, isCurrent);
     navButtons.appendChild(button);
   }
 
@@ -1372,5 +1536,11 @@ export default class OakPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.setViewState({ type: VIEW_TYPE_OAK_HOME, active: true });
     this.app.workspace.revealLeaf(leaf);
+  }
+
+  async openAgenda(): Promise<void> {
+    const leaf =
+      this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
+    await this.navigateLeafToAgenda(leaf);
   }
 }
