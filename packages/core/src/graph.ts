@@ -5,8 +5,10 @@ import type {
   Graph,
   LinkResolution,
   RawLink,
+  RedlinkBucket,
   ResolvedLink,
   TwoHop,
+  TwoHopBridge,
   Vault,
 } from "./types.js";
 import { normalizeKey } from "./slug.js";
@@ -79,24 +81,39 @@ function lineContextOf(body: string, line: number): string {
 export function buildGraph(vault: Vault): Graph {
   const outgoing = new Map<string, ResolvedLink[]>();
   const incoming = new Map<string, Backlink[]>();
+  const redlinks = new Map<string, RedlinkBucket>();
 
   for (const page of vault.pages.values()) {
     const resolved = resolveLinks(vault, page.links);
     outgoing.set(page.id, resolved);
 
     for (const link of resolved) {
-      if (link.resolution.status !== "resolved") continue;
-      const targetId = link.resolution.targetId;
-      const list = incoming.get(targetId) ?? [];
-      list.push({
-        fromId: page.id,
-        context: lineContextOf(page.body, link.line),
-      });
-      incoming.set(targetId, list);
+      const r = link.resolution;
+      if (r.status === "resolved") {
+        const targetId = r.targetId;
+        const list = incoming.get(targetId) ?? [];
+        list.push({
+          fromId: page.id,
+          context: lineContextOf(page.body, link.line),
+        });
+        incoming.set(targetId, list);
+      } else if (r.status === "unresolved") {
+        const key = normalizeKey(r.targetKey);
+        if (key.length === 0) continue;
+        let bucket = redlinks.get(key);
+        if (!bucket) {
+          bucket = { display: r.targetKey.trim(), refs: [] };
+          redlinks.set(key, bucket);
+        }
+        bucket.refs.push({
+          fromId: page.id,
+          context: lineContextOf(page.body, link.line),
+        });
+      }
     }
   }
 
-  return { outgoing, incoming };
+  return { outgoing, incoming, redlinks };
 }
 
 export function getOutboundLinks(graph: Graph, pageId: string): ResolvedLink[] {
@@ -107,43 +124,98 @@ export function getBacklinks(graph: Graph, pageId: string): Backlink[] {
   return graph.incoming.get(pageId) ?? [];
 }
 
-function neighborSet(graph: Graph, pageId: string): Set<string> {
+// Internal: nodes in the 2-hop graph are either real page IDs or virtual
+// red-link nodes. The `redlink:` prefix can never collide with a page ID
+// because page IDs are ULIDs (no `:` in their charset).
+const REDLINK_NODE_PREFIX = "redlink:";
+
+function isRedlinkNode(node: string): boolean {
+  return node.startsWith(REDLINK_NODE_PREFIX);
+}
+
+function redlinkNode(key: string): string {
+  return REDLINK_NODE_PREFIX + key;
+}
+
+function redlinkKey(node: string): string {
+  return node.slice(REDLINK_NODE_PREFIX.length);
+}
+
+function neighborSet(graph: Graph, node: string): Set<string> {
   const set = new Set<string>();
-  for (const link of graph.outgoing.get(pageId) ?? []) {
+  if (isRedlinkNode(node)) {
+    // A red-link "node" has no outgoing of its own — its neighbors are
+    // every page that mentions it.
+    const bucket = graph.redlinks.get(redlinkKey(node));
+    for (const ref of bucket?.refs ?? []) set.add(ref.fromId);
+    return set;
+  }
+  for (const link of graph.outgoing.get(node) ?? []) {
     if (link.resolution.status === "resolved") {
       set.add(link.resolution.targetId);
+    } else if (link.resolution.status === "unresolved") {
+      const key = normalizeKey(link.resolution.targetKey);
+      if (key.length > 0) set.add(redlinkNode(key));
     }
   }
-  for (const back of graph.incoming.get(pageId) ?? []) {
+  for (const back of graph.incoming.get(node) ?? []) {
     set.add(back.fromId);
   }
   return set;
 }
 
+function bridgeFromNode(graph: Graph, node: string): TwoHopBridge {
+  if (isRedlinkNode(node)) {
+    const key = redlinkKey(node);
+    return {
+      kind: "redlink",
+      targetKey: key,
+      display: graph.redlinks.get(key)?.display ?? key,
+    };
+  }
+  return { kind: "page", pageId: node };
+}
+
+function bridgeKey(b: TwoHopBridge): string {
+  return b.kind === "page" ? `p:${b.pageId}` : `r:${b.targetKey}`;
+}
+
 export function getTwoHopLinks(graph: Graph, pageId: string): TwoHop[] {
   const directNeighbors = neighborSet(graph, pageId);
-  const exclude = new Set(directNeighbors);
-  exclude.add(pageId);
 
-  // Collect bridges per two-hop candidate.
-  const bridges = new Map<string, Set<string>>();
+  // Exclude self and any direct page-neighbors as 2-hop candidates. Red-link
+  // bridges are never candidates themselves (they aren't real pages); we
+  // only walk *through* them.
+  const exclude = new Set<string>();
+  exclude.add(pageId);
+  for (const n of directNeighbors) {
+    if (!isRedlinkNode(n)) exclude.add(n);
+  }
+
+  const bridges = new Map<string, TwoHopBridge[]>();
   for (const neighbor of directNeighbors) {
-    const second = neighborSet(graph, neighbor);
-    for (const candidate of second) {
+    const bridge = bridgeFromNode(graph, neighbor);
+    for (const candidate of neighborSet(graph, neighbor)) {
+      if (isRedlinkNode(candidate)) continue;
       if (exclude.has(candidate)) continue;
-      const set = bridges.get(candidate) ?? new Set<string>();
-      set.add(neighbor);
-      bridges.set(candidate, set);
+      const list = bridges.get(candidate) ?? [];
+      list.push(bridge);
+      bridges.set(candidate, list);
     }
   }
 
   const out: TwoHop[] = [];
-  for (const [candidate, viaSet] of bridges) {
-    out.push({
-      pageId: candidate,
-      via: [...viaSet].sort(),
-      score: viaSet.size,
-    });
+  for (const [candidate, vias] of bridges) {
+    const seen = new Set<string>();
+    const uniq: TwoHopBridge[] = [];
+    for (const v of vias) {
+      const k = bridgeKey(v);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push(v);
+    }
+    uniq.sort((a, b) => bridgeKey(a).localeCompare(bridgeKey(b)));
+    out.push({ pageId: candidate, via: uniq, score: uniq.length });
   }
   out.sort((a, b) => b.score - a.score || a.pageId.localeCompare(b.pageId));
   return out;

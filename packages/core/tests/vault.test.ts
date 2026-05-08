@@ -114,6 +114,45 @@ describe("aliases fixture", () => {
   });
 });
 
+describe("twohop-redlinks fixture", () => {
+  it("bridges pages that share an unresolved wiki target", async () => {
+    const vault = await parseVault(fx("twohop-redlinks"));
+    const graph = buildGraph(vault);
+
+    const alpha = findPageId(vault, "Alpha");
+    const beta = findPageId(vault, "Beta");
+    const delta = findPageId(vault, "Delta");
+    const gamma = findPageId(vault, "Gamma");
+
+    // The graph must record both casings as referrers of the same key.
+    const bucket = graph.redlinks.get("shared topic");
+    expect(bucket).toBeDefined();
+    expect(bucket!.refs.map((r) => r.fromId).sort()).toEqual(
+      [alpha, beta, delta].sort(),
+    );
+
+    // From Alpha, both Beta and Delta should surface as 2-hop neighbours
+    // via the shared red link, and the bridge should be reported as a
+    // redlink (not a page).
+    const fromAlpha = getTwoHopLinks(graph, alpha);
+    const ids = fromAlpha.map((t) => t.pageId).sort();
+    expect(ids).toEqual([beta, delta].sort());
+    for (const entry of fromAlpha) {
+      expect(entry.via).toHaveLength(1);
+      const v = entry.via[0]!;
+      expect(v.kind).toBe("redlink");
+      if (v.kind === "redlink") expect(v.targetKey).toBe("shared topic");
+    }
+
+    // From Beta, Gamma is a direct neighbour and must not appear; Alpha and
+    // Delta should appear via the red link bridge.
+    const fromBeta = getTwoHopLinks(graph, beta);
+    const betaIds = fromBeta.map((t) => t.pageId);
+    expect(betaIds).not.toContain(gamma);
+    expect(betaIds.sort()).toEqual([alpha, delta].sort());
+  });
+});
+
 describe("twohop fixture", () => {
   it("returns two-hop neighbours with bridge info", async () => {
     const vault = await parseVault(fx("twohop"));
@@ -128,7 +167,11 @@ describe("twohop fixture", () => {
     const twohop = getTwoHopLinks(graph, a);
     const cEntry = twohop.find((t) => t.pageId === c);
     expect(cEntry).toBeDefined();
-    expect(cEntry!.via.sort()).toEqual([b, d].sort());
+    const viaPageIds = cEntry!.via
+      .map((v) => (v.kind === "page" ? v.pageId : null))
+      .filter((x): x is string => x !== null)
+      .sort();
+    expect(viaPageIds).toEqual([b, d].sort());
     expect(cEntry!.score).toBe(2);
 
     // Direct neighbours of A (B, D, E) must NOT appear in 2-hop.

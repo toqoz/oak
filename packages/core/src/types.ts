@@ -94,9 +94,31 @@ export type Backlink = {
   context: string;
 };
 
+// Pages that reference a red link (unresolved wiki target). Indexed by the
+// normalized target key so two pages spelling the same dangling concept
+// differently still share a bridge.
+export type RedlinkRef = {
+  fromId: string;
+  context: string;
+};
+
+export type RedlinkBucket = {
+  // First-seen original (trimmed) target text. Used as the human display
+  // for the red-link concept; the canonical key is the map key.
+  display: string;
+  refs: RedlinkRef[];
+};
+
+// A 2-hop bridge is either a real page or a shared red-link target. The
+// latter lets two pages mention the same not-yet-written concept and find
+// each other through it.
+export type TwoHopBridge =
+  | { kind: "page"; pageId: string }
+  | { kind: "redlink"; targetKey: string; display: string };
+
 export type TwoHop = {
   pageId: string;
-  via: string[];
+  via: TwoHopBridge[];
   score: number;
 };
 
@@ -124,4 +146,6 @@ export type Vault = {
 export type Graph = {
   outgoing: Map<string, ResolvedLink[]>;
   incoming: Map<string, Backlink[]>;
+  // Pages that link to an unresolved target, keyed by normalized target key.
+  redlinks: Map<string, RedlinkBucket>;
 };
