@@ -90,15 +90,17 @@ function spanDays(
   return lastDay - d + 1;
 }
 
-// Tag-expression syntax leads with + / - / @ / `(`; anything else falls
-// through to a regex search. Lets one input handle both org-agenda
-// `tags-view` (m) and `search-view` (s) without a mode toggle.
+// Tag-expression syntax leads with + / - / @ / # / %; anything else
+// falls through to a regex search. Lets one input handle both
+// org-agenda `tags-view` (m) and `search-view` (s) without a mode
+// toggle. Grouping parentheses are not supported by `compileMatch`, so
+// `(` is intentionally excluded from the trigger set.
 function parseFindQuery(
   raw: string,
 ): { kind: "match" | "search"; payload: string } | null {
   const q = raw.trim();
   if (q.length === 0) return null;
-  if (/^[+\-@(]/.test(q)) return { kind: "match", payload: q };
+  if (/^[+\-@#%]/.test(q)) return { kind: "match", payload: q };
   return { kind: "search", payload: q };
 }
 
@@ -147,17 +149,26 @@ export class OakAgendaView extends ItemView {
     const scope = new Scope(this.app2.scope);
     this.scope = scope;
     const moveFocus = (delta: 1 | -1) => this.moveFocus(delta);
-    scope.register([], "j", () => moveFocus(1));
-    scope.register([], "ArrowDown", () => moveFocus(1));
+    // Wrap every binding so a focused input/textarea (e.g. the Find
+    // query box) gets the keystroke instead of triggering the agenda
+    // shortcut. Returning `false` tells Obsidian's Scope this binding
+    // did not handle the event, letting the DOM continue propagation.
+    const ifNotEditing = (fn: () => void) => () => {
+      if (isEditableFocused()) return false;
+      fn();
+      return undefined;
+    };
+    scope.register([], "j", ifNotEditing(() => moveFocus(1)));
+    scope.register([], "ArrowDown", ifNotEditing(() => moveFocus(1)));
     // Emacs-style C-n / C-p mirror the j / ArrowDown bindings; Ctrl
     // (not Mod) so ⌘N stays bound to "new note" in Obsidian.
-    scope.register(["Ctrl"], "n", () => moveFocus(1));
-    scope.register([], "k", () => moveFocus(-1));
-    scope.register([], "ArrowUp", () => moveFocus(-1));
-    scope.register(["Ctrl"], "p", () => moveFocus(-1));
-    scope.register([], "Enter", () => this.openFocused());
-    scope.register([], "d", () => void this.markFocusedDone());
-    scope.register([], "r", () => void this.state.refresh());
+    scope.register(["Ctrl"], "n", ifNotEditing(() => moveFocus(1)));
+    scope.register([], "k", ifNotEditing(() => moveFocus(-1)));
+    scope.register([], "ArrowUp", ifNotEditing(() => moveFocus(-1)));
+    scope.register(["Ctrl"], "p", ifNotEditing(() => moveFocus(-1)));
+    scope.register([], "Enter", ifNotEditing(() => this.openFocused()));
+    scope.register([], "d", ifNotEditing(() => void this.markFocusedDone()));
+    scope.register([], "r", ifNotEditing(() => void this.state.refresh()));
   }
 
   private setFilter(filter: Filter): void {
@@ -620,15 +631,26 @@ export class OakAgendaView extends ItemView {
       return;
     }
     void this.openFile(file, { newTab: false });
-    window.setTimeout(() => {
+    void this.placeCursorOnEntry(item.entry.line);
+  }
+
+  // Place the editor caret on the heading line of the just-opened
+  // entry. The MarkdownView may not be mounted on the same tick that
+  // openFile resolves (Obsidian sometimes defers leaf rendering),
+  // so we poll briefly before giving up.
+  private async placeCursorOnEntry(entryLine: number): Promise<void> {
+    const targetLine = Math.max(0, entryLine - 1);
+    for (let attempt = 0; attempt < 10; attempt++) {
       const leaf = this.app2.workspace.getMostRecentLeaf();
       const view = leaf?.view as unknown as {
         editor?: { setCursor: (pos: { line: number; ch: number }) => void };
       };
       if (view?.editor) {
-        view.editor.setCursor({ line: Math.max(0, item.entry.line - 1), ch: 0 });
+        view.editor.setCursor({ line: targetLine, ch: 0 });
+        return;
       }
-    }, 60);
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    }
   }
 
   private async markFocusedDone(): Promise<void> {
@@ -660,4 +682,15 @@ export class OakAgendaView extends ItemView {
 
 function itemKey(item: AgendaItem): string {
   return `${item.entry.relPath}:${item.entry.line}:${item.date ?? ""}:${item.marker ?? ""}`;
+}
+
+// True when the currently focused element accepts text input. Used to
+// gate agenda keybindings so typing into the Find box doesn't trigger
+// `d` (mark DONE) etc. as a side effect.
+function isEditableFocused(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
