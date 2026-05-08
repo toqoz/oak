@@ -117,6 +117,283 @@ body.oak-mode-active .clickable-icon.oak-search-button:disabled:hover {
   cursor: default;
 }
 
+/* Pad every oak-mode view-header inline by 4rem so the chrome
+   (back/forward, custom nav, scratch link, scratch row) lines up
+   with the editor body's 4rem horizontal gutter. The vertical
+   geometry stays Obsidian's default. `position: relative`
+   establishes a positioning context for the absolutely-positioned
+   centered view title overlay below. */
+body.oak-mode-active .view-header {
+  padding-inline: 4rem !important;
+  position: relative;
+}
+
+/* Force a single icon size on every `.clickable-icon` inside an
+   oak-mode view-header — back/forward, the custom home/agenda/
+   search nav cluster, the right-edge scratch link, and the scratch
+   row chrome (clear/history/close). Obsidian otherwise leaves
+   `--icon-size` to context-specific overrides which, with our
+   buttons living in three different parents (view-header-left, the
+   bare view-header, and the .oak-row-scratch grid), produced subtly
+   inconsistent glyph dimensions. */
+body.oak-mode-active .view-header .clickable-icon {
+  --icon-size: var(--icon-size-m, 18px);
+}
+
+/* Centered view title — a static label parked in the dead center
+   of the view-header bar so its position doesn't drift with the
+   body content or with flanking chrome (back/forward on the left,
+   scratch link on the right). Applies to oak-home / oak-agenda /
+   oak-search. Markdown leaves are left untouched: their inline
+   title row inside the editor preserves the plain-text feel of
+   a note, and scratch already carries its own title in the
+   view-header via the scratch row. `pointer-events: none` so
+   clicks fall through to whatever sits beneath. */
+body.oak-mode-active .oak-view-title {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: var(--font-ui-small, 13px);
+  font-weight: 600;
+  color: var(--text-normal);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* The body-level h1 on oak views is now redundant with the
+   centered view-header title — hide it. Other body chrome (stats,
+   sections, agenda action row, etc.) stays. */
+body.oak-mode-active .oak-home-header > h1,
+body.oak-mode-active .oak-agenda-titlerow > .oak-agenda-title {
+  display: none;
+}
+
+/* Scratch entry point — `line-squiggle` icon button at the right
+   edge of every view-header. Standard `.clickable-icon` chrome
+   (size, hover, padding, focus ring) is inherited so the button
+   matches the back/forward + home/agenda/search nav cluster on the
+   left; we only add `margin-left: auto` to push it past the
+   natural-width left chrome and the accent tint when a scratch
+   leaf is open elsewhere in the workspace. */
+body.oak-mode-active .view-header > .oak-scratch-link {
+  margin-left: auto;
+}
+body.oak-mode-active .view-header > .oak-scratch-link.is-active {
+  color: var(--text-accent);
+}
+
+/* Scratch leaf — hide both the per-pane tab strip and the view
+   header (back/forward + nav buttons + scratch link) so the bottom
+   split reads as a flush "scratch buffer" surface rather than a
+   tabbed editor. The `*scratch*` heading injected into the title
+   row + the `*scratch*` link in every other pane's header are
+   enough identity; the chrome on the scratch pane itself is just
+   noise. Closing scratch happens via the link in another pane's
+   header (toggle) or the "Toggle scratch" command. `:has()` selects
+   the workspace tab group that contains the scratch leaf. */
+body.oak-mode-active
+  .workspace-tabs:has(.oak-leaf-scratch)
+  > .workspace-tab-header-container {
+  display: none !important;
+}
+/* Suppress the standard view-header chrome on the scratch pane
+   (back/forward, title, actions, the right-edge `Scratch` link)
+   so the bar is left empty for the custom scratch row injected
+   into it. The view-header itself stays visible — the row needs
+   somewhere to land. */
+body.oak-mode-active .oak-leaf-scratch .view-header > .view-header-left,
+body.oak-mode-active .oak-leaf-scratch .view-header > .view-header-title-container,
+body.oak-mode-active .oak-leaf-scratch .view-header > .view-actions,
+body.oak-mode-active .oak-leaf-scratch .view-header > .oak-scratch-link {
+  display: none !important;
+}
+/* Center the scratch chrome within the view-header height.
+   Inline padding is handled by the general `.view-header` rule
+   above (4rem) so the row aligns with the editor body gutter. */
+body.oak-mode-active .oak-leaf-scratch .view-header {
+  align-items: center !important;
+}
+
+/* Static heading rendered inside the scratch title row (in place of
+   the editable input + visibility selector used on regular oak
+   pages). Sized to the standard view-header title (`--font-ui-small`)
+   since the row now lives in the view-header. `flex: 0 0 auto` so
+   the heading takes only its natural width — the inline sub-action
+   chrome (clear text link, history icon) sits right next to the
+   title instead of being pushed to the row's far edge. */
+body.oak-mode-active .oak-scratch-page-title {
+  flex: 0 0 auto;
+  display: block;
+  margin: 0;
+  padding: 0;
+  font-size: var(--font-ui-small, 13px);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-normal);
+  font-family: inherit;
+  user-select: text;
+}
+
+/* Left actions cluster (clear / history). Lives at the row's
+   leading edge so the chrome reads as actions-left, title-center,
+   close-right. */
+body.oak-mode-active .oak-scratch-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Center wrapper — currently just the `Scratch` heading. Kept as
+   a flex group so future siblings (e.g. an unsaved indicator dot)
+   sit on the heading baseline without restructuring the markup. */
+body.oak-mode-active .oak-scratch-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-width: 0;
+}
+
+/* Scratch row icon buttons (clear, history, close) all use the
+   stock `.clickable-icon` chrome — same size, hover, padding,
+   focus ring as the back/forward + home/agenda/search nav buttons
+   elsewhere in the view-header. The only scratch-specific tweak
+   is `margin-left: auto` on close so it lands at the row's
+   trailing edge (past the natural-width title group on the left). */
+body.oak-mode-active button.oak-scratch-close {
+  margin-left: auto;
+}
+
+/* Scratch history modal — list of backup timestamps on top, plain-
+   text preview of the selected backup below, copy / restore actions
+   at the bottom. Sized generously since users will scan multi-line
+   buffer contents in the preview. Not gated on `oak-mode-active`
+   because the modal renders on `body`, outside the leaf containers. */
+.oak-scratch-history-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Stretch to the modal-content's available width and clamp to a
+     comfortable max — `min-width` would push the inner content past
+     the modal-content's padding box and trigger overflow-x. */
+  width: 100%;
+  max-width: 640px;
+  box-sizing: border-box;
+}
+.oak-scratch-history-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+}
+.oak-scratch-history-empty {
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.oak-scratch-history-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-family: var(--font-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-normal);
+  outline: 0;
+}
+.oak-scratch-history-item:hover {
+  background: var(--background-modifier-hover);
+}
+.oak-scratch-history-item.is-selected {
+  background: var(--background-secondary);
+  color: var(--text-accent);
+}
+.oak-scratch-history-item:focus-visible {
+  outline: 1px solid var(--text-accent);
+  outline-offset: -1px;
+}
+.oak-scratch-history-preview {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  min-height: 160px;
+  max-height: 320px;
+  overflow: auto;
+}
+.oak-scratch-history-preview.is-empty {
+  min-height: 60px;
+}
+pre.oak-scratch-history-content {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--font-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.oak-scratch-history-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+button.oak-scratch-history-action {
+  padding: 4px 14px;
+}
+button.oak-scratch-history-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Scratch row sits inside the view-header (as a flex child), not
+   absolutely positioned over the cm-scroller like the editable
+   title row on regular oak pages. Override the absolute geometry
+   inherited from `.oak-page-title-row`. Inline padding is supplied
+   by the view-header itself (4rem, matching the editor body
+   gutter), so the row needs no padding of its own.
+   3-column grid (1fr / auto / 1fr) parks the title group dead-center
+   regardless of its width and pins the close button to the row's
+   trailing edge — same centering convention as `.oak-view-title`
+   on the other oak views. */
+body.oak-mode-active .oak-page-title-row.oak-row-scratch {
+  position: static;
+  flex: 1 1 auto;
+  background: transparent;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0;
+}
+body.oak-mode-active .oak-row-scratch > .oak-scratch-actions {
+  grid-column: 1;
+  justify-self: start;
+}
+body.oak-mode-active .oak-row-scratch > .oak-scratch-title-group {
+  grid-column: 2;
+  justify-self: center;
+}
+body.oak-mode-active .oak-row-scratch > button.oak-scratch-close {
+  grid-column: 3;
+  justify-self: end;
+  margin-left: 0;
+}
+
+/* Tighten the gap between the view-header bar and the first line
+   of the scratch buffer. The dominant contributor is the
+   `.cm-scroller` rule that wraps the editor in `var(--file-margins)`
+   on every side — that comfort margin is appropriate when the
+   editor sits flush at the top of a leaf, but here the view-header
+   already provides the chrome separation. Zero out the top side
+   for scratch (the inline gutter is already zeroed by the
+   global oak rule, and the bottom side stays for trailing
+   breathing room). `.cm-content` keeps its default 2em padding-top
+   so the cursor still has a touch of breathing room below the bar. */
+body.oak-mode-active .oak-leaf-scratch .cm-scroller {
+  padding-block-start: 0 !important;
+}
+
 /* "Related" footer — sits *inside* the scroll container (alongside
    `.cm-content` for source / live-preview, alongside
    `.markdown-preview-section` for reading mode), so the cards

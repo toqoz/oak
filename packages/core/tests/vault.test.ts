@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 import { parseVault } from "../src/parse.js";
 import {
@@ -111,6 +113,35 @@ describe("aliases fixture", () => {
       .filter((x): x is string => x !== null);
     expect(resolved.every((id) => id === alexBrandon)).toBe(true);
     expect(resolved).toHaveLength(2);
+  });
+});
+
+describe("system root files", () => {
+  let scratchDir: string;
+  beforeEach(async () => {
+    scratchDir = await mkdtemp(resolve(tmpdir(), "oak-vault-"));
+  });
+  afterEach(async () => {
+    await rm(scratchDir, { recursive: true, force: true });
+  });
+
+  it("excludes vault-root scratch.md from the indexed surface", async () => {
+    await writeFile(
+      resolve(scratchDir, "real.md"),
+      "---\ntitle: Real\nvisibility: private\n---\nbody\n",
+      "utf8",
+    );
+    await writeFile(
+      resolve(scratchDir, "scratch.md"),
+      "# *scratch*\n\nephemeral\n",
+      "utf8",
+    );
+    const vault = await parseVault(scratchDir);
+    const titles = [...vault.pages.values()].map((p) => p.title);
+    expect(titles).toContain("Real");
+    expect(titles).not.toContain("*scratch*");
+    const paths = [...vault.pages.values()].map((p) => p.relPath);
+    expect(paths).not.toContain("scratch.md");
   });
 });
 
