@@ -138,15 +138,26 @@ uses, so a concurrent external edit surfaces as a conflict instead of
 silently clobbering changes.
 
 After a cross-file refile, the destination opens in a horizontal split
-below the source leaf and scrolls to the moved heading. Focus stays on
-the source caret, mirroring emacs `org-refile` so a follow-up refile
-on the next sibling can run immediately. The peek pane is reused for
-subsequent refiles instead of stacking new splits. Standard tab and
-view-header navigation are hidden in the peek pane (same treatment
-as the scratch buffer); a single × button on the trailing edge of the
-view-header detaches the peek without disturbing the source. Same-file
-refiles skip the peek — the source view is already showing the updated
-buffer.
+below the source leaf, scrolls to the moved heading, and takes focus —
+the user lands at the destination ready to inspect or edit. The source
+pane fades to half opacity while the peek is focused so the peek reads
+as the active surface. Standard tab and view-header navigation are
+hidden in the peek (same treatment as the scratch buffer); a single ×
+button on the trailing edge of the view-header detaches it.
+
+Peek dismissal behaves like a transient inspection panel:
+
+- Press `Esc` while the peek has focus to detach it.
+- Move focus back to another main-pane leaf (e.g. click the source
+  pane) and the peek detaches automatically. Sidebar focus changes
+  do not dismiss it — clicking the file explorer leaves the peek
+  alone.
+- Esc inside an `<input>` / `<textarea>` (e.g. the editable title
+  row) is left alone — the input owns that key for its own
+  commit-or-cancel handling.
+
+Same-file refiles skip the peek — the source view is already showing
+the updated buffer.
 
 ## DONE behavior (`d`)
 

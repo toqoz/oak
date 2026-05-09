@@ -427,6 +427,22 @@ body.oak-mode-active .oak-page-title-row.oak-row-refile-peek {
    reserves the room that title needs — don't zero it out the way we
    do for scratch, or the title overlaps the first body line. */
 
+/* While the peek pane is the active main-pane leaf, fade the rest of
+   the main pane so the peek reads as the focused surface. Sidebar
+   panes are intentionally left at full opacity — they remain
+   navigable while the peek is up. The `:not(:has(...))` filter pins
+   the dim to leaves outside the peek. The transition applies to all
+   main-pane leaves so the source fades in/out smoothly when peek
+   focus toggles. */
+body.oak-mode-active .workspace-split.mod-root .workspace-leaf {
+  transition: opacity 0.12s ease;
+}
+body.oak-mode-active.oak-refile-peek-active
+  .workspace-split.mod-root
+  .workspace-leaf:not(:has(.oak-leaf-refile-peek)) {
+  opacity: 0.5;
+}
+
 /* "Related" footer — sits *inside* the scroll container (alongside
    `.cm-content` for source / live-preview, alongside
    `.markdown-preview-section` for reading mode), so the cards

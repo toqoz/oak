@@ -85,6 +85,12 @@ export default class OakPlugin extends Plugin {
   // source so a follow-up refile can run immediately, and the peek
   // pane updates in place instead of stacking new splits.
   private refilePeekLeaf: WorkspaceLeaf | null = null;
+  // Tracks whether the user has actually focused the peek pane at
+  // least once. We only auto-close on focus-leave once the user has
+  // engaged with the peek — otherwise the peek would dismiss itself
+  // immediately on creation (the source leaf retains focus by
+  // design).
+  private refilePeekEngaged = false;
   // When the user picks "Show default menu" from the oak context
   // menu, we re-dispatch a fresh `contextmenu` event so Obsidian's
   // own handler runs and shows the native menu. This flag tells our
@@ -172,10 +178,11 @@ export default class OakPlugin extends Plugin {
       this.app.vault.on("rename", () => this.state.scheduleRefresh()),
     );
     this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => {
+      this.app.workspace.on("active-leaf-change", (newLeaf) => {
         const file = this.app.workspace.getActiveFile();
         const tfile = file instanceof TFile ? file : null;
         this.sidebarRef?.setActiveFile(tfile);
+        this.handleActiveLeafChangeForPeek(newLeaf);
       }),
     );
     // Mode is defined by oak-leaf presence: any layout change re-syncs
@@ -1748,7 +1755,6 @@ export default class OakPlugin extends Plugin {
     file: TFile,
     fileLine: number | null,
   ): Promise<void> {
-    const sourceLeaf = this.app.workspace.activeLeaf;
     const openState =
       fileLine !== null ? { eState: { line: fileLine } } : undefined;
 
@@ -1756,7 +1762,7 @@ export default class OakPlugin extends Plugin {
     if (this.refilePeekLeaf && this.isLeafAlive(this.refilePeekLeaf)) {
       leaf = this.refilePeekLeaf;
     } else {
-      const base = sourceLeaf ?? this.currentMainLeaf();
+      const base = this.app.workspace.activeLeaf ?? this.currentMainLeaf();
       leaf = this.app.workspace.createLeafBySplit(base, "horizontal", false);
       this.refilePeekLeaf = leaf;
     }
@@ -1776,27 +1782,103 @@ export default class OakPlugin extends Plugin {
     // would do this too, but running it synchronously avoids a
     // single-frame flash of the standard tab + view-header chrome.
     this.applyTitleOverrides();
-    // Don't reveal/focus the peek pane — emacs `org-refile` leaves the
-    // caret at the source so the user can keep processing the next
-    // sibling without an extra navigation step. Restore focus
-    // explicitly because `openFile` on a non-active leaf would
-    // otherwise silently activate it.
-    if (sourceLeaf && this.isLeafAlive(sourceLeaf) && sourceLeaf !== leaf) {
-      this.app.workspace.setActiveLeaf(sourceLeaf, { focus: true });
-    }
+    // Each `openFile` recreates the leaf's content DOM, so re-bind
+    // the Esc-to-close handler against the fresh container. (The
+    // helper is idempotent — it removes any prior binding before
+    // attaching a new one.)
+    this.bindRefilePeekEscape(leaf);
+    // Move focus to the peek so the user lands on the destination
+    // ready to inspect / edit. The active-leaf-change handler fired
+    // by this `setActiveLeaf` flips `refilePeekEngaged` to true and
+    // turns the dim class on, so the next focus shift back to a
+    // main-pane leaf auto-detaches the peek (transient-panel feel).
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
   }
 
   // Detach the peek leaf, if any, and forget the reference so the next
   // refile creates a fresh split. Wired to the × button injected into
-  // the peek pane's view-header.
+  // the peek pane's view-header, the auto-close on focus-leave, and
+  // the Esc-key binding inside the peek.
   closeRefilePeek(): void {
     const leaf = this.refilePeekLeaf;
     this.refilePeekLeaf = null;
+    this.refilePeekEngaged = false;
+    document.body.classList.remove("oak-refile-peek-active");
     if (this.settings.refilePeekLeafId !== null) {
       this.settings.refilePeekLeafId = null;
       void this.saveSettings();
     }
     if (leaf && this.isLeafAlive(leaf)) leaf.detach();
+  }
+
+  // active-leaf-change hook for the peek pane:
+  //   - `mod-active` on the peek leaf flips the body dim class on so
+  //     the source pane fades while the peek is in focus.
+  //   - Once the user has actually engaged with the peek (focused it
+  //     at least once), the *next* main-pane focus shift away from
+  //     the peek detaches it — emulating a transient floating panel.
+  //     Sidebar focus changes are ignored so clicking the file
+  //     explorer doesn't dismiss the peek.
+  private handleActiveLeafChangeForPeek(
+    newLeaf: WorkspaceLeaf | null,
+  ): void {
+    const peek = this.refilePeekLeaf;
+    if (!peek || !this.isLeafAlive(peek)) {
+      this.refilePeekEngaged = false;
+      document.body.classList.remove("oak-refile-peek-active");
+      return;
+    }
+    if (newLeaf === peek) {
+      this.refilePeekEngaged = true;
+      document.body.classList.add("oak-refile-peek-active");
+      return;
+    }
+    document.body.classList.remove("oak-refile-peek-active");
+    if (!this.refilePeekEngaged) return;
+    if (newLeaf && this.isMainPaneLeaf(newLeaf)) {
+      this.closeRefilePeek();
+    }
+  }
+
+  private isMainPaneLeaf(leaf: WorkspaceLeaf): boolean {
+    const root = (
+      leaf as unknown as { getRoot?: () => unknown }
+    ).getRoot?.();
+    return root === this.app.workspace.rootSplit;
+  }
+
+  // Capture-phase Esc handler scoped to the peek leaf's container.
+  // Capture so it wins over Obsidian's own Esc bindings (which would
+  // otherwise close suggestion menus / clear selection inside the
+  // editor before our handler ever sees the key). Stored on the DOM
+  // node so a later openFile (which rebuilds the container) replaces
+  // a stale handler instead of stacking.
+  private bindRefilePeekEscape(leaf: WorkspaceLeaf): void {
+    const container = (
+      leaf.view as { containerEl?: HTMLElement }
+    ).containerEl;
+    if (!container) return;
+    type Slot = { __oakPeekEsc?: (ev: KeyboardEvent) => void };
+    const slot = container as unknown as Slot;
+    if (slot.__oakPeekEsc) {
+      container.removeEventListener("keydown", slot.__oakPeekEsc, true);
+    }
+    const handler = (ev: KeyboardEvent): void => {
+      if (ev.key !== "Escape") return;
+      // Let `<input>` / `<textarea>` swallow Esc themselves so the
+      // editable title input retains its commit-or-cancel behaviour
+      // (Esc inside the input would otherwise dismiss the peek
+      // before the input could process the keystroke).
+      const target = ev.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.closeRefilePeek();
+    };
+    container.addEventListener("keydown", handler, true);
+    slot.__oakPeekEsc = handler;
   }
 
   // Re-bind `this.refilePeekLeaf` from the persisted id after Obsidian
@@ -1814,6 +1896,9 @@ export default class OakPlugin extends Plugin {
     });
     if (found) {
       this.refilePeekLeaf = found;
+      // Re-attach the Esc handler since the DOM was rebuilt by
+      // Obsidian when restoring the workspace.
+      this.bindRefilePeekEscape(found);
     } else {
       this.settings.refilePeekLeafId = null;
       void this.saveSettings();
