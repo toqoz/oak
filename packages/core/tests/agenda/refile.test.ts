@@ -228,15 +228,19 @@ describe("refile (same-file)", () => {
     ).rejects.toMatchObject({ code: "level-overflow" });
   });
 
-  it("refiles to top-of-file by appending and clamping to level 1", async () => {
+  it("refiles to top-of-file at the default root level (2)", async () => {
+    // oak's body convention starts at `##`, so the default
+    // `refileTopOfFileLevel` is 2: a top-of-file refile leaves a
+    // level-2 source heading at level 2 (no shift) instead of clamping
+    // to `# `.
     const fp = join(dir, "tof.md");
     writeFileSync(
       fp,
       [
-        "# A",
-        "## TODO move me",
+        "## A",
+        "### TODO move me",
         "body",
-        "## B",
+        "### B",
         "tail",
       ].join("\n"),
       "utf8",
@@ -251,6 +255,47 @@ describe("refile (same-file)", () => {
     );
     expect(readFileSync(fp, "utf8")).toBe(
       [
+        "## A",
+        "### B",
+        "tail",
+        "",
+        "## TODO move me",
+        "body",
+      ].join("\n"),
+    );
+    // Top-of-file landing: heading at body line 5 (1-based).
+    expect(result.insertedBodyLine).toBe(5);
+  });
+
+  it("honors `refileTopOfFileLevel: 1` for emacs org-refile parity", async () => {
+    // Users on the emacs convention (top-of-file refile clamps to a
+    // level-1 heading) override the default with `1`.
+    const fp = join(dir, "tof-l1.md");
+    writeFileSync(
+      fp,
+      [
+        "# A",
+        "## TODO move me",
+        "body",
+        "## B",
+        "tail",
+      ].join("\n"),
+      "utf8",
+    );
+    const config = {
+      ...DEFAULT_AGENDA_CONFIG,
+      refileTopOfFileLevel: 1,
+    };
+    const page = makePage(fp, readFileSync(fp, "utf8"));
+    const [src] = parseAgendaPage(page, config);
+    await refile(
+      fp,
+      { kind: "entry", entryId: src!.entryId },
+      { filePath: fp, relPath: fp, line: null, level: 0 },
+      config,
+    );
+    expect(readFileSync(fp, "utf8")).toBe(
+      [
         "# A",
         "## B",
         "tail",
@@ -259,8 +304,6 @@ describe("refile (same-file)", () => {
         "body",
       ].join("\n"),
     );
-    // Top-of-file landing: heading at body line 5 (1-based).
-    expect(result.insertedBodyLine).toBe(5);
   });
 });
 

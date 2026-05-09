@@ -221,6 +221,7 @@ agendaFilesExclude: []
 weekStartsOn: 1              # 0 = Sun, 1 = Mon
 priorities: { highest: A, lowest: C, default: B }
 skipDeadlinePrewarningIfScheduled: pre-scheduled  # false | true | pre-scheduled
+refileTopOfFileLevel: 2      # heading level for top-of-file refile (1..6)
 ```
 
 `agendaFiles` / `agendaFilesExclude` accept a list of paths relative
@@ -237,5 +238,10 @@ Globs (`*`, `**`) are not supported.
 `priorities.default` is the priority used for sort comparison when an
 entry has no explicit `[#X]` — set it to the same letter you reach
 for most often so unprioritized items rank with their natural cohort.
+
+`refileTopOfFileLevel` is the heading level (1..6) the source heading
+becomes when refiled to "(top of file)". Defaults to `2` because oak's
+body convention starts at `##`; users on the emacs `org-refile`
+clamp-to-level-1 convention can set it to `1`.
 
 Edits to this file are picked up on the next vault refresh (`r`).

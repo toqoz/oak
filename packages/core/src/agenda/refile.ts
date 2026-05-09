@@ -632,8 +632,14 @@ export async function refile(
     }
   }
 
-  // Compute level shift: source heading should become level (target.level + 1).
-  const newSourceLevel = target.level + 1;
+  // Compute level shift. For an in-file target the source becomes a
+  // direct child of the target heading (target.level + 1). For a
+  // "top of file" target there *is* no parent, so we fall back to the
+  // configured root level — defaults to `2` (oak's body convention
+  // starts at `##`); users on the emacs org-refile clamp-to-level-1
+  // convention can set `refileTopOfFileLevel: 1`.
+  const newSourceLevel =
+    target.line === null ? config.refileTopOfFileLevel : target.level + 1;
   const delta = newSourceLevel - sourceLevel;
   const shifted = subtree.slice();
   if (!shiftHeadingLevels(shifted, delta)) {
