@@ -583,6 +583,99 @@ describe("refile (multi-source target line tracking)", () => {
     );
   });
 
+  it("strips the orphan leading blank when refiling the first heading of a file", async () => {
+    // Reported case: cutting the top heading left the separator
+    // blank line behind as a leading blank in the source.
+    const srcFp = join(dir, "topcut-src.md");
+    const tgtFp = join(dir, "topcut-tgt.md");
+    writeFileSync(
+      srcFp,
+      [
+        "## t1",
+        "",
+        "body1",
+        "",
+        "## t2",
+        "",
+        "body2",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(tgtFp, "# Dest\n", "utf8");
+    await refile(
+      srcFp,
+      { kind: "heading", line: 1, level: 2 },
+      { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(readFileSync(srcFp, "utf8")).toBe(
+      ["## t2", "", "body2"].join("\n"),
+    );
+  });
+
+  it("collapses the boundary so cutting a middle heading leaves one blank, not two", async () => {
+    // Reported case: "text\n\n## TODO s1\n\n## TODO s2" → after
+    // refiling s1, the blank that sat before s1 *and* the blank that
+    // sat after it both survived in the cut body, leaving a double
+    // blank before s2.
+    const srcFp = join(dir, "midcut-src.md");
+    const tgtFp = join(dir, "midcut-tgt.md");
+    writeFileSync(
+      srcFp,
+      [
+        "text",
+        "",
+        "## TODO s1",
+        "",
+        "## TODO s2",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(tgtFp, "# Dest\n", "utf8");
+    await refile(
+      srcFp,
+      { kind: "heading", line: 3, level: 2 },
+      { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(readFileSync(srcFp, "utf8")).toBe(
+      ["text", "", "## TODO s2"].join("\n"),
+    );
+  });
+
+  it("strips the orphan leading blank for a same-file top-heading refile", async () => {
+    const fp = join(dir, "topcut-same.md");
+    writeFileSync(
+      fp,
+      [
+        "## t1",
+        "body1",
+        "",
+        "# Dest",
+        "dest body",
+      ].join("\n"),
+      "utf8",
+    );
+    await refile(
+      fp,
+      { kind: "heading", line: 1, level: 2 },
+      { filePath: fp, relPath: fp, line: 4, level: 1 },
+      DEFAULT_AGENDA_CONFIG,
+    );
+    // Pre-fix the source kept the orphan blank that previously sat
+    // between t1 and # Dest. The blank now drops; t1's subtree lands
+    // under # Dest.
+    expect(readFileSync(fp, "utf8")).toBe(
+      [
+        "# Dest",
+        "dest body",
+        "",
+        "## t1",
+        "body1",
+      ].join("\n"),
+    );
+  });
+
   it("targetLineAfter equals targetLine when the target sits above the cut", async () => {
     const fp = join(dir, "above.md");
     writeFileSync(

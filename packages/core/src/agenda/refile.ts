@@ -386,6 +386,54 @@ function shiftHeadingLevels(lines: string[], delta: number): boolean {
   return true;
 }
 
+// Cut [range.start, range.end) out of `lines`, then clean up the two
+// kinds of blank-line debris that the trim in `subtreeRange` (which
+// keeps a trailing blank in the source as a sibling separator) leaves
+// behind:
+//
+//   - Top-of-file cuts (range.start === 0) have no "previous heading"
+//     to separate from, so the kept blank becomes an orphan leading
+//     blank in the new body.
+//
+//   - Mid-file cuts can leave the boundary with two consecutive
+//     blanks: the separator that *preceded* the cut subtree and the
+//     separator that *followed* it. With the subtree gone, both
+//     separators end up adjacent and read as a stray paragraph break.
+//
+// Returns the cleaned lines plus how many blanks each cleanup removed
+// — same-file callers fold those counts into their target-line
+// arithmetic so the post-write line numbering still lines up.
+function cutWithBlankCleanup(
+  lines: string[],
+  range: { start: number; end: number },
+): { lines: string[]; leadingStripped: number; boundaryStripped: number } {
+  const before = lines.slice(0, range.start);
+  const after = lines.slice(range.end);
+
+  let boundaryStripped = 0;
+  if (
+    before.length > 0 &&
+    after.length > 0 &&
+    before[before.length - 1]!.trim().length === 0 &&
+    after[0]!.trim().length === 0
+  ) {
+    after.shift();
+    boundaryStripped = 1;
+  }
+
+  const merged = [...before, ...after];
+
+  let leadingStripped = 0;
+  if (range.start === 0) {
+    while (merged.length > 0 && merged[0]!.trim().length === 0) {
+      merged.shift();
+      leadingStripped += 1;
+    }
+  }
+
+  return { lines: merged, leadingStripped, boundaryStripped };
+}
+
 // Trim trailing empty lines from `subtree` and ensure exactly one
 // blank-line separator between the existing body up to `insertAt` and
 // the inserted block. Returns the new lines array along with the
@@ -598,10 +646,10 @@ export async function refile(
   if (sameFile) {
     // Cut subtree, then insert into the post-cut body. Insertion index
     // must be recomputed against the post-cut line numbering.
-    const cutBodyLines = [
-      ...sourceBodyLines.slice(0, range.start),
-      ...sourceBodyLines.slice(range.end),
-    ];
+    const cut = cutWithBlankCleanup(sourceBodyLines, range);
+    const cutBodyLines = cut.lines;
+    const leadingStripped = cut.leadingStripped;
+    const boundaryStripped = cut.boundaryStripped;
     let insertBodyLine: number;
     if (target.line === null) {
       insertBodyLine = cutBodyLines.length;
@@ -610,7 +658,10 @@ export async function refile(
       // descendant targets, target.line never falls inside [start,end).
       const adjusted =
         target.line > range.end
-          ? target.line - (range.end - range.start)
+          ? target.line -
+            (range.end - range.start) -
+            leadingStripped -
+            boundaryStripped
           : target.line;
       const cutBody = cutBodyLines.join("\n");
       insertBodyLine = insertionRangeForTarget(cutBody, adjusted, target.level);
@@ -622,10 +673,15 @@ export async function refile(
     // Same-file: cutting [range.start, range.end) shifts every later
     // line up by the cut size. The insertion happens *after* the
     // target heading, so the target line itself moves only when it
-    // sat below the cut.
+    // sat below the cut. The orphan-blank strip and boundary collapse
+    // each apply the same kind of shift whenever they ran.
     let targetLineAfter: number | null = target.line;
     if (target.line !== null && target.line - 1 >= range.end) {
-      targetLineAfter = target.line - (range.end - range.start);
+      targetLineAfter =
+        target.line -
+        (range.end - range.start) -
+        leadingStripped -
+        boundaryStripped;
     }
     return {
       sourceRelPath: srcRelPath,
@@ -654,10 +710,10 @@ export async function refile(
   const updatedTgt = replaceBody(tgt.raw, mergedTgt.lines.join("\n"));
   await atomicWrite(tgt.resolved, updatedTgt, tgt.mtimeMs, tgt.mode);
 
-  const cutSrcBodyLines = [
-    ...sourceBodyLines.slice(0, range.start),
-    ...sourceBodyLines.slice(range.end),
-  ];
+  const { lines: cutSrcBodyLines } = cutWithBlankCleanup(
+    sourceBodyLines,
+    range,
+  );
   const updatedSrc = replaceBody(src.raw, cutSrcBodyLines.join("\n"));
   await atomicWrite(src.resolved, updatedSrc, src.mtimeMs, src.mode);
 
