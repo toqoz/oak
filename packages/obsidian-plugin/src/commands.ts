@@ -18,6 +18,7 @@ import {
   checkpoint,
   composePage,
   findEnclosingHeading,
+  findHeadingsInRange,
   frontmatterLineCount,
   parseVault,
   partitionIssues,
@@ -36,7 +37,7 @@ import {
 } from "./paths.js";
 import { findWikiTargetInLine } from "./wiki-cursor.js";
 import { extractFromSelection } from "./extract-selection.js";
-import { refileHeading } from "./refile.js";
+import { refileHeading, refileHeadings } from "./refile.js";
 
 const VISIBILITIES: Visibility[] = ["private", "unlisted", "public"];
 
@@ -759,14 +760,60 @@ export function findHeadingAtCursor(
   return findEnclosingHeading(body, cursorBodyLine);
 }
 
+// Top-level headings whose subtree intersects the editor selection
+// (file lines, 0-based — Obsidian convention). Returns an empty list
+// when the selection sits entirely in frontmatter or contains no
+// heading subtree.
+export function findHeadingsInEditorSelection(
+  raw: string,
+  fromFileLine: number,
+  toFileLine: number,
+): { line: number; level: number; title: string }[] {
+  const fmLines = frontmatterLineCount(raw);
+  const fromBody = fromFileLine - fmLines + 1;
+  const toBody = toFileLine - fmLines + 1;
+  if (toBody < 1) return [];
+  const body = raw.split("\n").slice(fmLines).join("\n");
+  return findHeadingsInRange(body, Math.max(1, fromBody), toBody);
+}
+
 export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
   const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
   if (!view || !view.file) {
     new Notice("oak: open a markdown file first");
     return;
   }
-  const cursor = view.editor.getCursor();
+  const editor = view.editor;
   const raw = await plugin.app.vault.cachedRead(view.file);
+  const filePath = `${vaultRoot(plugin.app)}/${view.file.path}`;
+  const relPath = view.file.path;
+
+  // Multi-section path: when the user has a non-empty selection that
+  // spans two or more headings' subtrees, refile all of them to one
+  // user-picked destination. A 0- or 1-heading selection falls back
+  // to the cursor-based single-heading flow so a casual selection of
+  // a body line still does the obvious thing.
+  if (editor.somethingSelected()) {
+    const from = editor.getCursor("from");
+    const to = editor.getCursor("to");
+    const headings = findHeadingsInEditorSelection(raw, from.line, to.line);
+    if (headings.length >= 2) {
+      await refileHeadings(
+        plugin,
+        headings.map((h) => ({
+          filePath,
+          relPath,
+          line: h.line,
+          level: h.level,
+          title: h.title,
+        })),
+        plugin.agendaConfig,
+      );
+      return;
+    }
+  }
+
+  const cursor = editor.getCursor();
   const heading = findHeadingAtCursor(raw, cursor.line);
   if (!heading) {
     new Notice("oak: place the cursor inside a heading to refile");
@@ -775,8 +822,8 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
   await refileHeading(
     plugin,
     {
-      filePath: `${vaultRoot(plugin.app)}/${view.file.path}`,
-      relPath: view.file.path,
+      filePath,
+      relPath,
       line: heading.line,
       level: heading.level,
       title: heading.title,

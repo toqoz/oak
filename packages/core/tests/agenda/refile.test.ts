@@ -14,6 +14,7 @@ import { parseAgendaPage } from "../../src/agenda/parse.js";
 import {
   collectRefileTargets,
   findEnclosingHeading,
+  findHeadingsInRange,
   refile,
   RefileError,
 } from "../../src/agenda/refile.js";
@@ -493,5 +494,114 @@ describe("findEnclosingHeading", () => {
     ].join("\n");
     expect(findEnclosingHeading(body, 3)).toMatchObject({ line: 1, level: 1 });
     expect(findEnclosingHeading(body, 5)).toMatchObject({ line: 1, level: 1 });
+  });
+});
+
+describe("findHeadingsInRange", () => {
+  const body = [
+    "## A",      // 1
+    "a body",    // 2
+    "### A1",    // 3
+    "### A2",    // 4
+    "## B",      // 5
+    "b body",    // 6
+    "## C",      // 7
+  ].join("\n");
+
+  it("returns top-level headings in range, dropping descendants", () => {
+    // Range [1, 5] covers A, A1, A2, B. A1/A2 are descendants of A
+    // and drop out — refiling A already takes them along.
+    expect(findHeadingsInRange(body, 1, 5).map((h) => h.line)).toEqual([1, 5]);
+  });
+
+  it("includes a heading whose subtree merely intersects the range", () => {
+    // Range [2, 2] (only A's body line). A's subtree intersects, A
+    // counts as in-range even though its heading line is at 1.
+    expect(findHeadingsInRange(body, 2, 2).map((h) => h.line)).toEqual([1]);
+  });
+
+  it("returns nothing when the range sits before the first heading", () => {
+    expect(findHeadingsInRange("preamble\nmore\n# H", 1, 2)).toEqual([]);
+  });
+
+  it("treats sibling headings of the same level as separate top-levels", () => {
+    expect(findHeadingsInRange(body, 5, 7).map((h) => h.line)).toEqual([5, 7]);
+  });
+});
+
+describe("refile (multi-source target line tracking)", () => {
+  it("targetLineAfter tracks shifts across a top-down multi-refile", async () => {
+    const fp = join(dir, "multi.md");
+    writeFileSync(
+      fp,
+      [
+        "## TODO foo", // 1
+        "foo body",    // 2
+        "## TODO bar", // 3
+        "bar body",    // 4
+        "# Dest",      // 5
+        "dest body",   // 6
+      ].join("\n"),
+      "utf8",
+    );
+    // Top-down: process the smaller-line source first. Each cut
+    // shifts the destination up by movedLines, and the next source's
+    // line drops by the cumulative cut so far.
+    const r1 = await refile(
+      fp,
+      { kind: "heading", line: 1, level: 2 }, // foo
+      { filePath: fp, relPath: fp, line: 5, level: 1 }, // # Dest
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(r1.targetLineAfter).toBe(3); // 5 - movedLines(2)
+    expect(r1.movedLines).toBe(2);
+
+    // bar was at body line 3; after foo's cut (size 2) it has slid to
+    // line 1. Pass that to the second refile, with the updated
+    // destination line.
+    const r2 = await refile(
+      fp,
+      { kind: "heading", line: 3 - r1.movedLines, level: 2 },
+      { filePath: fp, relPath: fp, line: r1.targetLineAfter!, level: 1 },
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(r2.targetLineAfter).toBe(1); // 3 - movedLines(2)
+    expect(r2.movedLines).toBe(2);
+
+    // Document-order preservation: foo lands first, bar second.
+    expect(readFileSync(fp, "utf8")).toBe(
+      [
+        "# Dest",
+        "dest body",
+        "",
+        "## TODO foo",
+        "foo body",
+        "",
+        "## TODO bar",
+        "bar body",
+      ].join("\n"),
+    );
+  });
+
+  it("targetLineAfter equals targetLine when the target sits above the cut", async () => {
+    const fp = join(dir, "above.md");
+    writeFileSync(
+      fp,
+      [
+        "# Dest",       // 1
+        "dest body",    // 2
+        "## TODO foo",  // 3
+        "foo body",     // 4
+      ].join("\n"),
+      "utf8",
+    );
+    const r = await refile(
+      fp,
+      { kind: "heading", line: 3, level: 2 },
+      { filePath: fp, relPath: fp, line: 1, level: 1 },
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(r.targetLine).toBe(1);
+    expect(r.targetLineAfter).toBe(1);
   });
 });

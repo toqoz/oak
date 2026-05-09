@@ -64,6 +64,7 @@ export type { MarkDoneResult } from "./writeback.js";
 export {
   collectRefileTargets,
   findEnclosingHeading,
+  findHeadingsInRange,
   refile,
   RefileError,
 } from "./refile.js";

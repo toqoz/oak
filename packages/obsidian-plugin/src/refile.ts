@@ -125,6 +125,123 @@ export type RefileSourceDescriptor = {
   entryId?: string;
 };
 
+// Refile every heading in `sources` to one user-picked destination.
+// Falls through to `refileHeading` when only one source is supplied so
+// the call site (editor command with selection) doesn't have to switch
+// shape based on how many headings the user grabbed. Sources are
+// processed bottom-up so cutting them out doesn't shift the line
+// numbers of the ones still pending; the target line is updated each
+// iteration via core's `targetLineAfter` so a same-file refile where
+// the destination sits below the sources still tracks correctly.
+export async function refileHeadings(
+  plugin: OakPlugin,
+  sources: RefileSourceDescriptor[],
+  config: AgendaConfig,
+): Promise<void> {
+  if (sources.length === 0) return;
+  if (sources.length === 1) {
+    await refileHeading(plugin, sources[0]!, config);
+    return;
+  }
+
+  const snap = plugin.state.current();
+  if (!snap) {
+    new Notice("oak: vault index not ready yet");
+    return;
+  }
+
+  // Exclude every selected source heading from the picker so the
+  // user can't choose one of them as the destination.
+  const sourceKeys = new Set(
+    sources.map((s) => `${s.relPath}:${s.line}`),
+  );
+  const targets = collectRefileTargets(snap.vault).filter((t) => {
+    if (t.line === null) return true;
+    return !sourceKeys.has(`${t.relPath}:${t.line}`);
+  });
+  if (targets.length === 0) {
+    new Notice("oak: no refile targets available");
+    return;
+  }
+
+  const placeholder = `${sources.length} sections`;
+  const target = await pickTarget(plugin.app, targets, placeholder);
+  if (!target) return;
+
+  // Top-down: smallest line number first. Each refile inserts at the
+  // end of the destination's subtree, so processing in document order
+  // makes the moved sections land in document order at the
+  // destination — bottom-up would reverse them. Top-down also requires
+  // tracking the cumulative cut size so subsequent source lines are
+  // adjusted (every prior refile sits above the current source and
+  // has shifted later lines up). Target line is tracked separately
+  // via core's `targetLineAfter`, which folds in same-file shifts.
+  const ordered = [...sources].sort((a, b) => a.line - b.line);
+  let currentTargetLine = target.line;
+  let cumulativeCut = 0;
+  let lastInsertedBodyLine: number | null = null;
+  let lastSameFile = false;
+  let success = 0;
+  let failureMessage: string | null = null;
+  for (const source of ordered) {
+    const adjustedLine = source.line - cumulativeCut;
+    try {
+      const result = await refile(
+        source.filePath,
+        source.entryId !== undefined
+          ? { kind: "entry", entryId: source.entryId }
+          : { kind: "heading", line: adjustedLine, level: source.level },
+        {
+          filePath: target.filePath,
+          relPath: target.relPath,
+          line: currentTargetLine,
+          level: target.level,
+        },
+        config,
+        source.relPath,
+      );
+      currentTargetLine = result.targetLineAfter;
+      lastInsertedBodyLine = result.insertedBodyLine;
+      lastSameFile = result.sameFile;
+      // Same-file cuts shift later source lines up; cross-file cuts
+      // also remove the same number of lines from the source file so
+      // the bookkeeping is identical.
+      cumulativeCut += result.movedLines;
+      success += 1;
+    } catch (err) {
+      failureMessage =
+        err instanceof RefileError
+          ? err.message
+          : (err as Error).message ?? "unknown error";
+      if (!(err instanceof RefileError)) {
+        console.error("oak: refile failed", err);
+      }
+      break;
+    }
+  }
+
+  if (success > 0) {
+    new Notice(
+      `Refiled ${success}/${sources.length} sections to ${target.relPath}` +
+        (failureMessage ? ` (stopped: ${failureMessage})` : ""),
+    );
+    plugin.state.scheduleRefresh();
+    if (!lastSameFile && lastInsertedBodyLine !== null) {
+      const targetFile = plugin.app.vault.getAbstractFileByPath(
+        target.relPath,
+      );
+      if (targetFile instanceof TFile) {
+        const targetRaw = await plugin.app.vault.cachedRead(targetFile);
+        const fileLine =
+          lastInsertedBodyLine - 1 + frontmatterLineCount(targetRaw);
+        await plugin.revealRefileTarget(targetFile, fileLine);
+      }
+    }
+  } else if (failureMessage) {
+    new Notice(`oak: refile — ${failureMessage}`);
+  }
+}
+
 // Run a refile against `source`. The caller is responsible for picking
 // the source — for the editor command that's the heading enclosing the
 // cursor; for the agenda view it's the focused row.

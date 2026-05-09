@@ -97,6 +97,13 @@ export type RefileResult = {
   sourceEntryId: string | null;
   targetRelPath: string;
   targetLine: number | null;
+  // 1-based body line of the target heading *after* the write — useful
+  // to multi-refile callers that loop over several sources hitting the
+  // same destination, since cutting a same-file source above the
+  // target shifts the target's line up. Equal to `targetLine` when no
+  // shift applies (cross-file, or same-file with target above all
+  // sources). Null mirrors `targetLine` for top-of-file refiles.
+  targetLineAfter: number | null;
   // 1-based body line of the moved heading in the target file, *after*
   // the write. Lets the UI scroll a peek pane to the actual landing
   // spot instead of just the destination heading (which can be far
@@ -167,6 +174,69 @@ export function findEnclosingHeading(
     best = h;
   }
   return best;
+}
+
+// Return every "top-level" heading whose subtree intersects the body
+// range `[fromBodyLine, toBodyLine]` (1-based, inclusive).
+//
+// "Top-level" means the heading is not a descendant of another heading
+// that is itself in the result — refiling a parent already moves its
+// children, so listing both would double-process. The selection model
+// is intentionally loose: a body line that sits inside a heading's
+// subtree counts the heading as in-range, so a user who selects "from
+// somewhere in foo's body to bar's heading" gets both foo and bar.
+//
+// Used by the editor refile entrypoint when the user has a multi-line
+// selection — picking one destination and refiling every selected
+// section in one shot.
+export function findHeadingsInRange(
+  body: string,
+  fromBodyLine: number,
+  toBodyLine: number,
+): { line: number; level: number; title: string }[] {
+  if (toBodyLine < 1 || toBodyLine < fromBodyLine) return [];
+  const headings = scanHeadings(body);
+  if (headings.length === 0) return [];
+  const totalLines = body.split("\n").length;
+
+  // Compute each heading's subtree end (1-based, exclusive): the line
+  // of the next heading at level <= H.level, or `totalLines + 1` for
+  // the last sibling.
+  const ends: number[] = headings.map((h, i) => {
+    for (let j = i + 1; j < headings.length; j++) {
+      if (headings[j]!.level <= h.level) return headings[j]!.line;
+    }
+    return totalLines + 1;
+  });
+
+  // Candidates: subtree intersects the requested range.
+  const inRange = new Set<number>();
+  const lowerBound = Math.max(1, fromBodyLine);
+  for (let i = 0; i < headings.length; i++) {
+    if (headings[i]!.line <= toBodyLine && ends[i]! > lowerBound) {
+      inRange.add(i);
+    }
+  }
+
+  // Filter to top-level. Walk headings in order maintaining an
+  // ancestor stack so we can ask "is any of my live ancestors also a
+  // candidate?"; if so, drop the current one — it'll come along with
+  // its parent's subtree.
+  const result: { line: number; level: number; title: string }[] = [];
+  const stack: number[] = [];
+  for (let i = 0; i < headings.length; i++) {
+    while (
+      stack.length > 0 &&
+      headings[stack[stack.length - 1]!]!.level >= headings[i]!.level
+    ) {
+      stack.pop();
+    }
+    if (inRange.has(i) && !stack.some((idx) => inRange.has(idx))) {
+      result.push(headings[i]!);
+    }
+    stack.push(i);
+  }
+  return result;
 }
 
 // Build the full list of refile targets across `vault`. For every page
@@ -549,11 +619,20 @@ export async function refile(
     const updatedBody = merged.lines.join("\n");
     const updated = replaceBody(src.raw, updatedBody);
     await atomicWrite(src.resolved, updated, src.mtimeMs, src.mode);
+    // Same-file: cutting [range.start, range.end) shifts every later
+    // line up by the cut size. The insertion happens *after* the
+    // target heading, so the target line itself moves only when it
+    // sat below the cut.
+    let targetLineAfter: number | null = target.line;
+    if (target.line !== null && target.line - 1 >= range.end) {
+      targetLineAfter = target.line - (range.end - range.start);
+    }
     return {
       sourceRelPath: srcRelPath,
       sourceEntryId: resolvedEntryId,
       targetRelPath: target.relPath,
       targetLine: target.line,
+      targetLineAfter,
       insertedBodyLine: merged.headingIdx + 1,
       movedLines: range.end - range.start,
       sameFile: true,
@@ -587,6 +666,9 @@ export async function refile(
     sourceEntryId: resolvedEntryId,
     targetRelPath: target.relPath,
     targetLine: target.line,
+    // Cross-file: the target file isn't cut, so the target heading
+    // stays where it was.
+    targetLineAfter: target.line,
     insertedBodyLine: mergedTgt.headingIdx + 1,
     movedLines: range.end - range.start,
     sameFile: false,

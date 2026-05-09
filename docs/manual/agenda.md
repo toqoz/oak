@@ -119,6 +119,14 @@ Move a heading and everything beneath it to another location — emacs
   heading does not need to be a TODO, scheduled, or otherwise
   agenda-worthy heading — plain prose headings are refilable too) and
   run `Oak: Refile heading at cursor` from the command palette.
+- From the editor with a selection: select across two or more headings
+  (the selection only has to brush each subtree — clipping a body
+  line of a section is enough to count it) and run the same command.
+  Every "top-level" section in the selection — that is, sections
+  whose parents are not also in the selection — is refiled to one
+  user-picked destination, in document order. Refiling a parent
+  carries its descendant headings along, so descendants don't double-
+  up in the move list.
 
 Both open a fuzzy picker listing every heading in the vault, prefixed
 by the file's vault path. Each file also offers `(top of file)` to

@@ -134,6 +134,7 @@ export {
   daysBetween,
   extractVaultAgendaEntries,
   findEnclosingHeading,
+  findHeadingsInRange,
   formatTimestamp,
   frontmatterLineCount,
   isPageInAgendaScope,
