@@ -10,9 +10,20 @@
 //      lost.
 //
 // Heading levels in the moved subtree are shifted so the source heading
-// becomes a direct child of the target heading (or a top-level heading
-// when refiled to "top of file"). We refuse a shift that would push any
-// heading past level 6.
+// becomes a direct child of the target heading. For "top of file"
+// targets — where there is no parent heading — the resulting level is
+// taken from `RefileConfig.topOfFileLevel`. We refuse a shift that
+// would push any heading past level 6.
+//
+// Refile lives in its own module rather than under `agenda/` because
+// it is a generic heading-manipulation feature, not an agenda-specific
+// one. It does *interact* with the agenda parser: when the caller
+// identifies the source heading by entry-id (typical of the agenda
+// view's Shift-R), we resolve the entry inside this function — same
+// freshly-read-with-mtime body — so a between-snapshot-and-write file
+// change still surfaces as either an `entry-not-found` mismatch or an
+// mtime CAS conflict instead of slicing the wrong region. That single
+// dependency on `parseAgendaPage` is the entire interaction surface.
 
 import {
   chmod,
@@ -26,9 +37,11 @@ import {
 import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 
-import { parseAgendaPage } from "./parse.js";
-import type { AgendaConfig } from "./types.js";
+import { parseAgendaPage } from "../agenda/parse.js";
+import type { AgendaConfig } from "../agenda/types.js";
 import type { OakPage, Vault } from "../types.js";
+
+import type { RefileConfig } from "./config.js";
 
 // Split `raw` into the YAML-frontmatter prefix (including its trailing
 // `---\n`) and the body. Mirrors `frontmatterLineCount`'s regex so the
@@ -551,7 +564,8 @@ export async function refile(
   sourceFilePath: string,
   source: RefileSource,
   target: RefileLocation,
-  config: AgendaConfig,
+  config: RefileConfig,
+  agendaConfig: AgendaConfig,
   sourceRelPath?: string,
 ): Promise<RefileResult> {
   const src = await readWithStat(sourceFilePath);
@@ -563,7 +577,7 @@ export async function refile(
   let resolvedEntryId: string | null = null;
   if (source.kind === "entry") {
     const srcPage = makeOakPage(sourceFilePath, srcSplit.body, srcRelPath);
-    const entries = parseAgendaPage(srcPage, config);
+    const entries = parseAgendaPage(srcPage, agendaConfig);
     const sourceEntry = entries.find((e) => e.entryId === source.entryId);
     if (!sourceEntry) {
       throw new RefileError(
@@ -637,9 +651,9 @@ export async function refile(
   // "top of file" target there *is* no parent, so we fall back to the
   // configured root level — defaults to `2` (oak's body convention
   // starts at `##`); users on the emacs org-refile clamp-to-level-1
-  // convention can set `refileTopOfFileLevel: 1`.
+  // convention can set `topOfFileLevel: 1` in `.oak/refile.yml`.
   const newSourceLevel =
-    target.line === null ? config.refileTopOfFileLevel : target.level + 1;
+    target.line === null ? config.topOfFileLevel : target.level + 1;
   const delta = newSourceLevel - sourceLevel;
   const shifted = subtree.slice();
   if (!shiftHeadingLevels(shifted, delta)) {

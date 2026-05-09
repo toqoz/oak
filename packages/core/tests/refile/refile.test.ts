@@ -11,13 +11,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_AGENDA_CONFIG } from "../../src/agenda/config.js";
 import { parseAgendaPage } from "../../src/agenda/parse.js";
+import { DEFAULT_REFILE_CONFIG } from "../../src/refile/config.js";
 import {
   collectRefileTargets,
   findEnclosingHeading,
   findHeadingsInRange,
   refile,
   RefileError,
-} from "../../src/agenda/refile.js";
+} from "../../src/refile/refile.js";
 import type { OakPage, Vault } from "../../src/types.js";
 
 function makePage(filePath: string, body: string, relPath?: string): OakPage {
@@ -136,6 +137,7 @@ describe("refile (same-file)", () => {
         line: 6, // "# Projects"
         level: 1,
       },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(result.sameFile).toBe(true);
@@ -177,6 +179,7 @@ describe("refile (same-file)", () => {
         fp,
         { kind: "entry", entryId: outer!.entryId },
         { filePath: fp, relPath: fp, line: 2, level: 2 },
+        DEFAULT_REFILE_CONFIG,
         DEFAULT_AGENDA_CONFIG,
       ),
     ).rejects.toMatchObject({ code: "descendant-target" });
@@ -192,6 +195,7 @@ describe("refile (same-file)", () => {
         fp,
         { kind: "entry", entryId: t!.entryId },
         { filePath: fp, relPath: fp, line: 1, level: 1 },
+        DEFAULT_REFILE_CONFIG,
         DEFAULT_AGENDA_CONFIG,
       ),
     ).rejects.toMatchObject({ code: "self-refile" });
@@ -223,6 +227,7 @@ describe("refile (same-file)", () => {
         srcFp,
         { kind: "entry", entryId: src!.entryId },
         { filePath: tgtFp, relPath: tgtFp, line: 1, level: 2 },
+        DEFAULT_REFILE_CONFIG,
         DEFAULT_AGENDA_CONFIG,
       ),
     ).rejects.toMatchObject({ code: "level-overflow" });
@@ -230,7 +235,7 @@ describe("refile (same-file)", () => {
 
   it("refiles to top-of-file at the default root level (2)", async () => {
     // oak's body convention starts at `##`, so the default
-    // `refileTopOfFileLevel` is 2: a top-of-file refile leaves a
+    // `topOfFileLevel` is 2: a top-of-file refile leaves a
     // level-2 source heading at level 2 (no shift) instead of clamping
     // to `# `.
     const fp = join(dir, "tof.md");
@@ -251,6 +256,7 @@ describe("refile (same-file)", () => {
       fp,
       { kind: "entry", entryId: src!.entryId },
       { filePath: fp, relPath: fp, line: null, level: 0 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(readFileSync(fp, "utf8")).toBe(
@@ -267,7 +273,7 @@ describe("refile (same-file)", () => {
     expect(result.insertedBodyLine).toBe(5);
   });
 
-  it("honors `refileTopOfFileLevel: 1` for emacs org-refile parity", async () => {
+  it("honors `topOfFileLevel: 1` for emacs org-refile parity", async () => {
     // Users on the emacs convention (top-of-file refile clamps to a
     // level-1 heading) override the default with `1`.
     const fp = join(dir, "tof-l1.md");
@@ -282,17 +288,18 @@ describe("refile (same-file)", () => {
       ].join("\n"),
       "utf8",
     );
-    const config = {
-      ...DEFAULT_AGENDA_CONFIG,
-      refileTopOfFileLevel: 1,
+    const refileConfig = {
+      ...DEFAULT_REFILE_CONFIG,
+      topOfFileLevel: 1,
     };
     const page = makePage(fp, readFileSync(fp, "utf8"));
-    const [src] = parseAgendaPage(page, config);
+    const [src] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
     await refile(
       fp,
       { kind: "entry", entryId: src!.entryId },
       { filePath: fp, relPath: fp, line: null, level: 0 },
-      config,
+      refileConfig,
+      DEFAULT_AGENDA_CONFIG,
     );
     expect(readFileSync(fp, "utf8")).toBe(
       [
@@ -357,6 +364,7 @@ describe("refile (cross-file)", () => {
       srcFp,
       { kind: "entry", entryId: todo!.entryId },
       { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
 
@@ -409,6 +417,7 @@ describe("refile (cross-file)", () => {
       srcFp,
       { kind: "entry", entryId: src!.entryId },
       { filePath: tgtFp, relPath: "dest.md", line: 1, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     const tgt = readFileSync(tgtFp, "utf8");
@@ -431,6 +440,7 @@ describe("refile error surface", () => {
         fp,
         { kind: "entry", entryId: "deadbeefdeadbeef" },
         { filePath: fp, relPath: fp, line: null, level: 0 },
+        DEFAULT_REFILE_CONFIG,
         DEFAULT_AGENDA_CONFIG,
       ),
     ).rejects.toBeInstanceOf(RefileError);
@@ -444,6 +454,7 @@ describe("refile error surface", () => {
         fp,
         { kind: "heading", line: 1, level: 2 }, // wrong level
         { filePath: fp, relPath: fp, line: null, level: 0 },
+        DEFAULT_REFILE_CONFIG,
         DEFAULT_AGENDA_CONFIG,
       ),
     ).rejects.toMatchObject({ code: "heading-not-found" });
@@ -469,6 +480,7 @@ describe("refile (heading source — non-agenda)", () => {
       fp,
       { kind: "heading", line: 2, level: 2 },
       { filePath: fp, relPath: "prose.md", line: 5, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(result.sameFile).toBe(true);
@@ -495,6 +507,7 @@ describe("refile (heading source — non-agenda)", () => {
       srcFp,
       { kind: "heading", line: 2, level: 2 },
       { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(readFileSync(srcFp, "utf8")).toBe(["# A", "## keep me"].join("\n"));
@@ -594,6 +607,7 @@ describe("refile (multi-source target line tracking)", () => {
       fp,
       { kind: "heading", line: 1, level: 2 }, // foo
       { filePath: fp, relPath: fp, line: 5, level: 1 }, // # Dest
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(r1.targetLineAfter).toBe(3); // 5 - movedLines(2)
@@ -606,6 +620,7 @@ describe("refile (multi-source target line tracking)", () => {
       fp,
       { kind: "heading", line: 3 - r1.movedLines, level: 2 },
       { filePath: fp, relPath: fp, line: r1.targetLineAfter!, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(r2.targetLineAfter).toBe(1); // 3 - movedLines(2)
@@ -649,6 +664,7 @@ describe("refile (multi-source target line tracking)", () => {
       srcFp,
       { kind: "heading", line: 1, level: 2 },
       { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(readFileSync(srcFp, "utf8")).toBe(
@@ -679,6 +695,7 @@ describe("refile (multi-source target line tracking)", () => {
       srcFp,
       { kind: "heading", line: 3, level: 2 },
       { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(readFileSync(srcFp, "utf8")).toBe(
@@ -703,6 +720,7 @@ describe("refile (multi-source target line tracking)", () => {
       fp,
       { kind: "heading", line: 1, level: 2 },
       { filePath: fp, relPath: fp, line: 4, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     // Pre-fix the source kept the orphan blank that previously sat
@@ -735,6 +753,7 @@ describe("refile (multi-source target line tracking)", () => {
       fp,
       { kind: "heading", line: 3, level: 2 },
       { filePath: fp, relPath: fp, line: 1, level: 1 },
+      DEFAULT_REFILE_CONFIG,
       DEFAULT_AGENDA_CONFIG,
     );
     expect(r.targetLine).toBe(1);

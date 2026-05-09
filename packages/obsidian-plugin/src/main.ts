@@ -46,13 +46,16 @@ import {
 import {
   composePage,
   DEFAULT_AGENDA_CONFIG,
+  DEFAULT_REFILE_CONFIG,
   ensureGitRepo,
   excerptFrom,
   loadAgendaConfig,
+  loadRefileConfig,
   slugify,
   snapshot,
   type AgendaConfig,
   type OakPage,
+  type RefileConfig,
 } from "@oak/core";
 import { agendaTooltipExtension } from "./agenda-tooltip.js";
 import { headingDecorationsExtension } from "./heading-decorations.js";
@@ -74,6 +77,11 @@ export default class OakPlugin extends Plugin {
   // SCHEDULED/DEADLINE tooltip) that need to know the active TODO
   // keyword set without re-reading the file on every keystroke.
   agendaConfig: AgendaConfig = DEFAULT_AGENDA_CONFIG;
+  // Live copy of `.oak/refile.yml`. Refile is its own feature with its
+  // own config (heading-level conventions for top-of-file refile and
+  // similar knobs); kept on the plugin so command callbacks pick up
+  // edits on the next vault refresh without re-reading on every call.
+  refileConfig: RefileConfig = DEFAULT_REFILE_CONFIG;
   // Last redlink target the user clicked plus when. Used by the
   // vault.on("create") fallback to detect a file that Obsidian
   // auto-created in response to the click and roll it back into a
@@ -225,9 +233,11 @@ export default class OakPlugin extends Plugin {
     this.linksUnsubscribe = this.state.subscribe(() => {
       this.applyLinksCards();
       this.applyPageMeta();
-      // The user may have edited `.oak/agenda.yml` to change TODO
-      // keywords; pick that up on the next vault refresh.
+      // The user may have edited `.oak/agenda.yml` (TODO keywords,
+      // etc.) or `.oak/refile.yml` (top-of-file level, etc.); pick
+      // those up on the next vault refresh.
       void this.refreshAgendaConfig();
+      void this.refreshRefileConfig();
     });
 
     // Intercept red-link clicks while in oak mode and route them to
@@ -394,6 +404,7 @@ export default class OakPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.state.refresh();
       void this.refreshAgendaConfig();
+      void this.refreshRefileConfig();
       this.applyAutoSnapshot();
       // If a previous session left oak views in the workspace state,
       // Obsidian has just re-instantiated them. Re-attach the chrome
@@ -465,6 +476,15 @@ export default class OakPlugin extends Plugin {
     } catch (err) {
       console.warn("oak: loadAgendaConfig failed", err);
       this.agendaConfig = DEFAULT_AGENDA_CONFIG;
+    }
+  }
+
+  private async refreshRefileConfig(): Promise<void> {
+    try {
+      this.refileConfig = await loadRefileConfig(vaultRoot(this.app));
+    } catch (err) {
+      console.warn("oak: loadRefileConfig failed", err);
+      this.refileConfig = DEFAULT_REFILE_CONFIG;
     }
   }
 

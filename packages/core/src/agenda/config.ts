@@ -20,11 +20,6 @@ export const DEFAULT_AGENDA_CONFIG: AgendaConfig = {
   weekStartsOn: 1,
   priorities: { highest: "A", lowest: "C", default: "B" },
   skipDeadlinePrewarningIfScheduled: "pre-scheduled",
-  // Default to `2`: oak's body convention starts at `##`, so a
-  // top-of-file refile lands at the user's own root level instead of
-  // introducing a stray `# ` heading. Users on the emacs `org-refile`
-  // convention (refiles clamp to level 1) can override to `1`.
-  refileTopOfFileLevel: 2,
 };
 
 function coerceStringArray(v: unknown): string[] | undefined {
@@ -65,9 +60,6 @@ export function mergeAgendaConfig(
     skipDeadlinePrewarningIfScheduled:
       partial.skipDeadlinePrewarningIfScheduled ??
       DEFAULT_AGENDA_CONFIG.skipDeadlinePrewarningIfScheduled,
-    refileTopOfFileLevel:
-      partial.refileTopOfFileLevel ??
-      DEFAULT_AGENDA_CONFIG.refileTopOfFileLevel,
   };
 }
 
@@ -111,16 +103,6 @@ export async function loadAgendaConfig(rootPath: string): Promise<AgendaConfig> 
   const skip = r["skipDeadlinePrewarningIfScheduled"];
   if (skip === false || skip === true || skip === "pre-scheduled") {
     partial.skipDeadlinePrewarningIfScheduled = skip;
-  }
-  if (typeof r["refileTopOfFileLevel"] === "number") {
-    const lv = r["refileTopOfFileLevel"];
-    // Clamp to valid Markdown heading levels. An out-of-range value
-    // would either produce a non-heading line (e.g. zero `#`s) or push
-    // every nested heading past `######` immediately, so we silently
-    // fall back to the default rather than corrupting the file.
-    if (Number.isInteger(lv) && lv >= 1 && lv <= 6) {
-      partial.refileTopOfFileLevel = lv;
-    }
   }
   if (r["priorities"] && typeof r["priorities"] === "object") {
     const p = r["priorities"] as Record<string, unknown>;

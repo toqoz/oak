@@ -89,12 +89,6 @@ export type AgendaConfig = {
   weekStartsOn: 0 | 1; // 0 = Sunday, 1 = Monday (org default)
   priorities: { highest: string; lowest: string; default: string };
   skipDeadlinePrewarningIfScheduled: SkipDeadlinePrewarningPolicy;
-  // Heading level (1..6) the refiled source becomes when the target
-  // is "top of file" — i.e. there is no parent heading to nest under.
-  // Defaults to `2` since the oak body convention starts at `##`;
-  // users on the emacs `org-refile` clamp-to-level-1 convention can
-  // set it to `1`.
-  refileTopOfFileLevel: number;
 };
 
 export type AgendaQuery =

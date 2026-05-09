@@ -110,62 +110,10 @@ heading with the desired tags instead.
 
 ## Refile (`Shift-R`)
 
-Move a heading and everything beneath it to another location — emacs
-`org-refile` ported to oak. Available two ways:
-
-- From the agenda: focus an entry (`j`/`k` or click) and press
-  `Shift-R`.
-- From the editor: place the cursor inside any heading's subtree (the
-  heading does not need to be a TODO, scheduled, or otherwise
-  agenda-worthy heading — plain prose headings are refilable too) and
-  run `Oak: Refile heading at cursor` from the command palette.
-- From the editor with a selection: select across two or more headings
-  (the selection only has to brush each subtree — clipping a body
-  line of a section is enough to count it) and run the same command.
-  Every "top-level" section in the selection — that is, sections
-  whose parents are not also in the selection — is refiled to one
-  user-picked destination, in document order. Refiling a parent
-  carries its descendant headings along, so descendants don't double-
-  up in the move list.
-
-Both open a fuzzy picker listing every heading in the vault, prefixed
-by the file's vault path. Each file also offers `(top of file)` to
-refile under the file root (resulting heading becomes top-level).
-
-The picked target receives the source heading as a direct child:
-heading levels in the moved subtree shift so the source heading lands
-at `target.level + 1`. A refile that would push any sub-heading past
-level 6 is refused; so is refiling a heading onto itself or into its
-own subtree.
-
-Cross-file refiles write the destination first, then the source. If
-the source write fails after a successful destination write, the
-subtree exists in both files — recoverable by hand, never silently
-lost. Each side uses the same mtime-CAS atomic write the DONE flow
-uses, so a concurrent external edit surfaces as a conflict instead of
-silently clobbering changes.
-
-After a cross-file refile, the destination opens in a horizontal split
-below the source leaf, scrolls to the moved heading, and takes focus —
-the user lands at the destination ready to inspect or edit. The source
-pane fades to half opacity while the peek is focused so the peek reads
-as the active surface. Standard tab and view-header navigation are
-hidden in the peek (same treatment as the scratch buffer); a single ×
-button on the trailing edge of the view-header detaches it.
-
-Peek dismissal behaves like a transient inspection panel:
-
-- Press `Esc` while the peek has focus to detach it.
-- Move focus back to another main-pane leaf (e.g. click the source
-  pane) and the peek detaches automatically. Sidebar focus changes
-  do not dismiss it — clicking the file explorer leaves the peek
-  alone.
-- Esc inside an `<input>` / `<textarea>` (e.g. the editable title
-  row) is left alone — the input owns that key for its own
-  commit-or-cancel handling.
-
-Same-file refiles skip the peek — the source view is already showing
-the updated buffer.
+`Shift-R` on the focused entry refiles the heading + subtree to a
+user-picked destination. Refile is a separate feature with its own
+docs and config — see [Refile](refile.md) for the full picker, peek
+pane, multi-section selection, and `.oak/refile.yml` semantics.
 
 ## DONE behavior (`d`)
 
@@ -221,7 +169,6 @@ agendaFilesExclude: []
 weekStartsOn: 1              # 0 = Sun, 1 = Mon
 priorities: { highest: A, lowest: C, default: B }
 skipDeadlinePrewarningIfScheduled: pre-scheduled  # false | true | pre-scheduled
-refileTopOfFileLevel: 2      # heading level for top-of-file refile (1..6)
 ```
 
 `agendaFiles` / `agendaFilesExclude` accept a list of paths relative
@@ -239,9 +186,6 @@ Globs (`*`, `**`) are not supported.
 entry has no explicit `[#X]` — set it to the same letter you reach
 for most often so unprioritized items rank with their natural cohort.
 
-`refileTopOfFileLevel` is the heading level (1..6) the source heading
-becomes when refiled to "(top of file)". Defaults to `2` because oak's
-body convention starts at `##`; users on the emacs `org-refile`
-clamp-to-level-1 convention can set it to `1`.
-
 Edits to this file are picked up on the next vault refresh (`r`).
+Refile-specific knobs (e.g. the heading level for top-of-file refile)
+live in `.oak/refile.yml`; see [Refile](refile.md).

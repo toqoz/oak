@@ -26,6 +26,7 @@ import {
   refile,
   RefileError,
   type AgendaConfig,
+  type RefileConfig,
   type RefileTarget,
 } from "@oak/core";
 
@@ -136,11 +137,12 @@ export type RefileSourceDescriptor = {
 export async function refileHeadings(
   plugin: OakPlugin,
   sources: RefileSourceDescriptor[],
-  config: AgendaConfig,
+  refileConfig: RefileConfig,
+  agendaConfig: AgendaConfig,
 ): Promise<void> {
   if (sources.length === 0) return;
   if (sources.length === 1) {
-    await refileHeading(plugin, sources[0]!, config);
+    await refileHeading(plugin, sources[0]!, refileConfig, agendaConfig);
     return;
   }
 
@@ -197,7 +199,8 @@ export async function refileHeadings(
           line: currentTargetLine,
           level: target.level,
         },
-        config,
+        refileConfig,
+        agendaConfig,
         source.relPath,
       );
       currentTargetLine = result.targetLineAfter;
@@ -248,7 +251,8 @@ export async function refileHeadings(
 export async function refileHeading(
   plugin: OakPlugin,
   source: RefileSourceDescriptor,
-  config: AgendaConfig,
+  refileConfig: RefileConfig,
+  agendaConfig: AgendaConfig,
 ): Promise<void> {
   const snap = plugin.state.current();
   if (!snap) {
@@ -281,7 +285,8 @@ export async function refileHeading(
         line: target.line,
         level: target.level,
       },
-      config,
+      refileConfig,
+      agendaConfig,
       source.relPath,
     );
     new Notice(

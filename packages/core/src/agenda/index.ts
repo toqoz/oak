@@ -61,20 +61,6 @@ export {
 } from "./writeback.js";
 export type { MarkDoneResult } from "./writeback.js";
 
-export {
-  collectRefileTargets,
-  findEnclosingHeading,
-  findHeadingsInRange,
-  refile,
-  RefileError,
-} from "./refile.js";
-export type {
-  RefileLocation,
-  RefileResult,
-  RefileSource,
-  RefileTarget,
-} from "./refile.js";
-
 import type { Vault } from "../types.js";
 import { parseAgendaPage } from "./parse.js";
 import type { AgendaConfig, AgendaEntry } from "./types.js";
