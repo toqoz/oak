@@ -394,6 +394,39 @@ body.oak-mode-active .oak-leaf-scratch .cm-scroller {
   padding-block-start: 0 !important;
 }
 
+/* Refile peek pane — same chrome strategy as scratch. The pane is a
+   transient peek of the destination after a refile so the standard
+   tab + view-header navigation is noise; we collapse the chrome down
+   to a single × close button on the trailing edge. */
+body.oak-mode-active
+  .workspace-tabs:has(.oak-leaf-refile-peek)
+  > .workspace-tab-header-container {
+  display: none !important;
+}
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-header-left,
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-header-title-container,
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-actions,
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .oak-scratch-link {
+  display: none !important;
+}
+body.oak-mode-active .oak-leaf-refile-peek .view-header {
+  align-items: center !important;
+}
+body.oak-mode-active .oak-page-title-row.oak-row-refile-peek {
+  position: static;
+  flex: 1 1 auto;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+/* The peek pane keeps the regular oak `.oak-page-title-row` (editable
+   title + visibility) absolutely-positioned above the body. The
+   default `.cm-scroller` padding-block-start (`var(--file-margins)`)
+   reserves the room that title needs — don't zero it out the way we
+   do for scratch, or the title overlaps the first body line. */
+
 /* "Related" footer — sits *inside* the scroll container (alongside
    `.cm-content` for source / live-preview, alongside
    `.markdown-preview-section` for reading mode), so the cards

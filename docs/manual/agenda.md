@@ -115,8 +115,10 @@ Move a heading and everything beneath it to another location — emacs
 
 - From the agenda: focus an entry (`j`/`k` or click) and press
   `Shift-R`.
-- From the editor: place the cursor anywhere inside an agenda heading
-  and run `Oak: Refile heading at cursor` from the command palette.
+- From the editor: place the cursor inside any heading's subtree (the
+  heading does not need to be a TODO, scheduled, or otherwise
+  agenda-worthy heading — plain prose headings are refilable too) and
+  run `Oak: Refile heading at cursor` from the command palette.
 
 Both open a fuzzy picker listing every heading in the vault, prefixed
 by the file's vault path. Each file also offers `(top of file)` to
@@ -134,6 +136,17 @@ subtree exists in both files — recoverable by hand, never silently
 lost. Each side uses the same mtime-CAS atomic write the DONE flow
 uses, so a concurrent external edit surfaces as a conflict instead of
 silently clobbering changes.
+
+After a cross-file refile, the destination opens in a horizontal split
+below the source leaf and scrolls to the moved heading. Focus stays on
+the source caret, mirroring emacs `org-refile` so a follow-up refile
+on the next sibling can run immediately. The peek pane is reused for
+subsequent refiles instead of stacking new splits. Standard tab and
+view-header navigation are hidden in the peek pane (same treatment
+as the scratch buffer); a single × button on the trailing edge of the
+view-header detaches the peek without disturbing the source. Same-file
+refiles skip the peek — the source view is already showing the updated
+buffer.
 
 ## DONE behavior (`d`)
 

@@ -80,6 +80,11 @@ export default class OakPlugin extends Plugin {
   // ghost view.
   private lastRedlinkTarget: string | null = null;
   private lastRedlinkClickAt = 0;
+  // Reused horizontal-split leaf used to peek at the destination file
+  // after a refile. Mirrors the scratch toggle: focus stays on the
+  // source so a follow-up refile can run immediately, and the peek
+  // pane updates in place instead of stacking new splits.
+  private refilePeekLeaf: WorkspaceLeaf | null = null;
   // When the user picks "Show default menu" from the oak context
   // menu, we re-dispatch a fresh `contextmenu` event so Obsidian's
   // own handler runs and shows the native menu. This flag tells our
@@ -387,6 +392,11 @@ export default class OakPlugin extends Plugin {
       // Obsidian has just re-instantiated them. Re-attach the chrome
       // class so oak mode visually resumes where the user left off.
       this.syncOakModeClass();
+      // Re-bind the refile peek leaf reference *before* the chrome
+      // appliers run so applyTitleForView sees the correct
+      // `isRefilePeek` flag on first paint instead of flashing the
+      // standard tab + view-header chrome.
+      this.restoreRefilePeekFromSettings();
       this.applyTitleOverrides();
       this.applyLinksCards();
       this.applyPageMeta();
@@ -773,7 +783,8 @@ export default class OakPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
       if (!(view instanceof MarkdownView) || !view.file) continue;
-      this.applyTitleForView(view, view.file, oakMode);
+      const isRefilePeek = leaf === this.refilePeekLeaf;
+      this.applyTitleForView(view, view.file, oakMode, isRefilePeek);
     }
   }
 
@@ -781,6 +792,7 @@ export default class OakPlugin extends Plugin {
     view: MarkdownView,
     file: TFile,
     oakMode: boolean,
+    isRefilePeek = false,
   ): void {
     void file; // accessed via metadataCache below; kept for callers
     const cache = this.app.metadataCache.getFileCache(view.file!);
@@ -823,6 +835,46 @@ export default class OakPlugin extends Plugin {
       headerEl?.querySelector<HTMLElement>(
         ".oak-page-title-row.oak-row-scratch",
       ) ?? null;
+    const headerRefilePeekRow =
+      headerEl?.querySelector<HTMLElement>(
+        ".oak-page-title-row.oak-row-refile-peek",
+      ) ?? null;
+
+    // Refile peek pane: hide standard view-header navigation and the
+    // tab strip via the marker class + a × close button injected into
+    // the view-header. We *don't* return from this branch — the
+    // regular oak title row (editable title + visibility selector,
+    // injected into the scroll container further below) still runs,
+    // so the peek pane shows the destination file's page title in the
+    // same place a regular oak md file would.
+    if (oakMode && isRefilePeek) {
+      view.containerEl.classList.add("oak-leaf-refile-peek");
+      if (headerScratchRow) headerScratchRow.remove();
+      if (headerEl) {
+        let row = headerRefilePeekRow;
+        if (!row || row.parentElement !== headerEl) {
+          if (row) row.remove();
+          row = document.createElement("div");
+          row.classList.add("oak-page-title-row", "oak-row-refile-peek");
+          const closeBtn = document.createElement("button");
+          closeBtn.classList.add("clickable-icon", "oak-refile-peek-close");
+          closeBtn.setAttribute("type", "button");
+          closeBtn.setAttribute("aria-label", "Close refile peek");
+          setIcon(closeBtn, "x");
+          closeBtn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            this.closeRefilePeek();
+          });
+          row.appendChild(closeBtn);
+          headerEl.appendChild(row);
+        }
+      }
+    } else {
+      // Drop the marker class + close row in case the leaf was
+      // previously a peek and is now repurposed.
+      view.containerEl.classList.remove("oak-leaf-refile-peek");
+      if (headerRefilePeekRow) headerRefilePeekRow.remove();
+    }
 
     if (oakMode && isScratch) {
       // Drop any stale cm-scroller row left over from before this
@@ -1685,6 +1737,89 @@ export default class OakPlugin extends Plugin {
   // the pane is non-destructive). Otherwise open scratch in a
   // horizontal split below `triggerLeaf` — the "bottom pane" so the
   // user keeps their main editing context visible.
+  // Open `file` in a horizontal split below the active leaf as a
+  // "peek" pane: focus stays on the caller (the source page the user
+  // just refiled out of), and a follow-up refile reuses the same pane
+  // instead of stacking new splits. Mirrors the scratch toggle's split
+  // affordance. `fileLine` is 0-based; passed straight through as
+  // `eState.line` so Obsidian centers/scrolls the viewport on the
+  // moved heading.
+  async revealRefileTarget(
+    file: TFile,
+    fileLine: number | null,
+  ): Promise<void> {
+    const sourceLeaf = this.app.workspace.activeLeaf;
+    const openState =
+      fileLine !== null ? { eState: { line: fileLine } } : undefined;
+
+    let leaf: WorkspaceLeaf;
+    if (this.refilePeekLeaf && this.isLeafAlive(this.refilePeekLeaf)) {
+      leaf = this.refilePeekLeaf;
+    } else {
+      const base = sourceLeaf ?? this.currentMainLeaf();
+      leaf = this.app.workspace.createLeafBySplit(base, "horizontal", false);
+      this.refilePeekLeaf = leaf;
+    }
+    // Persist the leaf id so a plugin reload (or "Reload app without
+    // saving") can rebind the peek chrome instead of leaving the pane
+    // looking like a normal markdown leaf — scratch gets this for free
+    // because it identifies the leaf by its file path; peek can't,
+    // since the destination file changes per refile.
+    const id = leafId(leaf);
+    if (this.settings.refilePeekLeafId !== id) {
+      this.settings.refilePeekLeafId = id;
+      void this.saveSettings();
+    }
+    await leaf.openFile(file, openState);
+    // Reapply title/chrome handling now that the leaf is identified as
+    // a peek pane — the subsequent file-open / layout-change events
+    // would do this too, but running it synchronously avoids a
+    // single-frame flash of the standard tab + view-header chrome.
+    this.applyTitleOverrides();
+    // Don't reveal/focus the peek pane — emacs `org-refile` leaves the
+    // caret at the source so the user can keep processing the next
+    // sibling without an extra navigation step. Restore focus
+    // explicitly because `openFile` on a non-active leaf would
+    // otherwise silently activate it.
+    if (sourceLeaf && this.isLeafAlive(sourceLeaf) && sourceLeaf !== leaf) {
+      this.app.workspace.setActiveLeaf(sourceLeaf, { focus: true });
+    }
+  }
+
+  // Detach the peek leaf, if any, and forget the reference so the next
+  // refile creates a fresh split. Wired to the × button injected into
+  // the peek pane's view-header.
+  closeRefilePeek(): void {
+    const leaf = this.refilePeekLeaf;
+    this.refilePeekLeaf = null;
+    if (this.settings.refilePeekLeafId !== null) {
+      this.settings.refilePeekLeafId = null;
+      void this.saveSettings();
+    }
+    if (leaf && this.isLeafAlive(leaf)) leaf.detach();
+  }
+
+  // Re-bind `this.refilePeekLeaf` from the persisted id after Obsidian
+  // restores the workspace. If the id no longer matches any leaf
+  // (user closed the peek between sessions, or a workspace reset
+  // dropped the layout) we clear the persisted id so the next refile
+  // starts clean.
+  private restoreRefilePeekFromSettings(): void {
+    const id = this.settings.refilePeekLeafId;
+    if (!id) return;
+    let found: WorkspaceLeaf | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (found) return;
+      if (leafId(leaf) === id) found = leaf;
+    });
+    if (found) {
+      this.refilePeekLeaf = found;
+    } else {
+      this.settings.refilePeekLeafId = null;
+      void this.saveSettings();
+    }
+  }
+
   async toggleScratch(triggerLeaf?: WorkspaceLeaf): Promise<void> {
     const existing = this.findScratchLeaf();
     if (existing) {
@@ -1837,4 +1972,14 @@ export default class OakPlugin extends Plugin {
       this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
     await this.navigateLeafToAgenda(leaf);
   }
+}
+
+// Obsidian's runtime `WorkspaceLeaf` carries an `id` string that is
+// part of the workspace JSON layout — stable across save/restore. The
+// public type doesn't expose it, so we cast through `unknown`. Returns
+// null when the runtime didn't materialise an id (defensive: should
+// never happen for a leaf currently attached to the workspace).
+function leafId(leaf: WorkspaceLeaf): string | null {
+  const id = (leaf as unknown as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : null;
 }

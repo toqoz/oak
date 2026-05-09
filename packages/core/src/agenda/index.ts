@@ -63,12 +63,14 @@ export type { MarkDoneResult } from "./writeback.js";
 
 export {
   collectRefileTargets,
+  findEnclosingHeading,
   refile,
   RefileError,
 } from "./refile.js";
 export type {
   RefileLocation,
   RefileResult,
+  RefileSource,
   RefileTarget,
 } from "./refile.js";
 

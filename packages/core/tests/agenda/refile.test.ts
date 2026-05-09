@@ -13,6 +13,7 @@ import { DEFAULT_AGENDA_CONFIG } from "../../src/agenda/config.js";
 import { parseAgendaPage } from "../../src/agenda/parse.js";
 import {
   collectRefileTargets,
+  findEnclosingHeading,
   refile,
   RefileError,
 } from "../../src/agenda/refile.js";
@@ -127,7 +128,7 @@ describe("refile (same-file)", () => {
 
     const result = await refile(
       fp,
-      todo!.entryId,
+      { kind: "entry", entryId: todo!.entryId },
       {
         filePath: fp,
         relPath: fp,
@@ -137,6 +138,10 @@ describe("refile (same-file)", () => {
       DEFAULT_AGENDA_CONFIG,
     );
     expect(result.sameFile).toBe(true);
+    // The moved heading lands at body line 6 in the new file
+    // (1-based): "# Inbox", "", "# Projects", "ongoing", "",
+    //   "## TODO buy milk".
+    expect(result.insertedBodyLine).toBe(6);
 
     const out = readFileSync(fp, "utf8");
     expect(out).toBe(
@@ -169,7 +174,7 @@ describe("refile (same-file)", () => {
     await expect(
       refile(
         fp,
-        outer!.entryId,
+        { kind: "entry", entryId: outer!.entryId },
         { filePath: fp, relPath: fp, line: 2, level: 2 },
         DEFAULT_AGENDA_CONFIG,
       ),
@@ -184,7 +189,7 @@ describe("refile (same-file)", () => {
     await expect(
       refile(
         fp,
-        t!.entryId,
+        { kind: "entry", entryId: t!.entryId },
         { filePath: fp, relPath: fp, line: 1, level: 1 },
         DEFAULT_AGENDA_CONFIG,
       ),
@@ -215,7 +220,7 @@ describe("refile (same-file)", () => {
     await expect(
       refile(
         srcFp,
-        src!.entryId,
+        { kind: "entry", entryId: src!.entryId },
         { filePath: tgtFp, relPath: tgtFp, line: 1, level: 2 },
         DEFAULT_AGENDA_CONFIG,
       ),
@@ -237,9 +242,9 @@ describe("refile (same-file)", () => {
     );
     const page = makePage(fp, readFileSync(fp, "utf8"));
     const [src] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
-    await refile(
+    const result = await refile(
       fp,
-      src!.entryId,
+      { kind: "entry", entryId: src!.entryId },
       { filePath: fp, relPath: fp, line: null, level: 0 },
       DEFAULT_AGENDA_CONFIG,
     );
@@ -253,6 +258,8 @@ describe("refile (same-file)", () => {
         "body",
       ].join("\n"),
     );
+    // Top-of-file landing: heading at body line 5 (1-based).
+    expect(result.insertedBodyLine).toBe(5);
   });
 });
 
@@ -304,7 +311,7 @@ describe("refile (cross-file)", () => {
 
     await refile(
       srcFp,
-      todo!.entryId,
+      { kind: "entry", entryId: todo!.entryId },
       { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
       DEFAULT_AGENDA_CONFIG,
     );
@@ -356,7 +363,7 @@ describe("refile (cross-file)", () => {
     const [src] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
     await refile(
       srcFp,
-      src!.entryId,
+      { kind: "entry", entryId: src!.entryId },
       { filePath: tgtFp, relPath: "dest.md", line: 1, level: 1 },
       DEFAULT_AGENDA_CONFIG,
     );
@@ -378,10 +385,113 @@ describe("refile error surface", () => {
     await expect(
       refile(
         fp,
-        "deadbeefdeadbeef",
+        { kind: "entry", entryId: "deadbeefdeadbeef" },
         { filePath: fp, relPath: fp, line: null, level: 0 },
         DEFAULT_AGENDA_CONFIG,
       ),
     ).rejects.toBeInstanceOf(RefileError);
+  });
+
+  it("rejects a heading source whose (line, level) does not match disk", async () => {
+    const fp = join(dir, "stale.md");
+    writeFileSync(fp, "# Real\nbody\n", "utf8");
+    await expect(
+      refile(
+        fp,
+        { kind: "heading", line: 1, level: 2 }, // wrong level
+        { filePath: fp, relPath: fp, line: null, level: 0 },
+        DEFAULT_AGENDA_CONFIG,
+      ),
+    ).rejects.toMatchObject({ code: "heading-not-found" });
+  });
+});
+
+describe("refile (heading source — non-agenda)", () => {
+  it("moves a plain prose heading (no TODO / planning / timestamp) under another heading", async () => {
+    const fp = join(dir, "prose.md");
+    writeFileSync(
+      fp,
+      [
+        "# Inbox",
+        "## random thought",
+        "some text",
+        "",
+        "# Projects",
+        "ongoing",
+      ].join("\n"),
+      "utf8",
+    );
+    const result = await refile(
+      fp,
+      { kind: "heading", line: 2, level: 2 },
+      { filePath: fp, relPath: "prose.md", line: 5, level: 1 },
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(result.sameFile).toBe(true);
+    expect(result.sourceEntryId).toBeNull();
+    expect(readFileSync(fp, "utf8")).toBe(
+      [
+        "# Inbox",
+        "",
+        "# Projects",
+        "ongoing",
+        "",
+        "## random thought",
+        "some text",
+      ].join("\n"),
+    );
+  });
+
+  it("moves a non-agenda heading across files", async () => {
+    const srcFp = join(dir, "src.md");
+    const tgtFp = join(dir, "tgt.md");
+    writeFileSync(srcFp, ["# A", "## quiet", "details", "## keep me"].join("\n"), "utf8");
+    writeFileSync(tgtFp, "# Dest\n", "utf8");
+    await refile(
+      srcFp,
+      { kind: "heading", line: 2, level: 2 },
+      { filePath: tgtFp, relPath: "tgt.md", line: 1, level: 1 },
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(readFileSync(srcFp, "utf8")).toBe(["# A", "## keep me"].join("\n"));
+    expect(readFileSync(tgtFp, "utf8")).toBe(
+      ["# Dest", "", "## quiet", "details"].join("\n") + "\n",
+    );
+  });
+});
+
+describe("findEnclosingHeading", () => {
+  it("returns the largest heading line at or before the cursor body line", () => {
+    const body = [
+      "# Inbox",
+      "## random thought",
+      "text",
+      "# Projects",
+      "more",
+    ].join("\n");
+    expect(findEnclosingHeading(body, 1)).toMatchObject({ line: 1, level: 1 });
+    expect(findEnclosingHeading(body, 2)).toMatchObject({ line: 2, level: 2 });
+    expect(findEnclosingHeading(body, 3)).toMatchObject({ line: 2, level: 2 });
+    expect(findEnclosingHeading(body, 4)).toMatchObject({ line: 4, level: 1 });
+    expect(findEnclosingHeading(body, 5)).toMatchObject({ line: 4, level: 1 });
+  });
+
+  it("returns null when no heading exists at or before the cursor", () => {
+    const body = ["preamble", "more preamble", "# First"].join("\n");
+    expect(findEnclosingHeading(body, 1)).toBeNull();
+    expect(findEnclosingHeading(body, 2)).toBeNull();
+    expect(findEnclosingHeading(body, 0)).toBeNull();
+  });
+
+  it("ignores `# x` inside fenced code blocks", () => {
+    const body = [
+      "# Real",
+      "```",
+      "# Not a heading",
+      "```",
+      "after",
+    ].join("\n");
+    expect(findEnclosingHeading(body, 3)).toMatchObject({ line: 1, level: 1 });
+    expect(findEnclosingHeading(body, 5)).toMatchObject({ line: 1, level: 1 });
   });
 });

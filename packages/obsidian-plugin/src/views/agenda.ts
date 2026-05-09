@@ -43,7 +43,7 @@ import {
 import { vaultRoot } from "../paths.js";
 import type { OakOpenFile } from "../open-file.js";
 import type OakPlugin from "../main.js";
-import { refileEntry } from "../refile.js";
+import { refileHeading } from "../refile.js";
 import type { VaultSnapshot, VaultState } from "../state.js";
 
 export const VIEW_TYPE_OAK_AGENDA = "oak-agenda";
@@ -684,7 +684,18 @@ export class OakAgendaView extends ItemView {
       new Notice("oak: focus an entry first (j/k or click)");
       return;
     }
-    await refileEntry(this.plugin, target.entry, this.config);
+    await refileHeading(
+      this.plugin,
+      {
+        filePath: target.entry.filePath,
+        relPath: target.entry.relPath,
+        line: target.entry.line,
+        level: target.entry.level,
+        title: target.entry.title,
+        entryId: target.entry.entryId,
+      },
+      this.config,
+    );
   }
 
   private async markFocusedDone(): Promise<void> {

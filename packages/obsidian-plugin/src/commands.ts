@@ -17,7 +17,7 @@ import {
   buildGraph,
   checkpoint,
   composePage,
-  extractVaultAgendaEntries,
+  findEnclosingHeading,
   frontmatterLineCount,
   parseVault,
   partitionIssues,
@@ -25,7 +25,6 @@ import {
   PublishError,
   snapshot,
   validateVault,
-  type AgendaEntry,
   type Visibility,
 } from "@oak/core";
 
@@ -37,7 +36,7 @@ import {
 } from "./paths.js";
 import { findWikiTargetInLine } from "./wiki-cursor.js";
 import { extractFromSelection } from "./extract-selection.js";
-import { refileEntry } from "./refile.js";
+import { refileHeading } from "./refile.js";
 
 const VISIBILITIES: Visibility[] = ["private", "unlisted", "public"];
 
@@ -745,35 +744,19 @@ export async function openScratchHistory(plugin: OakPlugin): Promise<void> {
 }
 
 // Editor entrypoint for `oak-refile`. Resolves the cursor position to
-// the immediately enclosing agenda entry (heading at or above the
-// caret), then opens the target picker. Returns true when an entry was
-// found and the refile flow ran (or cancelled cleanly), false when no
-// suitable entry exists at the cursor — the latter lets
-// `editorCheckCallback` grey the command out.
-export function findEnclosingEntry(
-  plugin: OakPlugin,
-  filePath: string,
-  cursorFileLine: number,
+// the immediately enclosing heading (any heading — TODO state, planning
+// line, and active timestamp are NOT required, mirroring emacs
+// `org-refile` which works on any heading). Returns null when the
+// cursor sits in frontmatter or above the first heading.
+export function findHeadingAtCursor(
   raw: string,
-): AgendaEntry | null {
-  const snap = plugin.state.current();
-  if (!snap) return null;
+  cursorFileLine: number,
+): { line: number; level: number; title: string } | null {
   const fmLines = frontmatterLineCount(raw);
   const cursorBodyLine = cursorFileLine - fmLines + 1;
   if (cursorBodyLine < 1) return null;
-  // Iterate the snapshot's entries for this file. Pick the entry whose
-  // body-line is the largest still <= the cursor body-line; that's the
-  // immediately enclosing heading (the snapshot already deduplicates
-  // sibling entries with line suffixes so duplicates pick the right
-  // one).
-  const entries = extractVaultAgendaEntries(snap.vault, plugin.agendaConfig);
-  let best: AgendaEntry | null = null;
-  for (const e of entries) {
-    if (e.filePath !== filePath) continue;
-    if (e.line > cursorBodyLine) continue;
-    if (!best || e.line > best.line) best = e;
-  }
-  return best;
+  const body = raw.split("\n").slice(fmLines).join("\n");
+  return findEnclosingHeading(body, cursorBodyLine);
 }
 
 export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
@@ -782,15 +765,24 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
     new Notice("oak: open a markdown file first");
     return;
   }
-  const filePath = `${vaultRoot(plugin.app)}/${view.file.path}`;
   const cursor = view.editor.getCursor();
   const raw = await plugin.app.vault.cachedRead(view.file);
-  const entry = findEnclosingEntry(plugin, filePath, cursor.line, raw);
-  if (!entry) {
-    new Notice("oak: place the cursor inside an agenda heading to refile");
+  const heading = findHeadingAtCursor(raw, cursor.line);
+  if (!heading) {
+    new Notice("oak: place the cursor inside a heading to refile");
     return;
   }
-  await refileEntry(plugin, entry, plugin.agendaConfig);
+  await refileHeading(
+    plugin,
+    {
+      filePath: `${vaultRoot(plugin.app)}/${view.file.path}`,
+      relPath: view.file.path,
+      line: heading.line,
+      level: heading.level,
+      title: heading.title,
+    },
+    plugin.agendaConfig,
+  );
 }
 
 export async function runMount(plugin: OakPlugin): Promise<void> {

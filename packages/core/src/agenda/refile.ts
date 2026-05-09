@@ -45,6 +45,7 @@ export class RefileError extends Error {
     message: string,
     public readonly code:
       | "entry-not-found"
+      | "heading-not-found"
       | "target-not-found"
       | "self-refile"
       | "descendant-target"
@@ -56,6 +57,20 @@ export class RefileError extends Error {
     this.name = "RefileError";
   }
 }
+
+// Identify the source heading to refile.
+//   - "entry": look the heading up via parseAgendaPage by its stable
+//     entryId. Robust against between-snapshot-and-write drift; required
+//     by the agenda view (where the only handle on a heading is its
+//     id).
+//   - "heading": pin the source by its current body line + level. Used
+//     by the editor command, where the cursor already gives us a
+//     concrete location and the heading may not be agenda-worthy (no
+//     TODO state, no planning line, no active timestamp) so the agenda
+//     parser would not yield it.
+export type RefileSource =
+  | { kind: "entry"; entryId: string }
+  | { kind: "heading"; line: number; level: number };
 
 export type RefileTarget = {
   // Vault-relative path of the destination file.
@@ -75,9 +90,19 @@ export type RefileTarget = {
 
 export type RefileResult = {
   sourceRelPath: string;
-  sourceEntryId: string;
+  // Stable handle of the source heading when the caller identified it
+  // via `{ kind: "entry" }`; null when the caller pinned by line+level
+  // (the heading is not necessarily agenda-worthy, so it has no
+  // derivable entryId from this code path).
+  sourceEntryId: string | null;
   targetRelPath: string;
   targetLine: number | null;
+  // 1-based body line of the moved heading in the target file, *after*
+  // the write. Lets the UI scroll a peek pane to the actual landing
+  // spot instead of just the destination heading (which can be far
+  // above the new content for large subtrees) or the file root (which
+  // would be wrong for top-of-file refiles that append at EOF).
+  insertedBodyLine: number;
   // Number of lines in the moved subtree.
   movedLines: number;
   // Whether source and target are the same file.
@@ -122,6 +147,26 @@ function scanHeadings(
 function basenameNoExt(relPath: string): string {
   const last = relPath.split("/").pop() ?? relPath;
   return last.replace(/\.md$/i, "");
+}
+
+// Find the heading whose subtree contains `bodyLine` (1-based, body-
+// relative). Returns null when `bodyLine` is at or before the first
+// heading. Walks every ATX heading once, fence-aware. Used by the
+// editor refile entrypoint to identify the heading at the cursor for
+// any heading — including non-agenda ones (no TODO/planning/active
+// timestamp) that `parseAgendaPage` would skip.
+export function findEnclosingHeading(
+  body: string,
+  bodyLine: number,
+): { line: number; level: number; title: string } | null {
+  if (bodyLine < 1) return null;
+  const headings = scanHeadings(body);
+  let best: { line: number; level: number; title: string } | null = null;
+  for (const h of headings) {
+    if (h.line > bodyLine) break;
+    best = h;
+  }
+  return best;
 }
 
 // Build the full list of refile targets across `vault`. For every page
@@ -273,18 +318,22 @@ function shiftHeadingLevels(lines: string[], delta: number): boolean {
 
 // Trim trailing empty lines from `subtree` and ensure exactly one
 // blank-line separator between the existing body up to `insertAt` and
-// the inserted block. Returns the new lines array.
+// the inserted block. Returns the new lines array along with the
+// 0-based index of the first inserted line (the heading itself) inside
+// the new array — callers use it to compute where to scroll.
 function spliceWithSeparator(
   body: string[],
   insertAt: number,
   subtree: string[],
-): string[] {
+): { lines: string[]; headingIdx: number } {
   // Strip trailing empties from subtree so we don't accumulate them on
   // repeated refiles.
   let end = subtree.length;
   while (end > 0 && subtree[end - 1]!.trim().length === 0) end--;
   const trimmed = subtree.slice(0, end);
-  if (trimmed.length === 0) return body.slice();
+  if (trimmed.length === 0) {
+    return { lines: body.slice(), headingIdx: insertAt };
+  }
 
   // Decide leading separator: a single blank line before the subtree
   // unless we are inserting at index 0 of an empty file.
@@ -298,7 +347,10 @@ function spliceWithSeparator(
   // Trailing blank line so the next sibling/parent content is not glued
   // onto the moved subtree.
   if (tail.length > 0 && tail[0]!.trim().length !== 0) middle.push("");
-  return [...head, ...middle, ...tail];
+  return {
+    lines: [...head, ...middle, ...tail],
+    headingIdx: head.length + (needsLeadingBlank ? 1 : 0),
+  };
 }
 
 async function readWithStat(
@@ -379,7 +431,7 @@ export type RefileLocation = {
 
 export async function refile(
   sourceFilePath: string,
-  sourceEntryId: string,
+  source: RefileSource,
   target: RefileLocation,
   config: AgendaConfig,
   sourceRelPath?: string,
@@ -387,23 +439,47 @@ export async function refile(
   const src = await readWithStat(sourceFilePath);
   const srcRelPath = sourceRelPath ?? sourceFilePath;
   const srcSplit = splitFrontmatter(src.raw);
-  const srcPage = makeOakPage(sourceFilePath, srcSplit.body, srcRelPath);
-  const entries = parseAgendaPage(srcPage, config);
-  const sourceEntry = entries.find((e) => e.entryId === sourceEntryId);
-  if (!sourceEntry) {
-    throw new RefileError(
-      `entry ${sourceEntryId} not found in ${sourceFilePath}`,
-      "entry-not-found",
+
+  let sourceLevel: number;
+  let sourceBodyLine: number;
+  let resolvedEntryId: string | null = null;
+  if (source.kind === "entry") {
+    const srcPage = makeOakPage(sourceFilePath, srcSplit.body, srcRelPath);
+    const entries = parseAgendaPage(srcPage, config);
+    const sourceEntry = entries.find((e) => e.entryId === source.entryId);
+    if (!sourceEntry) {
+      throw new RefileError(
+        `entry ${source.entryId} not found in ${sourceFilePath}`,
+        "entry-not-found",
+      );
+    }
+    sourceLevel = sourceEntry.level;
+    sourceBodyLine = sourceEntry.line;
+    resolvedEntryId = source.entryId;
+  } else {
+    // Verify a heading actually sits at the requested (line, level) so
+    // a stale caller does not silently slice the wrong region. This is
+    // the line+level analogue of the entryId existence check above.
+    const headings = scanHeadings(srcSplit.body);
+    const ok = headings.some(
+      (h) => h.line === source.line && h.level === source.level,
     );
+    if (!ok) {
+      throw new RefileError(
+        `no heading at ${sourceFilePath}:${source.line} (level ${source.level})`,
+        "heading-not-found",
+      );
+    }
+    sourceLevel = source.level;
+    sourceBodyLine = source.line;
   }
-  const sourceLevel = sourceEntry.level;
-  const sourceBodyLine = sourceEntry.line;
 
   const sameFile = src.resolved === (await safeRealpath(target.filePath));
 
   // Compute subtree from source body.
-  const sourceBodyLines = srcPage.body.split("\n");
-  const range = subtreeRange(srcPage.body, sourceBodyLine, sourceLevel);
+  const srcBody = srcSplit.body;
+  const sourceBodyLines = srcBody.split("\n");
+  const range = subtreeRange(srcBody, sourceBodyLine, sourceLevel);
   const subtree = sourceBodyLines.slice(range.start, range.end);
 
   // Refuse refiling onto self or into own descendant.
@@ -470,14 +546,15 @@ export async function refile(
       insertBodyLine = insertionRangeForTarget(cutBody, adjusted, target.level);
     }
     const merged = spliceWithSeparator(cutBodyLines, insertBodyLine, shifted);
-    const updatedBody = merged.join("\n");
+    const updatedBody = merged.lines.join("\n");
     const updated = replaceBody(src.raw, updatedBody);
     await atomicWrite(src.resolved, updated, src.mtimeMs, src.mode);
     return {
       sourceRelPath: srcRelPath,
-      sourceEntryId,
+      sourceEntryId: resolvedEntryId,
       targetRelPath: target.relPath,
       targetLine: target.line,
+      insertedBodyLine: merged.headingIdx + 1,
       movedLines: range.end - range.start,
       sameFile: true,
     };
@@ -495,7 +572,7 @@ export async function refile(
     target.level,
   );
   const mergedTgt = spliceWithSeparator(tgtBodyLines, insertBodyLine, shifted);
-  const updatedTgt = replaceBody(tgt.raw, mergedTgt.join("\n"));
+  const updatedTgt = replaceBody(tgt.raw, mergedTgt.lines.join("\n"));
   await atomicWrite(tgt.resolved, updatedTgt, tgt.mtimeMs, tgt.mode);
 
   const cutSrcBodyLines = [
@@ -507,9 +584,10 @@ export async function refile(
 
   return {
     sourceRelPath: srcRelPath,
-    sourceEntryId,
+    sourceEntryId: resolvedEntryId,
     targetRelPath: target.relPath,
     targetLine: target.line,
+    insertedBodyLine: mergedTgt.headingIdx + 1,
     movedLines: range.end - range.start,
     sameFile: false,
   };
