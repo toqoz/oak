@@ -7,10 +7,14 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "@oak/core": "workspace:*",
     "astro": "^5.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.4.0"
   }
 }

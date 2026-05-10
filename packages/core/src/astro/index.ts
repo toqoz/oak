@@ -10,7 +10,7 @@
 // when astro is installed in the consumer.
 
 import { fileURLToPath } from "node:url";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import type { Loader, LoaderContext } from "astro/loaders";
 
@@ -163,24 +163,52 @@ export function oakLoader(options: OakLoaderOptions): Loader {
     load: async (ctx: LoaderContext): Promise<void> => {
       // ctx.config.root is a file:// URL pointing at the project root.
       const projectRoot = fileURLToPath(ctx.config.root);
-      const { count } = await loadOakPagesInto(
-        ctx.store,
-        ctx.generateDigest,
-        options,
-        projectRoot,
-        ctx.renderMarkdown,
-      );
-      ctx.logger.info(
-        `oak: loaded ${count} page(s) from ${
-          isAbsolute(options.vault)
-            ? options.vault
-            : relative(projectRoot, options.vault) || options.vault
-        }`,
-      );
-      // TODO(watcher): hook ctx.watcher in dev mode so edits to the
-      // vault re-trigger this loader. Astro currently doesn't surface
-      // an officially blessed pattern for this in custom loaders;
-      // revisit once it does.
+      const reload = async (): Promise<void> => {
+        const { count } = await loadOakPagesInto(
+          ctx.store,
+          ctx.generateDigest,
+          options,
+          projectRoot,
+          ctx.renderMarkdown,
+        );
+        ctx.logger.info(
+          `oak: loaded ${count} page(s) from ${
+            isAbsolute(options.vault)
+              ? options.vault
+              : relative(projectRoot, options.vault) || options.vault
+          }`,
+        );
+      };
+
+      await reload();
+
+      // In dev, ctx.watcher is a chokidar instance Astro has already
+      // wired into its own change loop. We tell it about the vault so
+      // edits there surface to the loader, then debounce because chokidar
+      // floods 2-3 events per editor save.
+      if (ctx.watcher) {
+        const vaultAbs = isAbsolute(options.vault)
+          ? options.vault
+          : resolve(projectRoot, options.vault);
+        ctx.watcher.add(vaultAbs);
+
+        let pending: NodeJS.Timeout | null = null;
+        const onChange = (path: string): void => {
+          // Filter to markdown only — chokidar fires for asset writes
+          // too, and parseVault only cares about .md.
+          if (!path.endsWith(".md")) return;
+          if (pending) clearTimeout(pending);
+          pending = setTimeout(() => {
+            pending = null;
+            void reload().catch((e) =>
+              ctx.logger.error(`oak: reload failed: ${(e as Error).message}`),
+            );
+          }, 80);
+        };
+        ctx.watcher.on("add", onChange);
+        ctx.watcher.on("change", onChange);
+        ctx.watcher.on("unlink", onChange);
+      }
     },
   };
 }

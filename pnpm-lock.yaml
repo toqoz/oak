@@ -97,6 +97,10 @@ importers:
       astro:
         specifier: ^5.0.0
         version: 5.18.1(@types/node@22.19.17)(rollup@4.60.3)(typescript@5.9.3)
+    devDependencies:
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.1(@types/node@22.19.17)
 
 packages:
 

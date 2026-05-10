@@ -61,12 +61,15 @@ export class PubError extends Error {
 }
 
 // Files inside the template package that should never be copied into
-// a user's vault (build artifacts, vendored deps, package metadata).
+// a user's vault (build artifacts, vendored deps, monorepo internals,
+// the template's own test infrastructure).
 const SCAFFOLD_SKIP = new Set([
   "node_modules",
   "dist",
   ".astro",
   ".turbo",
+  "tests",
+  "vitest.config.ts",
 ]);
 
 async function pathExists(p: string): Promise<boolean> {
