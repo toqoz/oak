@@ -6,6 +6,7 @@
 
 import { stat } from "node:fs/promises";
 
+import { isManagedPage } from "./parse.js";
 import type {
   Backlink,
   Graph,
@@ -120,13 +121,6 @@ function countInbound(backlinks: Backlink[]): number {
   return set.size;
 }
 
-function isUnmanaged(page: { parseIssues: { code: string }[] }): boolean {
-  for (const issue of page.parseIssues) {
-    if (issue.code === "missing-id") return true;
-  }
-  return false;
-}
-
 export async function homeViewModel(
   vault: Vault,
   graph: Graph,
@@ -151,7 +145,7 @@ export async function homeViewModel(
   const all: HomeEntry[] = [];
   const unmanaged: UnmanagedEntry[] = [];
   for (const page of vault.pages.values()) {
-    if (isUnmanaged(page)) {
+    if (!isManagedPage(page)) {
       stats.unmanaged++;
       unmanaged.push({
         vaultRelPath: page.relPath,

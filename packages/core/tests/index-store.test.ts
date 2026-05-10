@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { mkdtemp, rm, cp } from "node:fs/promises";
+import { mkdtemp, rm, cp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 import {
@@ -84,6 +84,35 @@ describe("writeIndex", () => {
       "SELECT code FROM issues",
     );
     expect(codes.map((r) => r.code)).toContain("private-leak");
+  });
+
+  it("excludes unmanaged files from the pages table but still records the missing-id issue", async () => {
+    const vaultPath = await copyFixture("basic");
+    await writeFile(
+      resolve(vaultPath, "dropped.md"),
+      "# Dropped\n\nbody\n",
+      "utf8",
+    );
+    const vault = await parseVault(vaultPath);
+    const graph = buildGraph(vault);
+    const issues = validateVault(vault, graph);
+    const stats = await writeIndex(vault, graph, issues);
+
+    // basic fixture has 3 managed pages; dropped.md is unmanaged and
+    // must not be counted.
+    expect(stats.pages).toBe(3);
+    const relPaths = queryIndex<{ rel_path: string }>(
+      stats.dbPath,
+      "SELECT rel_path FROM pages",
+    );
+    expect(relPaths.map((r) => r.rel_path)).not.toContain("dropped.md");
+
+    // The reason it's absent is still discoverable via the issues table.
+    const codes = queryIndex<{ code: string }>(
+      stats.dbPath,
+      "SELECT code FROM issues WHERE file_path LIKE '%dropped.md'",
+    );
+    expect(codes.map((r) => r.code)).toContain("missing-id");
   });
 
   it("rebuilds cleanly: subsequent writes do not duplicate rows", async () => {
