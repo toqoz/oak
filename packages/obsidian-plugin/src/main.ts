@@ -10,8 +10,8 @@ import {
   MarkdownView,
   Menu,
   Notice,
-  Platform,
   Plugin,
+  Scope,
   TFile,
   WorkspaceLeaf,
   setIcon,
@@ -353,17 +353,27 @@ export default class OakPlugin extends Plugin {
       { capture: true },
     );
     // Same idea for Mod+P: in oak mode, the system command palette gets
-    // pre-empted by our oak-only palette. Capture phase + the three
-    // stop-propagation calls keep Obsidian's hotkey dispatcher from
-    // also firing `command-palette:open` on the same keystroke. The
-    // oak palette itself carries an "Open system command palette…"
+    // pre-empted by our oak-only palette. Raw keydown listeners (even at
+    // window-capture) can't preempt Obsidian's own hotkey dispatcher —
+    // its listener was registered first, runs first, and opens the
+    // system palette before our handler gets a chance. Instead we push
+    // a scope onto `app.keymap`, so when Obsidian's dispatcher walks
+    // the scope chain it hits our `Mod+P` handler at the top of the
+    // stack and never gets to the built-in `command-palette:open`
+    // binding. Returning `false` calls preventDefault and stops further
+    // dispatch in the scope chain. When oak mode is off we return
+    // `undefined` so the dispatcher falls through to the parent scope.
+    // The oak palette itself carries an "Open system command palette…"
     // escape hatch for the times the full set is needed.
-    this.registerDomEvent(
-      document,
-      "keydown",
-      (ev) => this.maybeInterceptCommandPalette(ev),
-      { capture: true },
-    );
+    const oakKeyScope = new Scope(this.app.scope);
+    oakKeyScope.register(["Mod"], "p", (ev) => {
+      if (!document.body.classList.contains("oak-mode-active")) return;
+      ev.preventDefault();
+      openOakCommandPalette(this.app);
+      return false;
+    });
+    this.app.keymap.pushScope(oakKeyScope);
+    this.register(() => this.app.keymap.popScope(oakKeyScope));
     this.addCommand({
       id: "oak-validate",
       name: "Validate vault",
@@ -696,25 +706,6 @@ export default class OakPlugin extends Plugin {
       view: window,
     });
     target.dispatchEvent(replay);
-  }
-
-  // Cmd+P (mac) / Ctrl+P (others) → oak palette, in oak mode only.
-  // Modifiers must match `Mod+P` exactly: any extra modifier (Shift,
-  // Alt, the *other* primary modifier) falls through to whatever else
-  // is bound. We deliberately ignore IME composition events — those
-  // arrive with `key === "Process"` and shouldn't trigger anything.
-  private maybeInterceptCommandPalette(ev: KeyboardEvent): void {
-    if (!document.body.classList.contains("oak-mode-active")) return;
-    if (ev.key !== "p" && ev.key !== "P") return;
-    if (ev.altKey || ev.shiftKey || ev.isComposing) return;
-    const wantsMeta = Platform.isMacOS;
-    if (wantsMeta ? !ev.metaKey || ev.ctrlKey : !ev.ctrlKey || ev.metaKey) {
-      return;
-    }
-    ev.preventDefault();
-    ev.stopPropagation();
-    ev.stopImmediatePropagation();
-    openOakCommandPalette(this.app);
   }
 
   // Open (or refocus) a Ghost View for a redlink target. Plain
