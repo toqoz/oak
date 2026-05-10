@@ -19,6 +19,7 @@ The agenda view has its own focus scope. While it is focused:
 | `Enter` | Open the focused item at its source line |
 | `d` | Mark focused entry DONE (or advance its repeater) |
 | `r` | Force a vault re-scan |
+| `Shift-R` | Refile focused entry (move heading + subtree elsewhere) |
 
 Click on any row to focus + open it. `Esc` returns focus to Obsidian.
 
@@ -107,6 +108,13 @@ Tags on an ancestor heading flow down to descendants. Frontmatter tags
 and `#+FILETAGS:` are intentionally not supported — put a top-level
 heading with the desired tags instead.
 
+## Refile (`Shift-R`)
+
+`Shift-R` on the focused entry refiles the heading + subtree to a
+user-picked destination. Refile is a separate feature with its own
+docs and config — see [Refile](refile.md) for the full picker, peek
+pane, multi-section selection, and `.oak/refile.yml` semantics.
+
 ## DONE behavior (`d`)
 
 - No repeater: the keyword is rewritten to the first entry of
@@ -179,3 +187,5 @@ entry has no explicit `[#X]` — set it to the same letter you reach
 for most often so unprioritized items rank with their natural cohort.
 
 Edits to this file are picked up on the next vault refresh (`r`).
+Refile-specific knobs (e.g. the heading level for top-of-file refile)
+live in `.oak/refile.yml`; see [Refile](refile.md).
