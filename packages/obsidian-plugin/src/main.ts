@@ -2038,28 +2038,24 @@ export default class OakPlugin extends Plugin {
     slot.__oakPeekEsc = handler;
   }
 
-  // Re-bind `this.refilePeekLeaf` from the persisted id after Obsidian
-  // restores the workspace. If the id no longer matches any leaf
-  // (user closed the peek between sessions, or a workspace reset
-  // dropped the layout) we clear the persisted id so the next refile
-  // starts clean.
+  // After Obsidian restores the workspace, look for a leaf that
+  // matches the persisted peek id from the previous session. We do
+  // NOT re-claim it as the active peek — peek state (chrome, dim
+  // class, escape handler, refilePeekBaseLeaf, refilePeekEngaged) is
+  // ephemeral and lost across reload. Instead we detach the orphaned
+  // leaf so the next refile creates a fresh peek below the current
+  // main. Without this, the first refile of the new session reuses
+  // the orphaned leaf — which Obsidian has likely placed in a screen
+  // position unrelated to the user's current main, causing the
+  // destination to "jump to an unrelated location".
   private restoreRefilePeekFromSettings(): void {
     const id = this.settings.refilePeekLeafId;
+    this.settings.refilePeekLeafId = null;
+    void this.saveSettings();
     if (!id) return;
-    let found: WorkspaceLeaf | null = null;
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (found) return;
-      if (leafId(leaf) === id) found = leaf;
+      if (leafId(leaf) === id) leaf.detach();
     });
-    if (found) {
-      this.refilePeekLeaf = found;
-      // Re-attach the Esc handler since the DOM was rebuilt by
-      // Obsidian when restoring the workspace.
-      this.bindRefilePeekEscape(found);
-    } else {
-      this.settings.refilePeekLeafId = null;
-      void this.saveSettings();
-    }
   }
 
   async toggleScratch(triggerLeaf?: WorkspaceLeaf): Promise<void> {
