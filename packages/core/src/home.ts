@@ -54,13 +54,15 @@ export type HomeViewOptions = {
 const STRIP_WIKI = /!?\[\[([^\]\n]+)\]\]/g;
 const STRIP_FENCED = /```[\s\S]*?```/g;
 const STRIP_INLINE_CODE = /`[^`\n]*`/g;
-const STRIP_HEADING = /^#{1,6}\s+/gm;
+const STRIP_LINE_MARKERS =
+  /^(?:#{1,6}\s+|>\s*|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+\.\s+)+/;
 const COLLAPSE_WS = /\s+/g;
 
 export function excerptFrom(body: string, maxChars = 200): string {
-  // Strip non-prose syntax first, then look at paragraphs. Heading-only
-  // paragraphs (e.g. the page's `# Title` line) are skipped so the
-  // excerpt reads as the first real prose, not the title.
+  // Strip non-prose syntax first, then walk every line so headings and
+  // list items contribute their text to the excerpt. The page's leading
+  // `# Title` line is skipped so the excerpt isn't redundant with the
+  // card title.
   const cleaned = body
     .replace(STRIP_FENCED, "")
     .replace(STRIP_INLINE_CODE, "")
@@ -70,19 +72,19 @@ export function excerptFrom(body: string, maxChars = 200): string {
       return label.split("#")[0]!.trim();
     })
     .trim();
-  const paragraphs = cleaned.split(/\n\s*\n/);
-  let chosen = "";
-  for (const para of paragraphs) {
-    const trimmed = para.trim();
-    if (trimmed.length === 0) continue;
-    const lines = trimmed.split("\n");
-    const allHeading = lines.every(
-      (l) => l.trim().length === 0 || /^#{1,6}\s+/.test(l.trim()),
-    );
-    if (allHeading) continue;
-    chosen = trimmed.replace(STRIP_HEADING, "").replace(COLLAPSE_WS, " ");
-    break;
+  const parts: string[] = [];
+  let titleSkipped = false;
+  for (const rawLine of cleaned.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    if (!titleSkipped && /^#\s+/.test(line)) {
+      titleSkipped = true;
+      continue;
+    }
+    const text = line.replace(STRIP_LINE_MARKERS, "").trim();
+    if (text.length > 0) parts.push(text);
   }
+  const chosen = parts.join(" ").replace(COLLAPSE_WS, " ").trim();
   if (chosen.length <= maxChars) return chosen;
   return `${chosen.slice(0, maxChars).trimEnd()}…`;
 }
