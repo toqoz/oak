@@ -28,19 +28,27 @@
   "dependencies": {
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.0",
-    "markdown-it": "^14.1.0",
-    "ulid": "^2.3.0"
+    "ulid": "^2.3.0",
+    "unist-util-visit": "^5.0.0"
   },
   "peerDependencies": {
-    "astro": ">=5.0.0"
+    "astro": ">=5.0.0",
+    "unified": ">=11.0.0"
   },
   "peerDependenciesMeta": {
     "astro": {
+      "optional": true
+    },
+    "unified": {
       "optional": true
     }
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
-    "@types/markdown-it": "^14.1.2"
+    "@types/mdast": "^4.0.4",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.0",
+    "rehype-stringify": "^10.0.0",
+    "unified": "^11.0.5"
   }
 }

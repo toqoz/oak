@@ -14,7 +14,14 @@ import { normalizeKey } from "./slug.js";
 const EXTERNAL_PREFIX = "_external/";
 
 function resolveOne(vault: Vault, link: RawLink): LinkResolution {
-  const targetRaw = link.target.trim();
+  return resolveTarget(vault, link.target);
+}
+
+// Resolve a wiki/markdown link target string against a vault. Exposed
+// so renderer plugins (e.g. @oak/core/remark) can map `[[X]]` to a
+// page id without constructing a synthetic RawLink.
+export function resolveTarget(vault: Vault, target: string): LinkResolution {
+  const targetRaw = target.trim();
   if (targetRaw.length === 0) {
     return { status: "invalid", reason: "empty link target" };
   }
@@ -26,10 +33,6 @@ function resolveOne(vault: Vault, link: RawLink): LinkResolution {
     const key = normalizeKey(noExt);
 
     if (noExt.startsWith(EXTERNAL_PREFIX)) {
-      // External documents must be resolved via the byVaultRelPath table,
-      // which is only populated for configured & existing mounts. If the
-      // mount does not exist, surface as `external` with a synthetic id so
-      // downstream leak checks can still flag the link.
       const id = vault.byVaultRelPath.get(key);
       if (id !== undefined) {
         return { status: "external", externalId: id };
@@ -42,7 +45,6 @@ function resolveOne(vault: Vault, link: RawLink): LinkResolution {
 
     const hit = vault.byVaultRelPath.get(key);
     if (hit !== undefined) {
-      // Could be a page or external. byVaultRelPath stores both, so check.
       if (vault.pages.has(hit)) return { status: "resolved", targetId: hit };
       if (vault.externals.has(hit))
         return { status: "external", externalId: hit };

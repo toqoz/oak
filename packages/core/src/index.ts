@@ -24,6 +24,7 @@ export type {
 export {
   buildGraph,
   resolveLinks,
+  resolveTarget,
   getOutboundLinks,
   getBacklinks,
   getTwoHopLinks,
