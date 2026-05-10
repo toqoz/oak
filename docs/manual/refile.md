@@ -76,6 +76,14 @@ Peek dismissal behaves like a transient inspection panel:
 Same-file refiles skip the peek — the source view is already showing
 the updated buffer.
 
+Refiling again from inside the peek (a peek-to-peek hop) keeps the
+"source = main, destination = peek" shape consistent: the file
+currently in the peek (the one you are refiling out of) is moved up
+into the main slot it was originally split from, the old peek is
+detached, and the new destination opens in a fresh peek below. The
+file that previously occupied the main slot is dropped from view but
+preserved in that leaf's tab history (← walks back to it).
+
 ## Configuration — `.oak/refile.yml`
 
 All keys are optional. Defaults shown.

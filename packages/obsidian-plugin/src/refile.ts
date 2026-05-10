@@ -18,6 +18,7 @@ import {
   Notice,
   TFile,
   type App,
+  type WorkspaceLeaf,
 } from "obsidian";
 
 import {
@@ -149,12 +150,34 @@ export async function refileHeadings(
   sources: RefileSourceDescriptor[],
   refileConfig: RefileConfig,
   agendaConfig: AgendaConfig,
+  opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
 ): Promise<void> {
   if (sources.length === 0) return;
   if (sources.length === 1) {
-    await refileHeading(plugin, sources[0]!, refileConfig, agendaConfig);
+    await refileHeading(plugin, sources[0]!, refileConfig, agendaConfig, opts);
     return;
   }
+  plugin.beginRefile();
+  try {
+    await refileHeadingsInner(
+      plugin,
+      sources,
+      refileConfig,
+      agendaConfig,
+      opts,
+    );
+  } finally {
+    plugin.endRefile();
+  }
+}
+
+async function refileHeadingsInner(
+  plugin: OakPlugin,
+  sources: RefileSourceDescriptor[],
+  refileConfig: RefileConfig,
+  agendaConfig: AgendaConfig,
+  opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
+): Promise<void> {
 
   const snap = plugin.state.current();
   if (!snap) {
@@ -247,7 +270,22 @@ export async function refileHeadings(
         const targetRaw = await plugin.app.vault.cachedRead(targetFile);
         const fileLine =
           lastInsertedBodyLine - 1 + frontmatterLineCount(targetRaw);
-        await plugin.revealRefileTarget(targetFile, fileLine);
+        // Resolve the source TFile up front. Required by the
+        // peek-promotion path: core's atomic-rename writes can leave
+        // the peek view's `.file` transiently null, so the workspace
+        // can't be trusted as a fallback. All multi-source calls
+        // share a single source file (by invariant), so picking the
+        // first source's relPath is fine.
+        const firstSource = sources[0]!;
+        const sourceAbs = plugin.app.vault.getAbstractFileByPath(
+          firstSource.relPath,
+        );
+        const sourceFile = sourceAbs instanceof TFile ? sourceAbs : undefined;
+        await plugin.revealRefileTarget(targetFile, fileLine, {
+          sourceLeaf: opts.sourceLeaf,
+          sourceFile,
+          isPeekSource: opts.isPeekSource,
+        });
       }
     }
   } else if (failureMessage) {
@@ -263,6 +301,28 @@ export async function refileHeading(
   source: RefileSourceDescriptor,
   refileConfig: RefileConfig,
   agendaConfig: AgendaConfig,
+  opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
+): Promise<void> {
+  plugin.beginRefile();
+  try {
+    await refileHeadingInner(
+      plugin,
+      source,
+      refileConfig,
+      agendaConfig,
+      opts,
+    );
+  } finally {
+    plugin.endRefile();
+  }
+}
+
+async function refileHeadingInner(
+  plugin: OakPlugin,
+  source: RefileSourceDescriptor,
+  refileConfig: RefileConfig,
+  agendaConfig: AgendaConfig,
+  opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
 ): Promise<void> {
   const snap = plugin.state.current();
   if (!snap) {
@@ -318,7 +378,18 @@ export async function refileHeading(
         const targetRaw = await plugin.app.vault.cachedRead(targetFile);
         const fileLine =
           result.insertedBodyLine - 1 + frontmatterLineCount(targetRaw);
-        await plugin.revealRefileTarget(targetFile, fileLine);
+        // Resolve the source TFile up front — promotion can't
+        // depend on `peek.view.file` because core's atomic-rename
+        // write briefly clears it.
+        const sourceAbs = plugin.app.vault.getAbstractFileByPath(
+          source.relPath,
+        );
+        const sourceFile = sourceAbs instanceof TFile ? sourceAbs : undefined;
+        await plugin.revealRefileTarget(targetFile, fileLine, {
+          sourceLeaf: opts.sourceLeaf,
+          sourceFile,
+          isPeekSource: opts.isPeekSource,
+        });
       }
     }
   } catch (err) {

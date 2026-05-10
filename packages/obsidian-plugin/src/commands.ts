@@ -784,6 +784,13 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
     return;
   }
   const editor = view.editor;
+  // Capture the source-is-peek flag synchronously, BEFORE any await.
+  // A transient closeRefilePeek (auto-close on focus shift, Esc) can
+  // null the plugin's `refilePeekLeaf` mid-flow; this snapshot
+  // preserves the truth as seen at command-start time so the peek
+  // promotion logic still fires.
+  const sourceLeaf = view.leaf;
+  const isPeekSource = sourceLeaf === plugin.peekLeaf();
   const raw = await plugin.app.vault.cachedRead(view.file);
   const filePath = `${vaultRoot(plugin.app)}/${view.file.path}`;
   const relPath = view.file.path;
@@ -809,6 +816,7 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
         })),
         plugin.refileConfig,
         plugin.agendaConfig,
+        { sourceLeaf, isPeekSource },
       );
       return;
     }
@@ -831,6 +839,7 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
     },
     plugin.refileConfig,
     plugin.agendaConfig,
+    { sourceLeaf, isPeekSource },
   );
 }
 

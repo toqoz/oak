@@ -93,12 +93,30 @@ export default class OakPlugin extends Plugin {
   // source so a follow-up refile can run immediately, and the peek
   // pane updates in place instead of stacking new splits.
   private refilePeekLeaf: WorkspaceLeaf | null = null;
+  // The leaf the current peek was split from. We hang onto it so a
+  // peek-to-peek refile (the user refiles again while focused inside
+  // the peek) can promote the peek's file back into this main slot
+  // — keeping the "source-of-refile = main, destination = peek"
+  // invariant after every hop. Cleared when the peek closes, and not
+  // persisted: a workspace reload starts from a clean peek.
+  private refilePeekBaseLeaf: WorkspaceLeaf | null = null;
   // Tracks whether the user has actually focused the peek pane at
   // least once. We only auto-close on focus-leave once the user has
   // engaged with the peek — otherwise the peek would dismiss itself
   // immediately on creation (the source leaf retains focus by
   // design).
   private refilePeekEngaged = false;
+  // Suppresses the peek's auto-close-on-focus-leave for the duration
+  // of an in-flight refile. Otherwise the picker modal opening, the
+  // core's atomic-rename write, or any other transient focus shift
+  // away from the peek would call closeRefilePeek() mid-flow and
+  // strand the promotion logic with a null `refilePeekLeaf`.
+  // Counter (not boolean) so nested begin/end pairs from commands.ts
+  // and refile.ts compose without one prematurely lifting the gate.
+  private refileInProgressCount = 0;
+  private get refileInProgress(): boolean {
+    return this.refileInProgressCount > 0;
+  }
   // When the user picks "Show default menu" from the oak context
   // menu, we re-dispatch a fresh `contextmenu` event so Obsidian's
   // own handler runs and shows the native menu. This flag tells our
@@ -1774,9 +1792,85 @@ export default class OakPlugin extends Plugin {
   async revealRefileTarget(
     file: TFile,
     fileLine: number | null,
+    opts: {
+      sourceLeaf?: WorkspaceLeaf;
+      sourceFile?: TFile;
+      isPeekSource?: boolean;
+    } = {},
   ): Promise<void> {
     const openState =
       fileLine !== null ? { eState: { line: fileLine } } : undefined;
+
+    // Peek-to-peek hop: caller (the editor command) determined at
+    // command-start time that the source leaf was the current peek.
+    // The user expects the file they were refiling out of
+    // (sourceFile) to take the main slot, and the new destination
+    // (file) to take the peek slot — mirroring the first-hop
+    // "source = main, destination = peek" shape. We reuse the
+    // existing peek leaf as the destination peek and update the
+    // original main leaf to show the source file. Reusing the peek
+    // (vs detach-and-recreate) avoids any window where
+    // `refilePeekLeaf` is null and prevents Obsidian's "navigate to
+    // existing tab" behavior from interfering with the main
+    // openFile call.
+    //
+    // We trust `isPeekSource` over re-checking `refilePeekLeaf`
+    // here because a transient closeRefilePeek (auto-close, Esc,
+    // …) might have nulled `refilePeekLeaf` between command start
+    // and now — but the source leaf reference is preserved.
+    const isPeekToPeek =
+      opts.isPeekSource === true &&
+      opts.sourceLeaf !== undefined &&
+      opts.sourceFile !== undefined &&
+      this.isLeafAlive(opts.sourceLeaf);
+
+    if (isPeekToPeek) {
+      const peek = opts.sourceLeaf!;
+      let main: WorkspaceLeaf | null =
+        this.refilePeekBaseLeaf && this.isLeafAlive(this.refilePeekBaseLeaf)
+          ? this.refilePeekBaseLeaf
+          : null;
+      if (!main || main === peek) {
+        main = this.findMainLeafExcluding(peek);
+      }
+      if (main) {
+        // 1. Repoint the peek to the destination first. After this,
+        //    the previous source file is no longer held by any leaf,
+        //    so the next openFile on `main` is unambiguous.
+        await peek.openFile(file, openState);
+        // 2. Open the source file in the main leaf. We activate
+        //    `main` first because Obsidian's `openFile` can defer
+        //    the visual switch on a non-active leaf in some
+        //    workspace configurations — activating eagerly forces
+        //    the file swap to land. The final `setActiveLeaf`
+        //    below moves focus back to the peek so the user lands
+        //    on the destination.
+        this.app.workspace.setActiveLeaf(main, { focus: false });
+        await main.openFile(opts.sourceFile!);
+        this.app.workspace.revealLeaf(main);
+        // 3. Re-bind peek state. `refilePeekLeaf` may have been
+        //    null'd by an auto-close racing with the command flow;
+        //    re-pointing it at the source leaf restores the peek
+        //    chrome (apply* helpers compare against this field).
+        this.refilePeekLeaf = peek;
+        this.refilePeekBaseLeaf = main;
+        this.refilePeekEngaged = true;
+        const id = leafId(peek);
+        if (this.settings.refilePeekLeafId !== id) {
+          this.settings.refilePeekLeafId = id;
+          void this.saveSettings();
+        }
+        this.applyTitleOverrides();
+        this.bindRefilePeekEscape(peek);
+        // Land on the peek (the destination) so the user can keep
+        // refiling forward.
+        this.app.workspace.setActiveLeaf(peek, { focus: true });
+        return;
+      }
+      // No main-pane leaf to promote into — fall through to the
+      // existing reuse-peek behavior so at least the destination
+      // shows up.
+    }
 
     let leaf: WorkspaceLeaf;
     if (this.refilePeekLeaf && this.isLeafAlive(this.refilePeekLeaf)) {
@@ -1785,6 +1879,7 @@ export default class OakPlugin extends Plugin {
       const base = this.app.workspace.activeLeaf ?? this.currentMainLeaf();
       leaf = this.app.workspace.createLeafBySplit(base, "horizontal", false);
       this.refilePeekLeaf = leaf;
+      this.refilePeekBaseLeaf = base;
     }
     // Persist the leaf id so a plugin reload (or "Reload app without
     // saving") can rebind the peek chrome instead of leaving the pane
@@ -1822,6 +1917,7 @@ export default class OakPlugin extends Plugin {
   closeRefilePeek(): void {
     const leaf = this.refilePeekLeaf;
     this.refilePeekLeaf = null;
+    this.refilePeekBaseLeaf = null;
     this.refilePeekEngaged = false;
     document.body.classList.remove("oak-refile-peek-active");
     if (this.settings.refilePeekLeafId !== null) {
@@ -1829,6 +1925,18 @@ export default class OakPlugin extends Plugin {
       void this.saveSettings();
     }
     if (leaf && this.isLeafAlive(leaf)) leaf.detach();
+  }
+
+  private findMainLeafExcluding(
+    excluded: WorkspaceLeaf,
+  ): WorkspaceLeaf | null {
+    let found: WorkspaceLeaf | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (found) return;
+      if (leaf === excluded) return;
+      if (this.isMainPaneLeaf(leaf)) found = leaf;
+    });
+    return found;
   }
 
   // active-leaf-change hook for the peek pane:
@@ -1855,9 +1963,38 @@ export default class OakPlugin extends Plugin {
     }
     document.body.classList.remove("oak-refile-peek-active");
     if (!this.refilePeekEngaged) return;
+    // Don't dismiss while a refile is mid-flight. The picker modal,
+    // the core's atomic-rename write, and the destination openFile
+    // call all flicker focus through other leaves; without this
+    // guard, that flicker would close the peek before the promotion
+    // logic in revealRefileTarget gets a chance to run.
+    if (this.refileInProgress) return;
     if (newLeaf && this.isMainPaneLeaf(newLeaf)) {
       this.closeRefilePeek();
     }
+  }
+
+  // Bracket an in-flight refile so the peek auto-close handler
+  // ignores transient focus shifts during the picker / write /
+  // promotion sequence. Counted so nested begin/end calls (e.g.
+  // commands.ts wraps the whole flow, refile.ts wraps the inner
+  // implementation) don't unsuppress prematurely.
+  beginRefile(): void {
+    this.refileInProgressCount += 1;
+  }
+
+  endRefile(): void {
+    if (this.refileInProgressCount > 0) {
+      this.refileInProgressCount -= 1;
+    }
+  }
+
+  // Snapshot of the current peek leaf for callers that need to
+  // decide, at command-start time, whether the source leaf they're
+  // about to refile from IS the peek. Captured early so a transient
+  // closeRefilePeek mid-flow doesn't strand the promotion logic.
+  peekLeaf(): WorkspaceLeaf | null {
+    return this.refilePeekLeaf;
   }
 
   private isMainPaneLeaf(leaf: WorkspaceLeaf): boolean {
