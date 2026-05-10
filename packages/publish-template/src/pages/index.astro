@@ -1,20 +1,14 @@
 ---
 import { getCollection } from "astro:content";
 import Base from "../layouts/Base.astro";
+import PageList from "../components/PageList.astro";
 
 const docs = await getCollection("docs");
-const sorted = [...docs].sort((a, b) =>
-  a.data.title.localeCompare(b.data.title),
-);
 ---
-<Base title="Oak">
+<Base title="Index">
   <main>
-    <h1>Oak</h1>
+    <h1>Index</h1>
     <p>{docs.length} page{docs.length === 1 ? "" : "s"}.</p>
-    <ul>
-      {sorted.map((doc) => (
-        <li><a href={`/${doc.id}/`}>{doc.data.title}</a></li>
-      ))}
-    </ul>
+    <PageList entries={docs} />
   </main>
 </Base>

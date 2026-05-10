@@ -1,0 +1,48 @@
+---
+import type { OakEntryData } from "@oak/core/astro";
+
+type Entry = {
+  id: string;
+  data: OakEntryData;
+};
+type Props = {
+  entries: Entry[];
+};
+const { entries } = Astro.props;
+const sorted = [...entries].sort((a, b) =>
+  a.data.title.localeCompare(b.data.title),
+);
+---
+<ul class="page-list">
+  {sorted.map((e) => (
+    <li>
+      <a href={`/${e.id}/`}>{e.data.title}</a>
+      {e.data.inbound.length > 0 && (
+        <span class="meta">{e.data.inbound.length} backlink{e.data.inbound.length === 1 ? "" : "s"}</span>
+      )}
+    </li>
+  ))}
+</ul>
+
+<style>
+  .page-list {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem 0 0;
+  }
+  .page-list li {
+    margin: 0.6rem 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .meta {
+    font-size: 0.85rem;
+    color: rgba(0, 0, 0, 0.5);
+  }
+  @media (prefers-color-scheme: dark) {
+    .meta {
+      color: rgba(255, 255, 255, 0.5);
+    }
+  }
+</style>

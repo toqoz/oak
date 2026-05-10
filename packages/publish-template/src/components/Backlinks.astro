@@ -1,0 +1,59 @@
+---
+import type { OakEntryData } from "@oak/core/astro";
+
+type Props = {
+  inbound: OakEntryData["inbound"];
+};
+const { inbound } = Astro.props;
+---
+{inbound.length > 0 && (
+  <section class="backlinks">
+    <h2>Backlinks</h2>
+    <ul>
+      {inbound.map((b) => (
+        <li>
+          <a href={`/${b.slug}/`}>{b.title}</a>
+          {b.context && <span class="context">{b.context}</span>}
+        </li>
+      ))}
+    </ul>
+  </section>
+)}
+
+<style>
+  .backlinks {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  .backlinks h2 {
+    font-size: 1rem;
+    margin: 0 0 0.75rem;
+    color: rgba(0, 0, 0, 0.55);
+    font-weight: 500;
+  }
+  .backlinks ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .backlinks li {
+    margin: 0.5rem 0;
+    font-size: 0.95rem;
+  }
+  .backlinks .context {
+    display: block;
+    font-size: 0.85rem;
+    color: rgba(0, 0, 0, 0.5);
+    margin-top: 0.1rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    .backlinks {
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+    .backlinks h2,
+    .backlinks .context {
+      color: rgba(255, 255, 255, 0.55);
+    }
+  }
+</style>

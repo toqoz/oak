@@ -1,0 +1,150 @@
+---
+import Base from "../layouts/Base.astro";
+---
+<Base title="Graph">
+  <main>
+    <h1>Graph</h1>
+    <p id="status" class="status">Loading…</p>
+    <div id="canvas-wrap" class="canvas-wrap">
+      <svg id="canvas" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </main>
+
+  <style>
+    .status {
+      margin: 0.25rem 0 1rem;
+      font-size: 0.85rem;
+      color: rgba(0, 0, 0, 0.5);
+    }
+    .canvas-wrap {
+      width: 100%;
+      aspect-ratio: 10 / 7;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    :global(.edge) {
+      stroke: rgba(0, 0, 0, 0.18);
+      stroke-width: 1;
+    }
+    :global(.node circle) {
+      fill: #1a4f8a;
+      cursor: pointer;
+      transition: r 0.15s ease;
+    }
+    :global(.node:hover circle) {
+      fill: #2c6dba;
+    }
+    :global(.node text) {
+      font-size: 11px;
+      fill: rgba(0, 0, 0, 0.7);
+      pointer-events: none;
+      user-select: none;
+    }
+    @media (prefers-color-scheme: dark) {
+      .status {
+        color: rgba(255, 255, 255, 0.5);
+      }
+      .canvas-wrap {
+        border-color: rgba(255, 255, 255, 0.08);
+      }
+      :global(.edge) {
+        stroke: rgba(255, 255, 255, 0.18);
+      }
+      :global(.node circle) {
+        fill: #7eb6ff;
+      }
+      :global(.node:hover circle) {
+        fill: #a3cbff;
+      }
+      :global(.node text) {
+        fill: rgba(255, 255, 255, 0.7);
+      }
+    }
+  </style>
+
+  <script>
+    import { layout } from "../lib/force-layout.ts";
+
+    type Node = { id: string; title: string; slug: string; weight: number };
+    type Edge = { from: string; to: string };
+    type Graph = { nodes: Node[]; edges: Edge[] };
+
+    const status = document.getElementById("status") as HTMLParagraphElement;
+    const svg = document.getElementById("canvas") as unknown as SVGSVGElement;
+
+    const W = 1000;
+    const H = 700;
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    function el<K extends keyof SVGElementTagNameMap>(
+      name: K,
+      attrs: Record<string, string | number> = {},
+    ): SVGElementTagNameMap[K] {
+      const e = document.createElementNS(SVG_NS, name);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+      return e;
+    }
+
+    async function run(): Promise<void> {
+      const res = await fetch("/graph.json");
+      const data = (await res.json()) as Graph;
+
+      if (data.nodes.length === 0) {
+        status.textContent = "No nodes to display.";
+        return;
+      }
+
+      const positioned = data.nodes.map((n) => ({ ...n, x: 0, y: 0 }));
+      layout(positioned, data.edges, { width: W, height: H });
+
+      const byId = new Map(positioned.map((n) => [n.id, n]));
+
+      // Edges first so nodes draw on top.
+      const edgeGroup = el("g");
+      edgeGroup.setAttribute("class", "edges");
+      for (const e of data.edges) {
+        const a = byId.get(e.from);
+        const b = byId.get(e.to);
+        if (!a || !b) continue;
+        edgeGroup.appendChild(
+          el("line", {
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            class: "edge",
+          }),
+        );
+      }
+      svg.appendChild(edgeGroup);
+
+      const nodeGroup = el("g");
+      nodeGroup.setAttribute("class", "nodes");
+      for (const n of positioned) {
+        const radius = 4 + Math.min(8, n.weight);
+        const g = el("g");
+        g.setAttribute("class", "node");
+        g.setAttribute("transform", `translate(${n.x}, ${n.y})`);
+        g.appendChild(el("circle", { r: radius }));
+        const t = el("text", { x: radius + 4, y: 4 });
+        t.textContent = n.title;
+        g.appendChild(t);
+        g.addEventListener("click", () => {
+          window.location.href = `/${n.slug}/`;
+        });
+        nodeGroup.appendChild(g);
+      }
+      svg.appendChild(nodeGroup);
+
+      status.textContent = `${data.nodes.length} node${data.nodes.length === 1 ? "" : "s"}, ${data.edges.length} edge${data.edges.length === 1 ? "" : "s"}.`;
+    }
+
+    void run();
+  </script>
+</Base>

@@ -1,6 +1,7 @@
 ---
 import { getCollection, render } from "astro:content";
 import Base from "../layouts/Base.astro";
+import Backlinks from "../components/Backlinks.astro";
 
 export async function getStaticPaths() {
   const docs = await getCollection("docs");
@@ -11,19 +12,11 @@ const { doc } = Astro.props;
 const { Content } = await render(doc);
 ---
 <Base title={doc.data.title}>
-  <article>
-    <h1>{doc.data.title}</h1>
-    <Content />
-
-    {doc.data.inbound.length > 0 && (
-      <section class="oak-backlinks">
-        <h2>Backlinks</h2>
-        <ul>
-          {doc.data.inbound.map((b) => (
-            <li><a href={`/${b.slug}/`}>{b.title}</a></li>
-          ))}
-        </ul>
-      </section>
-    )}
-  </article>
+  <main>
+    <article>
+      <h1>{doc.data.title}</h1>
+      <Content />
+    </article>
+    <Backlinks inbound={doc.data.inbound} />
+  </main>
 </Base>
