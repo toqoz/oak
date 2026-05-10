@@ -18,7 +18,6 @@ import {
   checkpoint,
   composePage,
   findEnclosingHeading,
-  findHeadingsInRange,
   frontmatterLineCount,
   parseVault,
   partitionIssues,
@@ -28,6 +27,7 @@ import {
   validateVault,
   type Visibility,
 } from "@oak/core";
+import { findHeadingsInEditorSelection } from "./refile-selection.js";
 
 import type OakPlugin from "./main.js";
 import {
@@ -760,23 +760,6 @@ export function findHeadingAtCursor(
   return findEnclosingHeading(body, cursorBodyLine);
 }
 
-// Top-level headings whose subtree intersects the editor selection
-// (file lines, 0-based — Obsidian convention). Returns an empty list
-// when the selection sits entirely in frontmatter or contains no
-// heading subtree.
-export function findHeadingsInEditorSelection(
-  raw: string,
-  fromFileLine: number,
-  toFileLine: number,
-): { line: number; level: number; title: string }[] {
-  const fmLines = frontmatterLineCount(raw);
-  const fromBody = fromFileLine - fmLines + 1;
-  const toBody = toFileLine - fmLines + 1;
-  if (toBody < 1) return [];
-  const body = raw.split("\n").slice(fmLines).join("\n");
-  return findHeadingsInRange(body, Math.max(1, fromBody), toBody);
-}
-
 export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
   const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
   if (!view || !view.file) {
@@ -803,7 +786,7 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
   if (editor.somethingSelected()) {
     const from = editor.getCursor("from");
     const to = editor.getCursor("to");
-    const headings = findHeadingsInEditorSelection(raw, from.line, to.line);
+    const headings = findHeadingsInEditorSelection(raw, from, to);
     if (headings.length >= 2) {
       await refileHeadings(
         plugin,
