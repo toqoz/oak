@@ -41,10 +41,17 @@ export {
   setCreatedAndModified,
   setCreatedIfMissing,
   setModified,
+  setModifiedIfMissing,
   shouldBumpModified,
   withTimestampUpdate,
   withTimestampUpdateAndRecovery,
 } from "./timestamps.js";
+export {
+  migrateTimestamps,
+  type MigrateTimestampsOptions,
+  type TimestampMigrationEntry,
+  type TimestampMigrationReport,
+} from "./timestamps-migrate.js";
 export {
   writeIndex,
   readIndexMeta,

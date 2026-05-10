@@ -159,6 +159,18 @@ export function setCreatedIfMissing(raw: string, iso: string): string {
   return rewriteFrontmatter(raw, data);
 }
 
+// Set `modified` only when missing/empty. Mirror of
+// `setCreatedIfMissing` — used by the migration path so a one-shot
+// backfill never clobbers a hand-edited `modified` value.
+export function setModifiedIfMissing(raw: string, iso: string): string {
+  const parsed = matter(raw);
+  const data = { ...((parsed.data as Record<string, unknown> | undefined) ?? {}) };
+  const existing = coerceTimestamp(data["modified"]);
+  if (existing !== null) return raw;
+  data["modified"] = iso;
+  return rewriteFrontmatter(raw, data);
+}
+
 function frontmatterHasCreated(raw: string): boolean {
   const parsed = matter(raw);
   const data = parsed.data as Record<string, unknown> | undefined;

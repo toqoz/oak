@@ -57,6 +57,22 @@ describe("shouldBumpModified", () => {
   it("never bumps a file without an oak `id:` (plain markdown)", () => {
     expect(shouldBumpModified("hello", "hello world")).toBe(false);
   });
+
+  // A user editing `modified` by hand (e.g. correcting a bad import,
+  // pinning a value before a bulk operation) must not be clobbered by
+  // the auto-bump. The bump rule is anchored to body + title only, so
+  // a frontmatter-only `modified` change does NOT trip it.
+  it("does not bump when the user hand-edits `modified`", () => {
+    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2024-01-01T00:00:00Z'\n---\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2020-12-31T00:00:00Z'\n---\n\nbody\n`;
+    expect(shouldBumpModified(before, after)).toBe(false);
+  });
+
+  it("does not bump when only `created` changes (also hand-edited)", () => {
+    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\ncreated: '2024-01-01T00:00:00Z'\n---\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\ncreated: '2020-01-01T00:00:00Z'\n---\n\nbody\n`;
+    expect(shouldBumpModified(before, after)).toBe(false);
+  });
 });
 
 describe("setModified / setCreatedAndModified", () => {
