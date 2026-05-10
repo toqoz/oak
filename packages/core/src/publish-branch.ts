@@ -12,8 +12,9 @@
 // only owns: the branch, the worktree dance, and the commit message
 // convention.
 
-import { mkdtemp, mkdir, readdir, stat, copyFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, stat, copyFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -42,6 +43,11 @@ export type PubInitResult = {
   initialCommit: string | null;
   scaffolded: string[]; // vault-relative paths
   skipped: string[]; // vault-relative paths (already existed)
+  // workspace:* deps that got rewritten to file: refs because oak was
+  // running from source (typically the monorepo). Empty in the
+  // post-publish path because pnpm publish has already replaced them
+  // with semver ranges before the template was distributed.
+  rewrittenDevDeps: Array<{ file: string; name: string; resolvedTo: string }>;
 };
 
 export class PubError extends Error {
@@ -79,6 +85,71 @@ async function isDirectory(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+const DEP_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+] as const;
+
+// Resolve the on-disk directory of an installed package, by way of its
+// package.json. Returns null if the package can't be found from the
+// caller's resolution context.
+function resolveInstalledPackageDir(
+  name: string,
+  fromDir: string,
+): string | null {
+  try {
+    const requireFn = createRequire(resolve(fromDir, "package.json"));
+    const pkgJson = requireFn.resolve(`${name}/package.json`);
+    return dirname(pkgJson);
+  } catch {
+    return null;
+  }
+}
+
+// Rewrite any `workspace:` dep specs in a package.json to absolute
+// `file:` refs pointing at the resolved on-disk package directory.
+//
+// The point: when oak is running from source (monorepo), the template
+// it copies still has `workspace:*` in its package.json — npm/pnpm
+// outside a workspace can't resolve that. By rewriting we let the
+// scaffolded project install via filesystem links to the local oak
+// checkout. After `pnpm publish` the source no longer contains any
+// `workspace:` specs, so this branch never fires in production.
+async function rewriteWorkspaceDeps(
+  filePath: string,
+  resolveFromDir: string,
+): Promise<Array<{ name: string; resolvedTo: string }>> {
+  const raw = await readFile(filePath, "utf8");
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const rewrites: Array<{ name: string; resolvedTo: string }> = [];
+  for (const field of DEP_FIELDS) {
+    const deps = json[field];
+    if (!deps || typeof deps !== "object") continue;
+    const map = deps as Record<string, string>;
+    for (const [name, spec] of Object.entries(map)) {
+      if (typeof spec !== "string" || !spec.startsWith("workspace:")) continue;
+      const dir = resolveInstalledPackageDir(name, resolveFromDir);
+      if (!dir) {
+        // No installed copy resolvable — leave as-is. The caller
+        // should surface this so the user knows install will fail.
+        continue;
+      }
+      map[name] = `file:${dir}`;
+      rewrites.push({ name, resolvedTo: dir });
+    }
+  }
+  if (rewrites.length === 0) return rewrites;
+  await writeFile(filePath, JSON.stringify(json, null, 2) + "\n", "utf8");
+  return rewrites;
 }
 
 // Walk `dir` recursively and return paths relative to `dir`. Skips
@@ -137,6 +208,7 @@ export async function pubInit(
   const files = await listFiles(templateDir);
   const scaffolded: string[] = [];
   const skipped: string[] = [];
+  const rewrittenDevDeps: PubInitResult["rewrittenDevDeps"] = [];
   for (const rel of files) {
     const srcAbs = resolve(templateDir, rel);
     const destAbs = resolve(vaultRoot, rel);
@@ -147,6 +219,15 @@ export async function pubInit(
     await mkdir(dirname(destAbs), { recursive: true });
     await copyFile(srcAbs, destAbs);
     scaffolded.push(rel);
+
+    // Any package.json copied in (root or nested) might reference
+    // workspace deps that won't resolve outside the monorepo.
+    if (rel === "package.json" || rel.endsWith("/package.json")) {
+      const rewrites = await rewriteWorkspaceDeps(destAbs, templateDir);
+      for (const r of rewrites) {
+        rewrittenDevDeps.push({ file: rel, ...r });
+      }
+    }
   }
 
   return {
@@ -156,6 +237,7 @@ export async function pubInit(
     initialCommit,
     scaffolded,
     skipped,
+    rewrittenDevDeps,
   };
 }
 

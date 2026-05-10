@@ -17,7 +17,8 @@
     "./astro": {
       "import": "./dist/astro/index.js",
       "types": "./dist/astro/index.d.ts"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": ["dist"],
   "scripts": {

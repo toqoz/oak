@@ -583,6 +583,17 @@ async function cmdPubInit(
   for (const f of result.skipped) {
     process.stdout.write(`  . ${f} (exists)\n`);
   }
+  if (result.rewrittenDevDeps.length > 0) {
+    process.stdout.write(
+      `\nDevelopment install detected: rewrote ${result.rewrittenDevDeps.length} workspace ref(s) to local file: paths.\n`,
+    );
+    for (const r of result.rewrittenDevDeps) {
+      process.stdout.write(`  ${r.file}: ${r.name} -> file:${r.resolvedTo}\n`);
+    }
+    process.stdout.write(
+      `Note: file: refs are machine-specific. Re-run \`oak pub init\` after publishing oak to npm, or edit package.json by hand.\n`,
+    );
+  }
   return 0;
 }
 

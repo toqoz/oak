@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -277,5 +277,112 @@ describe("pubStatus", () => {
 
     const after = await pubStatus(vault);
     expect(after.branchExists).toBe(true);
+  });
+});
+
+describe("pubInit / workspace dep rewriting", () => {
+  // Build a self-contained mini-monorepo so the test doesn't depend on
+  // oak's own packages being installable. The template references a
+  // sibling fake "@my/lib" package via workspace:*; pubInit should
+  // resolve that to the on-disk path.
+  async function makeMonorepoTemplate(): Promise<{
+    template: string;
+    libDir: string;
+  }> {
+    const root = resolve(scratch, "monorepo");
+    const template = resolve(root, "packages/template");
+    const libDir = resolve(root, "packages/lib");
+    const templateNm = resolve(template, "node_modules/@my/lib");
+
+    await mkdir(template, { recursive: true });
+    await mkdir(libDir, { recursive: true });
+    await mkdir(templateNm, { recursive: true });
+
+    // The library being referenced.
+    await writeFile(
+      resolve(libDir, "package.json"),
+      JSON.stringify({ name: "@my/lib", version: "1.2.3" }),
+      "utf8",
+    );
+
+    // Symlink-style: place a copy of @my/lib's package.json under the
+    // template's node_modules so require.resolve can find it. Use a
+    // real copy rather than a symlink to keep the test platform-
+    // agnostic.
+    await writeFile(
+      resolve(templateNm, "package.json"),
+      JSON.stringify({ name: "@my/lib", version: "1.2.3" }),
+      "utf8",
+    );
+
+    // Template package with a workspace ref + a non-workspace ref.
+    await writeFile(
+      resolve(template, "package.json"),
+      JSON.stringify({
+        name: "tpl",
+        dependencies: {
+          "@my/lib": "workspace:*",
+          astro: "^5.0.0",
+        },
+        devDependencies: {
+          "@my/lib-dev": "workspace:^1.0.0",
+        },
+      }),
+      "utf8",
+    );
+
+    return { template, libDir };
+  }
+
+  it("rewrites workspace:* deps to file: refs pointing at the resolved package", async () => {
+    const vault = await makeVault();
+    const { template } = await makeMonorepoTemplate();
+
+    const r = await pubInit({ vaultRoot: vault, templateDir: template });
+
+    const scaffolded = JSON.parse(
+      await readFile(resolve(vault, "package.json"), "utf8"),
+    );
+    // The exact resolved path depends on whether require.resolve walks
+    // up from the template (and finds the local node_modules copy) or
+    // follows a symlink to the workspace source. Both shapes are valid
+    // installations; require either an absolute file: ref ending in
+    // the package name's last segment.
+    const lib = scaffolded.dependencies["@my/lib"] as string;
+    expect(lib.startsWith("file:/")).toBe(true);
+    expect(lib).toMatch(/\/lib$/);
+    // Non-workspace ref left untouched.
+    expect(scaffolded.dependencies.astro).toBe("^5.0.0");
+    // Unresolvable workspace dep stays as-is (no file: rewrite available).
+    expect(scaffolded.devDependencies["@my/lib-dev"]).toBe("workspace:^1.0.0");
+
+    // Result reports the rewrite for the CLI to surface.
+    expect(r.rewrittenDevDeps).toHaveLength(1);
+    expect(r.rewrittenDevDeps[0]).toMatchObject({
+      file: "package.json",
+      name: "@my/lib",
+    });
+    expect(r.rewrittenDevDeps[0]!.resolvedTo).toMatch(/\/lib$/);
+  });
+
+  it("does nothing when the package.json has no workspace deps", async () => {
+    const vault = await makeVault();
+    const tpl = resolve(scratch, "plain-template");
+    await mkdir(tpl, { recursive: true });
+    await writeFile(
+      resolve(tpl, "package.json"),
+      JSON.stringify({
+        name: "tpl",
+        dependencies: { astro: "^5.0.0" },
+      }),
+      "utf8",
+    );
+
+    const r = await pubInit({ vaultRoot: vault, templateDir: tpl });
+    expect(r.rewrittenDevDeps).toEqual([]);
+    const scaffolded = JSON.parse(
+      await readFile(resolve(vault, "package.json"), "utf8"),
+    );
+    expect(scaffolded.dependencies.astro).toBe("^5.0.0");
   });
 });
