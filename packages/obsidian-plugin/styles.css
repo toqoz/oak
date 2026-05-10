@@ -1525,6 +1525,41 @@ body.oak-mode-active .cm-formatting-header {
   opacity: 0.85;
 }
 
+.oak-unmanaged-item {
+  margin-bottom: 0.6em;
+}
+
+.oak-unmanaged-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
+}
+
+.oak-unmanaged-path {
+  font-family: var(--font-monospace);
+  font-size: 0.95em;
+  word-break: break-all;
+}
+
+.oak-unmanaged-import {
+  flex-shrink: 0;
+  padding: 0.2em 0.8em;
+  font-size: 0.85em;
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border-radius: 4px;
+}
+.oak-unmanaged-import:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+.oak-unmanaged-import:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .oak-home-exit {
   margin-top: 6em;
   padding-top: 2em;
