@@ -1,0 +1,19 @@
+---
+import Base from "../layouts/Base.astro";
+
+// TODO: implement once oakLoader lands.
+// import { getCollection, render } from "astro:content";
+// export async function getStaticPaths() {
+//   const docs = await getCollection("docs");
+//   return docs.map((doc) => ({ params: { slug: doc.slug }, props: { doc } }));
+// }
+// const { doc } = Astro.props;
+// const { Content } = await render(doc);
+
+export function getStaticPaths() {
+  return [];
+}
+---
+<Base title="page">
+  <article />
+</Base>

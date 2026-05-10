@@ -1,0 +1,16 @@
+{
+  "name": "@oak/publish-template",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Astro boilerplate consumed by `oak publish` — copied into the user's repo on first run.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@oak/core": "workspace:*",
+    "astro": "^5.0.0"
+  }
+}

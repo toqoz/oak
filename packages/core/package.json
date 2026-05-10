@@ -9,6 +9,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./remark": {
+      "import": "./dist/remark/index.js",
+      "types": "./dist/remark/index.d.ts"
+    },
+    "./astro": {
+      "import": "./dist/astro/index.js",
+      "types": "./dist/astro/index.d.ts"
     }
   },
   "files": ["dist"],
@@ -22,6 +30,14 @@
     "js-yaml": "^4.1.0",
     "markdown-it": "^14.1.0",
     "ulid": "^2.3.0"
+  },
+  "peerDependencies": {
+    "astro": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "astro": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
