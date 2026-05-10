@@ -8,12 +8,23 @@ export type OakPluginSettings = {
   baseUrl: string;
   autoSnapshotIntervalMs: number; // 0 = disabled
   showRedlinksInline: boolean;
+  // Internal: id of the leaf currently acting as the refile peek pane.
+  // The peek itself is session-local — chrome, dim class, escape
+  // handler, and engaged state are all rebuilt per session. We
+  // persist the id only so the next plugin load can find and detach
+  // the orphaned leaf left over in the restored workspace layout;
+  // without that cleanup the first refile of the new session would
+  // reuse it and surface the destination in an unrelated screen
+  // position. Not in the settings UI — written by the refile flow,
+  // cleared when the peek is detached.
+  refilePeekLeafId: string | null;
 };
 
 export const DEFAULT_SETTINGS: OakPluginSettings = {
   baseUrl: "/",
   autoSnapshotIntervalMs: 0,
   showRedlinksInline: true,
+  refilePeekLeafId: null,
 };
 
 export class OakSettingTab extends PluginSettingTab {
