@@ -169,43 +169,47 @@ body.oak-mode-active .oak-agenda-titlerow > .oak-agenda-title {
   display: none;
 }
 
-/* Scratch entry point — `line-squiggle` icon button at the right
-   edge of every view-header. Standard `.clickable-icon` chrome
-   (size, hover, padding, focus ring) is inherited so the button
-   matches the back/forward + home/agenda/search nav cluster on the
-   left; we only add `margin-left: auto` to push it past the
-   natural-width left chrome and the accent tint when a scratch
-   leaf is open elsewhere in the workspace. */
-body.oak-mode-active .view-header > .oak-scratch-link {
+/* Per-pane oak action menu — `ellipsis-vertical` button at the
+   right edge of every view-header that opens a dropdown with the
+   pane's oak actions (open scratch, new page, and — on a markdown
+   leaf — delete file…). Standard `.clickable-icon` chrome (size,
+   hover, padding, focus ring) is inherited so the button matches
+   the back/forward + home/agenda/search nav cluster on the left;
+   we only add `margin-left: auto` to push it past the natural-
+   width left chrome and accent-tint it while a scratch leaf is
+   open elsewhere in the workspace (the menu is the only entry
+   point for closing scratch, so the tint preserves the at-a-
+   glance "scratch is up" cue the standalone link used to give). */
+body.oak-mode-active .view-header > .oak-actions-menu {
   margin-left: auto;
 }
-body.oak-mode-active .view-header > .oak-scratch-link.is-active {
+body.oak-mode-active .view-header > .oak-actions-menu.is-active {
   color: var(--text-accent);
 }
 
 /* Scratch leaf — hide both the per-pane tab strip and the view
-   header (back/forward + nav buttons + scratch link) so the bottom
+   header (back/forward + nav buttons + actions menu) so the bottom
    split reads as a flush "scratch buffer" surface rather than a
    tabbed editor. The `*scratch*` heading injected into the title
-   row + the `*scratch*` link in every other pane's header are
-   enough identity; the chrome on the scratch pane itself is just
-   noise. Closing scratch happens via the link in another pane's
-   header (toggle) or the "Toggle scratch" command. `:has()` selects
-   the workspace tab group that contains the scratch leaf. */
+   row + the actions menu in every other pane's header are enough
+   identity; the chrome on the scratch pane itself is just noise.
+   Closing scratch happens via the menu in another pane's header
+   (toggle) or the "Toggle scratch" command. `:has()` selects the
+   workspace tab group that contains the scratch leaf. */
 body.oak-mode-active
   .workspace-tabs:has(.oak-leaf-scratch)
   > .workspace-tab-header-container {
   display: none !important;
 }
 /* Suppress the standard view-header chrome on the scratch pane
-   (back/forward, title, actions, the right-edge `Scratch` link)
+   (back/forward, title, actions, the right-edge actions menu)
    so the bar is left empty for the custom scratch row injected
    into it. The view-header itself stays visible — the row needs
    somewhere to land. */
 body.oak-mode-active .oak-leaf-scratch .view-header > .view-header-left,
 body.oak-mode-active .oak-leaf-scratch .view-header > .view-header-title-container,
 body.oak-mode-active .oak-leaf-scratch .view-header > .view-actions,
-body.oak-mode-active .oak-leaf-scratch .view-header > .oak-scratch-link {
+body.oak-mode-active .oak-leaf-scratch .view-header > .oak-actions-menu {
   display: none !important;
 }
 /* Center the scratch chrome within the view-header height.
@@ -406,7 +410,7 @@ body.oak-mode-active
 body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-header-left,
 body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-header-title-container,
 body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-actions,
-body.oak-mode-active .oak-leaf-refile-peek .view-header > .oak-scratch-link {
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .oak-actions-menu {
   display: none !important;
 }
 body.oak-mode-active .oak-leaf-refile-peek .view-header {
