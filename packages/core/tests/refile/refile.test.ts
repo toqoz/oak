@@ -312,6 +312,99 @@ describe("refile (same-file)", () => {
       ].join("\n"),
     );
   });
+
+  it("top-of-file refile into an empty target file leaves no leading blank", async () => {
+    // Regression for the empty-body splice path: split("\n") on `""`
+    // yields `[""]`, so the naive insertion would land *after* that
+    // sentinel and emit a leading blank line in the output.
+    const srcFp = join(dir, "src-empty-tgt.md");
+    const tgtFp = join(dir, "tgt-empty.md");
+    writeFileSync(
+      srcFp,
+      ["## TODO move me", "body"].join("\n"),
+      "utf8",
+    );
+    writeFileSync(tgtFp, "", "utf8");
+    const page = makePage(srcFp, readFileSync(srcFp, "utf8"));
+    const [src] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    await refile(
+      srcFp,
+      { kind: "entry", entryId: src!.entryId },
+      { filePath: tgtFp, relPath: "tgt-empty.md", line: null, level: 0 },
+      DEFAULT_REFILE_CONFIG,
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(readFileSync(tgtFp, "utf8")).toBe(
+      ["## TODO move me", "body"].join("\n"),
+    );
+  });
+
+  it("top-of-file refile into a frontmatter-only target keeps a single blank between fences and heading", async () => {
+    // The body after frontmatter is empty here; the moved subtree
+    // must land directly after the frontmatter fence with one
+    // separating blank — not two — and no leading whitespace.
+    const srcFp = join(dir, "src-fm-only.md");
+    const tgtFp = join(dir, "tgt-fm-only.md");
+    writeFileSync(
+      srcFp,
+      ["## TODO move me", "body"].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      tgtFp,
+      ["---", "title: Target", "---", ""].join("\n"),
+      "utf8",
+    );
+    const page = makePage(srcFp, readFileSync(srcFp, "utf8"));
+    const [src] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    await refile(
+      srcFp,
+      { kind: "entry", entryId: src!.entryId },
+      { filePath: tgtFp, relPath: "tgt-fm-only.md", line: null, level: 0 },
+      DEFAULT_REFILE_CONFIG,
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(readFileSync(tgtFp, "utf8")).toBe(
+      [
+        "---",
+        "title: Target",
+        "---",
+        "## TODO move me",
+        "body",
+      ].join("\n"),
+    );
+  });
+
+  it("top-of-file refile into a body with trailing newlines collapses to one separator", async () => {
+    // Real-world files routinely end with a trailing newline (or
+    // several). Without folding the trailing blanks of `head`, we'd
+    // emit `"# Existing\n\n\n## TODO …"` — a stray paragraph break.
+    const srcFp = join(dir, "src-trailing.md");
+    const tgtFp = join(dir, "tgt-trailing.md");
+    writeFileSync(
+      srcFp,
+      ["## TODO move me", "body"].join("\n"),
+      "utf8",
+    );
+    writeFileSync(tgtFp, "# Existing\n\n", "utf8");
+    const page = makePage(srcFp, readFileSync(srcFp, "utf8"));
+    const [src] = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    await refile(
+      srcFp,
+      { kind: "entry", entryId: src!.entryId },
+      { filePath: tgtFp, relPath: "tgt-trailing.md", line: null, level: 0 },
+      DEFAULT_REFILE_CONFIG,
+      DEFAULT_AGENDA_CONFIG,
+    );
+    expect(readFileSync(tgtFp, "utf8")).toBe(
+      [
+        "# Existing",
+        "",
+        "## TODO move me",
+        "body",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("refile (cross-file)", () => {

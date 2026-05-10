@@ -129,11 +129,21 @@ export type RefileSourceDescriptor = {
 // Refile every heading in `sources` to one user-picked destination.
 // Falls through to `refileHeading` when only one source is supplied so
 // the call site (editor command with selection) doesn't have to switch
-// shape based on how many headings the user grabbed. Sources are
-// processed bottom-up so cutting them out doesn't shift the line
-// numbers of the ones still pending; the target line is updated each
-// iteration via core's `targetLineAfter` so a same-file refile where
-// the destination sits below the sources still tracks correctly.
+// shape based on how many headings the user grabbed.
+//
+// Sources are expected to come from a single file — the only caller is
+// the editor-selection command, which collects headings from the active
+// editor. The line bookkeeping below assumes that invariant: a single
+// `cumulativeCut` counter is shared across all sources, so feeding in
+// sources from multiple files would silently miscount.
+//
+// Sources are processed top-down (smallest line first) so the moved
+// subtrees land at the destination in document order — bottom-up would
+// reverse them. Each prior cut sits above the next source, so the
+// `cumulativeCut` of removed lines is subtracted from each subsequent
+// source line. The target line is updated each iteration via core's
+// `targetLineAfter` so a same-file refile where the destination sits
+// below the sources still tracks correctly.
 export async function refileHeadings(
   plugin: OakPlugin,
   sources: RefileSourceDescriptor[],

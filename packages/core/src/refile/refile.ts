@@ -466,12 +466,27 @@ function spliceWithSeparator(
     return { lines: body.slice(), headingIdx: insertAt };
   }
 
-  // Decide leading separator: a single blank line before the subtree
-  // unless we are inserting at index 0 of an empty file.
-  const head = body.slice(0, insertAt);
+  // Trim trailing blanks from `head` (the body up to `insertAt`). They
+  // would otherwise sit between the prior content and the inserted
+  // subtree, producing more blank lines than the single separator we
+  // add below. This collapses three edge cases at once:
+  //   - Empty body (split → `[""]`): head becomes `[]` and we skip
+  //     the separator entirely, so a top-of-file refile into an empty
+  //     file lands at column 1, not after a leading blank.
+  //   - Trailing-newline body (`"text\n"` → `["text", ""]`): the
+  //     stray empty trailing slot is folded away, so we emit exactly
+  //     one separator instead of two consecutive blanks.
+  //   - Standard well-formed body: head's last line is non-blank
+  //     content, so the trim is a no-op and behavior is unchanged.
+  const headRaw = body.slice(0, insertAt);
+  let headEnd = headRaw.length;
+  while (headEnd > 0 && headRaw[headEnd - 1]!.trim().length === 0) headEnd--;
+  const head = headRaw.slice(0, headEnd);
   const tail = body.slice(insertAt);
-  const needsLeadingBlank =
-    head.length > 0 && head[head.length - 1]!.trim().length !== 0;
+
+  // One blank line of separation when there is real prior content;
+  // none when head is empty (start of file, or empty/blank-only body).
+  const needsLeadingBlank = head.length > 0;
   const middle: string[] = [];
   if (needsLeadingBlank) middle.push("");
   middle.push(...trimmed);
