@@ -92,11 +92,22 @@ export type Issue = {
 export type Backlink = {
   fromId: string;
   context: string;
+  // Line number (1-based) and the original raw link text inside the source
+  // page. Useful for "jump to reference" / `line N · [[Foo]]` listings.
+  line: number;
+  raw: string;
 };
+
+// A 2-hop bridge is either a real page or a shared red-link target. The
+// latter lets two pages mention the same not-yet-written concept and find
+// each other through it.
+export type TwoHopBridge =
+  | { kind: "page"; pageId: string }
+  | { kind: "redlink"; targetKey: string; display: string };
 
 export type TwoHop = {
   pageId: string;
-  via: string[];
+  via: TwoHopBridge[];
   score: number;
 };
 
@@ -123,5 +134,9 @@ export type Vault = {
 
 export type Graph = {
   outgoing: Map<string, ResolvedLink[]>;
+  // Incoming references, keyed by `linkTargetId(link)`. For resolved links
+  // the key is the target page id; for unresolved (red) links it is a
+  // synthetic `redlink:<normalized>` token. This way every link feeds the
+  // same backlink index regardless of whether its target exists yet.
   incoming: Map<string, Backlink[]>;
 };

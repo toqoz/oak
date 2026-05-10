@@ -1212,7 +1212,9 @@ export default class OakPlugin extends Plugin {
       seen.add(h.pageId);
       const p = snap.vault.pages.get(h.pageId);
       if (!p) continue;
-      const via = h.via.map((v) => v.title).join(", ");
+      const via = h.via
+        .map((v) => (v.kind === "page" ? v.title : `[[${v.display}]]`))
+        .join(", ");
       related.push({ page: p, relation: `2-hop · via ${via}` });
     }
 

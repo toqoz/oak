@@ -440,10 +440,19 @@ async function cmdTwoHop(
       return {
         pageId: h.pageId,
         title: target?.title ?? null,
-        via: h.via.map((id) => ({
-          id,
-          title: vault.pages.get(id)?.title ?? null,
-        })),
+        via: h.via.map((b) =>
+          b.kind === "page"
+            ? {
+                kind: "page" as const,
+                id: b.pageId,
+                title: vault.pages.get(b.pageId)?.title ?? null,
+              }
+            : {
+                kind: "redlink" as const,
+                targetKey: b.targetKey,
+                display: b.display,
+              },
+        ),
         score: h.score,
       };
     });
@@ -459,7 +468,11 @@ async function cmdTwoHop(
     const target = vault.pages.get(h.pageId);
     const title = target?.title ?? h.pageId;
     const via = h.via
-      .map((id) => vault.pages.get(id)?.title ?? id)
+      .map((b) =>
+        b.kind === "page"
+          ? (vault.pages.get(b.pageId)?.title ?? b.pageId)
+          : `[[${b.display}]]`,
+      )
       .join(", ");
     process.stdout.write(`- ${title}  [score=${h.score}]  via: ${via}\n`);
   }

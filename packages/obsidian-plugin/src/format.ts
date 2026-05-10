@@ -24,10 +24,14 @@ export type BacklinkEntry = {
   context: string;
 };
 
+export type TwoHopBridgeEntry =
+  | { kind: "page"; id: string; title: string }
+  | { kind: "redlink"; targetKey: string; display: string };
+
 export type TwoHopEntry = {
   pageId: string;
   title: string;
-  via: { id: string; title: string }[];
+  via: TwoHopBridgeEntry[];
   score: number;
 };
 
@@ -118,10 +122,19 @@ export function describeTwoHop(
   return raw.map((h) => ({
     pageId: h.pageId,
     title: vault.pages.get(h.pageId)?.title ?? h.pageId,
-    via: h.via.map((id) => ({
-      id,
-      title: vault.pages.get(id)?.title ?? id,
-    })),
+    via: h.via.map((b): TwoHopBridgeEntry =>
+      b.kind === "page"
+        ? {
+            kind: "page",
+            id: b.pageId,
+            title: vault.pages.get(b.pageId)?.title ?? b.pageId,
+          }
+        : {
+            kind: "redlink",
+            targetKey: b.targetKey,
+            display: b.display,
+          },
+    ),
     score: h.score,
   }));
 }
