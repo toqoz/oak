@@ -428,11 +428,12 @@ export default class OakPlugin extends Plugin {
       // Obsidian has just re-instantiated them. Re-attach the chrome
       // class so oak mode visually resumes where the user left off.
       this.syncOakModeClass();
-      // Re-bind the refile peek leaf reference *before* the chrome
-      // appliers run so applyTitleForView sees the correct
-      // `isRefilePeek` flag on first paint instead of flashing the
-      // standard tab + view-header chrome.
-      this.restoreRefilePeekFromSettings();
+      // Discard any peek leaf left over from the previous session
+      // *before* the chrome appliers run, so applyTitleForView never
+      // sees a stale `isRefilePeek` candidate. (Peek state is
+      // session-local and the saved id is only useful as an orphan
+      // marker — see settings.refilePeekLeafId.)
+      this.discardOrphanedPeekLeaf();
       this.applyTitleOverrides();
       this.applyLinksCards();
       this.applyPageMeta();
@@ -2038,21 +2039,20 @@ export default class OakPlugin extends Plugin {
     slot.__oakPeekEsc = handler;
   }
 
-  // After Obsidian restores the workspace, look for a leaf that
-  // matches the persisted peek id from the previous session. We do
-  // NOT re-claim it as the active peek — peek state (chrome, dim
-  // class, escape handler, refilePeekBaseLeaf, refilePeekEngaged) is
-  // ephemeral and lost across reload. Instead we detach the orphaned
-  // leaf so the next refile creates a fresh peek below the current
-  // main. Without this, the first refile of the new session reuses
-  // the orphaned leaf — which Obsidian has likely placed in a screen
-  // position unrelated to the user's current main, causing the
-  // destination to "jump to an unrelated location".
-  private restoreRefilePeekFromSettings(): void {
+  // Detach the leaf left over from the previous session's peek, if
+  // Obsidian's workspace restoration brought it back. Peek state
+  // (chrome, dim class, escape handler, refilePeekBaseLeaf,
+  // refilePeekEngaged) is ephemeral and lost across reload — re-
+  // claiming the leaf as a peek without that state would surface the
+  // next refile's destination in whatever screen position Obsidian
+  // placed the leaf in, unrelated to the user's current main.
+  // Detaching is cleaner: the next refile creates a fresh peek below
+  // the current main via the normal split path.
+  private discardOrphanedPeekLeaf(): void {
     const id = this.settings.refilePeekLeafId;
+    if (!id) return;
     this.settings.refilePeekLeafId = null;
     void this.saveSettings();
-    if (!id) return;
     this.app.workspace.iterateAllLeaves((leaf) => {
       if (leafId(leaf) === id) leaf.detach();
     });
