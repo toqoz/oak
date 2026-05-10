@@ -1,12 +1,20 @@
 ---
+import { getCollection } from "astro:content";
 import Base from "../layouts/Base.astro";
-// TODO: replace with content collection query once oakLoader lands.
-// import { getCollection } from "astro:content";
-// const docs = await getCollection("docs");
+
+const docs = await getCollection("docs");
+const sorted = [...docs].sort((a, b) =>
+  a.data.title.localeCompare(b.data.title),
+);
 ---
 <Base title="Oak">
   <main>
     <h1>Oak</h1>
-    <p>This is the default oak publish template. Customize freely.</p>
+    <p>{docs.length} page{docs.length === 1 ? "" : "s"}.</p>
+    <ul>
+      {sorted.map((doc) => (
+        <li><a href={`/${doc.id}/`}>{doc.data.title}</a></li>
+      ))}
+    </ul>
   </main>
 </Base>

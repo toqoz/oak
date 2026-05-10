@@ -1,16 +1,10 @@
 import { defineCollection } from "astro:content";
+import { oakLoader } from "@oak/core/astro";
 
-// TODO: switch to oakLoader once @oak/core/astro is implemented.
-// import { oakLoader } from "@oak/core/astro";
-//
-// export const collections = {
-//   docs: defineCollection({
-//     loader: oakLoader({ vault: "./content" }),
-//   }),
-// };
-
+// `vault` is the directory containing the markdown source. Adjust to
+// taste — many oak setups mount the whole repo here.
 export const collections = {
   docs: defineCollection({
-    type: "content",
+    loader: oakLoader({ vault: "./content" }),
   }),
 };
