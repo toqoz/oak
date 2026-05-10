@@ -5,9 +5,7 @@
 //   - Snapshot + checkpoint before forking off.
 //   - Use a per-task git worktree on a per-task branch.
 //   - Validate before accept; reject discards branch + worktree.
-//   - LLM policy (`llm: allow | deny | summary-only`) gates how page
-//     content is exposed to the agent.
-//   - External mounts default to deny; never edited in v1.
+//   - External mounts are never edited in v1.
 
 import { resolve } from "node:path";
 import { rm } from "node:fs/promises";
@@ -34,7 +32,6 @@ import { partitionIssues } from "./validate.js";
 import type {
   Graph,
   Issue,
-  LlmPolicy,
   ResolvedLink,
   Vault,
 } from "./types.js";
@@ -275,29 +272,17 @@ export type AgentContextEntry = {
   id: string;
   title: string;
   visibility: string;
-  llm: LlmPolicy;
   body: string;
-  // Only resolved internal links are surfaced. External links are
-  // hidden because external mounts default to deny.
+  // External link targets are masked: the path itself can leak which
+  // repo a private vault references.
   links: { target: string; status: string; targetId?: string | null }[];
 };
 
 export type AgentContextOptions = {
   // Limit context to a focused set of pages and their direct
-  // neighbours. If omitted, every llm-allowed page is included.
+  // neighbours. If omitted, every page is included.
   focusIds?: string[];
-  // First-paragraph cap for `summary-only` pages.
-  summaryMaxChars?: number;
 };
-
-function summarize(body: string, maxChars: number): string {
-  // First paragraph (split on a blank line). Falls back to the whole
-  // body when there's no paragraph break.
-  const firstPara = body.split(/\n\s*\n/)[0]?.trim() ?? "";
-  return firstPara.length > maxChars
-    ? `${firstPara.slice(0, maxChars).trim()}…`
-    : firstPara;
-}
 
 function neighbourIds(graph: Graph, pageId: string): Set<string> {
   const set = new Set<string>();
@@ -339,8 +324,6 @@ export function agentContext(
   graph: Graph,
   options: AgentContextOptions = {},
 ): AgentContextEntry[] {
-  const summaryMaxChars = options.summaryMaxChars ?? 240;
-
   let candidateIds: Set<string> | null = null;
   if (options.focusIds && options.focusIds.length > 0) {
     candidateIds = new Set();
@@ -354,14 +337,6 @@ export function agentContext(
   const out: AgentContextEntry[] = [];
   for (const page of vault.pages.values()) {
     if (candidateIds && !candidateIds.has(page.id)) continue;
-    if (page.llm === "deny") continue; // hard exclusion per directive §9
-
-    let body: string;
-    if (page.llm === "summary-only") {
-      body = summarize(page.body, summaryMaxChars);
-    } else {
-      body = page.body;
-    }
 
     const outgoing = graph.outgoing.get(page.id) ?? [];
     const links = outgoing.map(describeOutgoingForAgent);
@@ -370,8 +345,7 @@ export function agentContext(
       id: page.id,
       title: page.title,
       visibility: page.visibility,
-      llm: page.llm,
-      body,
+      body: page.body,
       links,
     });
   }

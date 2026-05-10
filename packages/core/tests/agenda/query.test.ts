@@ -12,7 +12,6 @@ function makePage(relPath: string, body: string): OakPage {
     aliases: [],
     visibility: "private",
     slug: "",
-    llm: "deny",
     filePath: `/vault/${relPath}`,
     relPath,
     basename: relPath.replace(/\.md$/, ""),

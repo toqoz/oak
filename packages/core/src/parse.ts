@@ -14,7 +14,6 @@ import type {
   PageFrontmatter,
   Vault,
   Visibility,
-  LlmPolicy,
 } from "./types.js";
 import { extractLinks } from "./links.js";
 import { normalizeKey, slugify } from "./slug.js";
@@ -41,12 +40,6 @@ const VALID_VISIBILITIES: ReadonlySet<Visibility> = new Set([
   "private",
   "unlisted",
   "public",
-]);
-
-const VALID_LLM_POLICIES: ReadonlySet<LlmPolicy> = new Set([
-  "allow",
-  "deny",
-  "summary-only",
 ]);
 
 function toPosix(p: string): string {
@@ -132,21 +125,6 @@ export async function parsePage(
     });
   }
 
-  // LLM policy (default deny per directive)
-  let llm: LlmPolicy = "deny";
-  if (typeof fm.llm === "string") {
-    if (VALID_LLM_POLICIES.has(fm.llm as LlmPolicy)) {
-      llm = fm.llm as LlmPolicy;
-    } else {
-      issues.push({
-        severity: "warning",
-        code: "invalid-llm-policy",
-        message: `Invalid llm policy: ${JSON.stringify(fm.llm)} (using deny)`,
-        filePath,
-      });
-    }
-  }
-
   const aliases = coerceAliases(fm.aliases);
 
   let slug: string;
@@ -165,7 +143,6 @@ export async function parsePage(
     aliases,
     visibility,
     slug,
-    llm,
     filePath,
     relPath: relPathPosix,
     basename,
@@ -256,13 +233,6 @@ async function loadMounts(rootPath: string): Promise<LoadedMounts> {
     const mode = v["mode"] === "readwrite" ? "readwrite" : "readonly";
     const gitPolicy =
       v["gitPolicy"] === "ignore" ? "ignore" : "status-only";
-    let llmPolicy: LlmPolicy = "deny";
-    if (
-      typeof v["llmPolicy"] === "string" &&
-      VALID_LLM_POLICIES.has(v["llmPolicy"] as LlmPolicy)
-    ) {
-      llmPolicy = v["llmPolicy"] as LlmPolicy;
-    }
 
     if (!targetPath) {
       issues.push({
@@ -290,7 +260,6 @@ async function loadMounts(rootPath: string): Promise<LoadedMounts> {
       mode,
       publishable: false,
       gitPolicy,
-      llmPolicy,
       exists,
     });
 

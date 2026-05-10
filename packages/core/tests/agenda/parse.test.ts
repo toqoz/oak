@@ -11,7 +11,6 @@ function makePage(body: string, frontmatter: Record<string, unknown> = {}): OakP
     aliases: [],
     visibility: "private",
     slug: "test",
-    llm: "deny",
     filePath: "/vault/Test.md",
     relPath: "Test.md",
     basename: "Test",

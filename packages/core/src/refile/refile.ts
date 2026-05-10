@@ -299,7 +299,6 @@ function makeOakPage(
     aliases: [],
     visibility: "private",
     slug: "",
-    llm: "deny",
     filePath,
     relPath,
     basename: filePath.split(/[\\/]/).pop() ?? filePath,
