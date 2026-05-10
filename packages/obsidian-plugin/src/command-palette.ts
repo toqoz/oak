@@ -1,14 +1,19 @@
-// Bespoke command palette: lists only oak commands, plus an explicit
-// escape hatch to fall back to Obsidian's native palette. Mirrors the
-// "show default menu" entry on the oak-mode editor context menu — a
-// curated surface for oak commands, with one extra row for users who
-// need the full palette.
+// Bespoke command palette: lists only oak commands, plus a small
+// allowlist of Obsidian built-ins (e.g. `app:reload` for the dev/test
+// loop) and an explicit escape hatch to fall back to Obsidian's native
+// palette. Mirrors the "show default menu" entry on the oak-mode editor
+// context menu — a curated surface for oak commands, with a few extra
+// rows for users who need broader access.
 //
 // Implementation notes:
 //   - Enumerates commands from the live `app.commands.commands` map
 //     (cast through `unknown` because it isn't on the public types)
 //     and filters by the `oak:` prefix that Obsidian prepends to every
 //     command id registered by this plugin (manifest id = `oak`).
+//   - `EXTRA_COMMAND_IDS` is the allowlist of non-oak built-ins to
+//     surface here. Entries are looked up in the live command map so a
+//     missing or renamed id silently drops out instead of showing a
+//     dead row.
 //   - Selecting the "Open system palette…" sentinel defers via
 //     `setTimeout(0)` so this modal finishes closing before Obsidian
 //     opens the system palette — otherwise the system palette closes
@@ -20,6 +25,9 @@ import { App, FuzzySuggestModal, type Command, type FuzzyMatch } from "obsidian"
 
 const SYSTEM_PALETTE_SENTINEL = "__oak_open_system_palette__";
 const OAK_COMMAND_PREFIX = "oak:";
+// Extra Obsidian built-ins we want available from the oak palette
+// without forcing the user to fall back to the system palette.
+const EXTRA_COMMAND_IDS = ["app:reload"] as const;
 
 interface PaletteItem {
   id: string;
@@ -88,6 +96,10 @@ function listOakCommands(app: App): PaletteItem[] {
   for (const cmd of Object.values(map)) {
     if (!cmd.id.startsWith(OAK_COMMAND_PREFIX)) continue;
     out.push({ id: cmd.id, name: stripOakLabelPrefix(cmd.name) });
+  }
+  for (const id of EXTRA_COMMAND_IDS) {
+    const cmd = map[id];
+    if (cmd) out.push({ id: cmd.id, name: cmd.name });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
