@@ -61,6 +61,11 @@ export {
   ASSET_EXTENSIONS,
 } from "./assets.js";
 export type { AssetRef } from "./assets.js";
+export { processBodyAssets, resolveAssetSource } from "./asset-process.js";
+export type {
+  AssetWritten,
+  ProcessedAssets,
+} from "./asset-process.js";
 export {
   ensureGitRepo,
   ensureGitignore,

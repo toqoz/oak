@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 
 import { loadOakPagesInto } from "../src/astro/index.js";
@@ -8,6 +10,16 @@ import type { OakEntryData } from "../src/astro/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fxRoot = (name: string) => resolve(__dirname, "fixtures", name);
+
+let assetOutDir: string;
+beforeEach(async () => {
+  // Isolate the loader's asset side-effects so they don't pollute
+  // packages/core/public when tests run from there.
+  assetOutDir = await mkdtemp(resolve(tmpdir(), "oak-loader-assets-"));
+});
+afterEach(async () => {
+  await rm(assetOutDir, { recursive: true, force: true });
+});
 
 // Astro's DataStore is a black box at this layer, so simulate the
 // surface area the loader actually touches.
@@ -49,6 +61,7 @@ describe("oakLoader / loadOakPagesInto", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const r = await loadOakPagesInto(store as any, digest, {
       vault: fxRoot("publish-basic"),
+      assetOutDir,
     });
     expect(r.count).toBe(2);
     expect(store.keys().sort()).toEqual(["about", "hello"]);
@@ -65,6 +78,7 @@ describe("oakLoader / loadOakPagesInto", () => {
     await loadOakPagesInto(store as any, digest, {
       vault: fxRoot("publish-basic"),
       visibilityFilter: ["public"],
+      assetOutDir,
     });
     // Only public-visibility pages.
     for (const e of store.values()) {
@@ -78,6 +92,7 @@ describe("oakLoader / loadOakPagesInto", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await loadOakPagesInto(store as any, digest, {
       vault: fxRoot("publish-basic"),
+      assetOutDir,
     });
     const hello = store.get("hello");
     expect(hello).toBeDefined();
@@ -91,6 +106,7 @@ describe("oakLoader / loadOakPagesInto", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await loadOakPagesInto(store as any, digest, {
       vault: fxRoot("publish-basic"),
+      assetOutDir,
     });
     const hello = store.get("hello")!.data as unknown as OakEntryData;
     expect(hello.outbound.map((o) => o.slug)).toContain("about");
@@ -106,6 +122,7 @@ describe("oakLoader / loadOakPagesInto", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await loadOakPagesInto(store as any, digest, {
       vault: fxRoot("publish-basic"),
+      assetOutDir,
     });
     expect(store.get("stale")).toBeUndefined();
   });
@@ -116,6 +133,7 @@ describe("oakLoader / loadOakPagesInto", () => {
     await loadOakPagesInto(store as any, digest, {
       vault: fxRoot("publish-basic"),
       idFor: (page) => `page:${page.id}`,
+      assetOutDir,
     });
     for (const k of store.keys()) {
       expect(k.startsWith("page:")).toBe(true);

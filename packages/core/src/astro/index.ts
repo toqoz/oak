@@ -16,9 +16,12 @@ import type { Loader, LoaderContext } from "astro/loaders";
 
 import { parseVault } from "../parse.js";
 import { buildGraph } from "../graph.js";
+import { processBodyAssets } from "../asset-process.js";
 import type { Graph, OakPage, Vault, Visibility } from "../types.js";
 
 const DEFAULT_VISIBILITY: Visibility[] = ["public", "unlisted"];
+const DEFAULT_ASSET_URL_PREFIX = "/_oak";
+const DEFAULT_ASSET_OUT_REL = "public/_oak";
 
 export type OakLoaderOptions = {
   // Path to the vault root. May be absolute or relative to the
@@ -30,6 +33,11 @@ export type OakLoaderOptions = {
   // Override how each entry's id is computed. Default: page.slug.
   // The id determines URL routing in many Astro setups.
   idFor?: (page: OakPage) => string;
+  // Where to copy referenced assets. Defaults to `<projectRoot>/public/_oak`.
+  // Pass an absolute path to override.
+  assetOutDir?: string;
+  // URL prefix for emitted asset URLs. Defaults to "/_oak".
+  assetUrlPrefix?: string;
 };
 
 // What ends up in `entry.data`. The shape is intentionally close to
@@ -111,16 +119,30 @@ function relativeFilePath(absolute: string, projectRoot: string): string {
 // HTML at load time so Astro's `render(entry)` returns a working
 // Content component. The Astro content pipeline applies the
 // project-configured remark plugins (including remarkOakLinks) here.
+//
+// Asset references in each body are resolved, copied to assetOutDir
+// with content-hashed filenames, and rewritten to point at
+// `<assetUrlPrefix>/<hash>.<ext>` before rendering.
 export async function loadOakPagesInto(
   store: LoaderContext["store"],
   generateDigest: LoaderContext["generateDigest"],
   options: OakLoaderOptions,
   projectRoot: string = process.cwd(),
   renderMarkdown?: LoaderContext["renderMarkdown"],
-): Promise<{ count: number }> {
+): Promise<{ count: number; assetsCopied: number }> {
   const visibilityFilter = options.visibilityFilter ?? DEFAULT_VISIBILITY;
   const visible = new Set(visibilityFilter);
   const idFor = options.idFor ?? defaultIdFor;
+
+  const vaultRoot = isAbsolute(options.vault)
+    ? options.vault
+    : resolve(projectRoot, options.vault);
+  const assetOutDir = options.assetOutDir
+    ? isAbsolute(options.assetOutDir)
+      ? options.assetOutDir
+      : resolve(projectRoot, options.assetOutDir)
+    : resolve(projectRoot, DEFAULT_ASSET_OUT_REL);
+  const assetUrlPrefix = options.assetUrlPrefix ?? DEFAULT_ASSET_URL_PREFIX;
 
   const vault = await parseVault(options.vault);
   const graph = buildGraph(vault);
@@ -128,6 +150,7 @@ export async function loadOakPagesInto(
   store.clear();
 
   let count = 0;
+  const writtenAssets = new Set<string>();
   for (const page of vault.pages.values()) {
     if (!visible.has(page.visibility)) continue;
     const data: OakEntryData = {
@@ -140,9 +163,22 @@ export async function loadOakPagesInto(
       outbound: computeOutbound(page, vault, graph, visible),
       inbound: computeInbound(page, vault, graph, visible),
     };
+
+    const processed = await processBodyAssets(
+      page.body,
+      page.filePath,
+      vaultRoot,
+      assetOutDir,
+      assetUrlPrefix,
+    );
+    for (const w of processed.written) writtenAssets.add(w.outputAbsPath);
+
+    // Use the original body for storage (so consumers like search.json
+    // see the source markdown), but render the rewritten body so URLs
+    // in the HTML point at copied/hashed assets.
     const digest = generateDigest({ data, body: page.body });
     const rendered = renderMarkdown
-      ? await renderMarkdown(page.body)
+      ? await renderMarkdown(processed.body)
       : undefined;
     store.set({
       id: idFor(page),
@@ -154,7 +190,7 @@ export async function loadOakPagesInto(
     });
     count++;
   }
-  return { count };
+  return { count, assetsCopied: writtenAssets.size };
 }
 
 export function oakLoader(options: OakLoaderOptions): Loader {
@@ -164,19 +200,20 @@ export function oakLoader(options: OakLoaderOptions): Loader {
       // ctx.config.root is a file:// URL pointing at the project root.
       const projectRoot = fileURLToPath(ctx.config.root);
       const reload = async (): Promise<void> => {
-        const { count } = await loadOakPagesInto(
+        const { count, assetsCopied } = await loadOakPagesInto(
           ctx.store,
           ctx.generateDigest,
           options,
           projectRoot,
           ctx.renderMarkdown,
         );
+        const where = isAbsolute(options.vault)
+          ? options.vault
+          : relative(projectRoot, options.vault) || options.vault;
+        const assetsNote =
+          assetsCopied > 0 ? `, ${assetsCopied} asset(s)` : "";
         ctx.logger.info(
-          `oak: loaded ${count} page(s) from ${
-            isAbsolute(options.vault)
-              ? options.vault
-              : relative(projectRoot, options.vault) || options.vault
-          }`,
+          `oak: loaded ${count} page(s) from ${where}${assetsNote}`,
         );
       };
 
