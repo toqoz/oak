@@ -53,3 +53,24 @@ npm run build    # produces dist/
 
 Then `oak pub build` from the same directory commits `dist/` onto the
 `public` orphan branch and pushes.
+
+## Image optimization
+
+png/jpg/jpeg files referenced from vault pages get responsive WebP
+variants by default. Each image is read by [sharp](https://sharp.pixelplumbing.com)
+at load time, transcoded to WebP at multiple widths (defaults: 400,
+800, plus the original), and emitted as `<img srcset>`. The original
+file is also copied as-is.
+
+Tunables on `oakLoader` in `src/content.config.ts`:
+
+- `optimizeImages` — toggle; set to `false` to skip transcoding and
+  emit plain markdown image syntax instead
+- `imageWidths` — list of variant widths in pixels
+- `imageQuality` — WebP quality 1–100
+
+If you don't want optimization, also remove `sharp` from `package.json`
+dependencies — it's only needed for transcoding.
+
+For the full publishing flow, customization guide, and deployment
+patterns, see [docs/manual/publish.md](../../docs/manual/publish.md).

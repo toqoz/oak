@@ -38,6 +38,14 @@ export type OakLoaderOptions = {
   assetOutDir?: string;
   // URL prefix for emitted asset URLs. Defaults to "/_oak".
   assetUrlPrefix?: string;
+  // Generate responsive WebP variants for png/jpg/jpeg assets and emit
+  // each body image as `<img srcset>`. Requires `sharp` to be
+  // installed (it ships transitively with Astro). Defaults to false.
+  optimizeImages?: boolean;
+  // WebP variant widths to generate. Defaults to [400, 800].
+  imageWidths?: number[];
+  // WebP quality 1–100. Defaults to 80.
+  imageQuality?: number;
 };
 
 // What ends up in `entry.data`. The shape is intentionally close to
@@ -130,6 +138,8 @@ export async function loadOakPagesInto(
   projectRoot: string = process.cwd(),
   renderMarkdown?: LoaderContext["renderMarkdown"],
 ): Promise<{ count: number; assetsCopied: number }> {
+  // projectRoot is also used to locate sharp at runtime when
+  // optimizeImages is on (see processBodyAssets call below).
   const visibilityFilter = options.visibilityFilter ?? DEFAULT_VISIBILITY;
   const visible = new Set(visibilityFilter);
   const idFor = options.idFor ?? defaultIdFor;
@@ -170,6 +180,16 @@ export async function loadOakPagesInto(
       vaultRoot,
       assetOutDir,
       assetUrlPrefix,
+      {
+        resolveSharpFrom: projectRoot,
+        ...(options.optimizeImages !== undefined
+          ? { optimize: options.optimizeImages }
+          : {}),
+        ...(options.imageWidths ? { widths: options.imageWidths } : {}),
+        ...(options.imageQuality !== undefined
+          ? { quality: options.imageQuality }
+          : {}),
+      },
     );
     for (const w of processed.written) writtenAssets.add(w.outputAbsPath);
 

@@ -34,10 +34,14 @@
   },
   "peerDependencies": {
     "astro": ">=5.0.0",
+    "sharp": ">=0.33.0",
     "unified": ">=11.0.0"
   },
   "peerDependenciesMeta": {
     "astro": {
+      "optional": true
+    },
+    "sharp": {
       "optional": true
     },
     "unified": {
@@ -50,6 +54,7 @@
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.0",
     "rehype-stringify": "^10.0.0",
+    "sharp": "^0.34.0",
     "unified": "^11.0.5"
   }
 }

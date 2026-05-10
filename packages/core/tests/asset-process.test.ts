@@ -7,6 +7,7 @@ import {
   processBodyAssets,
   resolveAssetSource,
 } from "../src/asset-process.js";
+import sharp from "sharp";
 
 let scratch: string;
 let vault: string;
@@ -195,6 +196,20 @@ it("reports missing assets without throwing or writing", async () => {
     expect(r.written[0]!.url).not.toContain("//");
   });
 
+  it("preserves the missing-asset behavior under optimize=true", async () => {
+    const body = "![[gone.png]]";
+    const r = await processBodyAssets(
+      body,
+      resolve(vault, "p.md"),
+      vault,
+      outDir,
+      "/_oak",
+      { optimize: true },
+    );
+    expect(r.missing.length).toBe(1);
+    expect(r.optimized).toBe(0);
+  });
+
   it("skips redundant copy when target file already exists", async () => {
     await writeAsset("_assets/a.png");
     const body = "![[a.png]]";
@@ -223,5 +238,117 @@ it("reports missing assets without throwing or writing", async () => {
       await stat(resolve(outDir, (await readdir(outDir))[0]!))
     ).mtimeMs;
     expect(afterMtime).toBe(beforeMtime);
+  });
+});
+
+// Sharp-backed image optimization: real WebP variants generated and
+// emitted as `<img srcset>`. Skipped automatically when sharp can't
+// be loaded (e.g. CI runner without native deps).
+describe("processBodyAssets / optimize", () => {
+  // Helper: synthesise a real PNG of the given dimensions so sharp
+  // has actual pixel data to read.
+  async function writePng(
+    relPath: string,
+    width: number,
+    height: number,
+  ): Promise<void> {
+    const abs = resolve(vault, relPath);
+    await import("node:fs/promises").then((m) =>
+      m.mkdir(resolve(abs, ".."), { recursive: true }),
+    );
+    await sharp({
+      create: {
+        width,
+        height,
+        channels: 3,
+        background: { r: 200, g: 100, b: 50 },
+      },
+    })
+      .png()
+      .toFile(abs);
+  }
+
+  it("generates WebP variants for a png and emits raw <img srcset>", async () => {
+    await writePng("_assets/big.png", 1200, 800);
+    const body = "![cover](_assets/big.png)";
+    const r = await processBodyAssets(
+      body,
+      resolve(vault, "p.md"),
+      vault,
+      outDir,
+      "/_oak",
+      { optimize: true, widths: [400, 800] },
+    );
+    expect(r.optimized).toBe(1);
+    // Expect one logical asset, with three variants (400w, 800w, 1200w original).
+    expect(r.written.length).toBe(1);
+    expect(r.written[0]!.variants).toHaveLength(3);
+    const widths = r.written[0]!.variants!.map((v) => v.width).sort(
+      (a, b) => a - b,
+    );
+    expect(widths).toEqual([400, 800, 1200]);
+
+    // Body now contains raw <img> with srcset and sizes.
+    expect(r.body).toMatch(/<img[^>]+srcset="[^"]+"[^>]+sizes="/);
+    expect(r.body).toMatch(/loading="lazy"/);
+    // Primary src is the largest variant.
+    expect(r.body).toMatch(/src="\/_oak\/[0-9a-f]{16}-1200w\.webp"/);
+    // Alt text is HTML-escaped and preserved.
+    expect(r.body).toContain('alt="cover"');
+  });
+
+  it("emits a single-variant <img> when the image is smaller than the smallest target width", async () => {
+    await writePng("_assets/tiny.png", 200, 100);
+    const body = "![[tiny.png]]";
+    const r = await processBodyAssets(
+      body,
+      resolve(vault, "p.md"),
+      vault,
+      outDir,
+      "/_oak",
+      { optimize: true, widths: [400, 800] },
+    );
+    expect(r.optimized).toBe(1);
+    expect(r.written[0]!.variants).toHaveLength(1);
+    expect(r.written[0]!.variants![0]!.width).toBe(200);
+    // No srcset for a single variant.
+    expect(r.body).not.toContain("srcset");
+    expect(r.body).toMatch(/src="\/_oak\/[0-9a-f]{16}-200w\.webp"/);
+  });
+
+  it("does not optimize svg / pdf / unsupported assets", async () => {
+    await writeAsset("_assets/diagram.svg", Buffer.from("<svg/>"));
+    await writeAsset("_assets/doc.pdf", Buffer.from("%PDF-1.4\n%\xe2\xe3\xcf\xd3"));
+    const body = "Vector: ![[diagram.svg]]\n\nDoc: ![[doc.pdf]]";
+    const r = await processBodyAssets(
+      body,
+      resolve(vault, "p.md"),
+      vault,
+      outDir,
+      "/_oak",
+      { optimize: true },
+    );
+    expect(r.optimized).toBe(0);
+    // Both copied as-is, no .webp variants.
+    for (const w of r.written) expect(w.variants).toBeUndefined();
+    // Body still uses standard markdown image syntax.
+    expect(r.body).toMatch(/!\[\]\(\/_oak\/[0-9a-f]{16}\.svg\)/);
+    expect(r.body).toMatch(/!\[\]\(\/_oak\/[0-9a-f]{16}\.pdf\)/);
+  });
+
+  it("html-escapes alt text in optimized <img> output", async () => {
+    await writePng("_assets/ok.png", 800, 600);
+    const body = `![alt with <chevron> & "quotes"](_assets/ok.png)`;
+    const r = await processBodyAssets(
+      body,
+      resolve(vault, "p.md"),
+      vault,
+      outDir,
+      "/_oak",
+      { optimize: true, widths: [400] },
+    );
+    expect(r.body).toContain(
+      'alt="alt with &lt;chevron&gt; &amp; &quot;quotes&quot;"',
+    );
   });
 });

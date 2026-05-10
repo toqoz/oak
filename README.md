@@ -47,6 +47,13 @@ oak pub build               # commit dist/ onto `public`, force-push
   (default `public`), `--no-push`, `--no-checkpoint`, `--allow-dirty`,
   `--remote <name>`
 
+## Documentation
+
+- [docs/manual/publish.md](docs/manual/publish.md) — full publishing
+  guide: CLI reference, template structure, customization, image
+  optimization, deployment patterns, troubleshooting.
+- [docs/manual/agenda.md](docs/manual/agenda.md) — Obsidian agenda view.
+
 ## Development
 
 ```bash
