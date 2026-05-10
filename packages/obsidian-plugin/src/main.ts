@@ -59,6 +59,8 @@ import {
   loadAgendaConfig,
   loadRefileConfig,
   nowIsoSecond,
+  recoverCreatedTimestamp,
+  setCreatedIfMissing,
   setModified,
   shouldBumpModified,
   slugify,
@@ -836,13 +838,28 @@ export default class OakPlugin extends Plugin {
         this.lastSeenContent.set(file.path, current);
         return;
       }
-      if (!shouldBumpModified(previous, current)) {
-        // Refresh baseline so the *next* diff is anchored on the
-        // latest known state, even when we chose not to bump.
+      const bump = shouldBumpModified(previous, current);
+      // The recovery path also fires when `created` is missing — even
+      // if the bump rule itself decided to skip. That way a metadata-
+      // only edit on a legacy file still backfills `created` once.
+      const needCreated =
+        /^---\n[\s\S]*?\bid:/.test(current) &&
+        !/\bcreated:\s*\S/.test(current);
+      if (!bump && !needCreated) {
         this.lastSeenContent.set(file.path, current);
         return;
       }
-      const stamped = setModified(current, nowIsoSecond());
+      const now = nowIsoSecond();
+      let stamped = current;
+      if (needCreated) {
+        const recovered = await recoverCreatedTimestamp(
+          vaultRoot(this.app),
+          `${vaultRoot(this.app)}/${file.path}`,
+          now,
+        );
+        stamped = setCreatedIfMissing(stamped, recovered);
+      }
+      if (bump) stamped = setModified(stamped, now);
       this.lastSeenContent.set(file.path, stamped);
       if (stamped !== current) {
         await this.app.vault.modify(file, stamped);

@@ -31,7 +31,7 @@ import {
 } from "./timestamp.js";
 import type { AgendaConfig, AgendaEntry, AgendaTimestamp } from "./types.js";
 import type { OakPage } from "../types.js";
-import { nowIsoSecond, withTimestampUpdate } from "../timestamps.js";
+import { nowIsoSecond, withTimestampUpdateAndRecovery } from "../timestamps.js";
 
 export class WriteBackError extends Error {
   constructor(
@@ -112,6 +112,7 @@ export async function markDone(
   config: AgendaConfig,
   now: Date = new Date(),
   relPath?: string,
+  vaultRoot?: string,
 ): Promise<MarkDoneResult> {
   // Resolve symlinks once and use the realpath for both the read and
   // the conflict check so the mtime comparison is meaningful even when
@@ -256,8 +257,16 @@ export async function markDone(
   const updated = lines.join("\n");
   // markDone always rewrites body lines (the heading keyword, planning
   // line, or :LOGBOOK: drawer), so the bump rule's body-changed branch
-  // applies — `withTimestampUpdate` will set `modified` to `now`.
-  const stamped = withTimestampUpdate(raw, updated, nowIsoSecond(now));
+  // applies. The recovery variant additionally backfills `created` if
+  // it had been lost — using the original `filePath` (not the realpath
+  // resolved earlier) so git's path lookup matches the vault layout.
+  const stamped = await withTimestampUpdateAndRecovery(
+    raw,
+    updated,
+    vaultRoot ?? null,
+    filePath,
+    nowIsoSecond(now),
+  );
   await atomicWrite(resolvedPath, stamped, preMtimeMs);
 
   return {

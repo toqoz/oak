@@ -39,7 +39,10 @@ import { randomBytes } from "node:crypto";
 
 import { parseAgendaPage } from "../agenda/parse.js";
 import type { AgendaConfig } from "../agenda/types.js";
-import { nowIsoSecond, withTimestampUpdate } from "../timestamps.js";
+import {
+  nowIsoSecond,
+  withTimestampUpdateAndRecovery,
+} from "../timestamps.js";
 import type { OakPage, Vault } from "../types.js";
 
 import type { RefileConfig } from "./config.js";
@@ -585,6 +588,7 @@ export async function refile(
   config: RefileConfig,
   agendaConfig: AgendaConfig,
   sourceRelPath?: string,
+  vaultRoot?: string,
 ): Promise<RefileResult> {
   const src = await readWithStat(sourceFilePath);
   const srcRelPath = sourceRelPath ?? sourceFilePath;
@@ -707,8 +711,16 @@ export async function refile(
     const merged = spliceWithSeparator(cutBodyLines, insertBodyLine, shifted);
     const updatedBody = merged.lines.join("\n");
     const updated = replaceBody(src.raw, updatedBody);
-    // Refile mutates body lines; bump `modified` per the standard rule.
-    const stamped = withTimestampUpdate(src.raw, updated, nowIsoSecond());
+    // Refile mutates body lines; bump `modified` per the standard
+    // rule, and let the recovery cascade backfill `created` if it has
+    // gone missing on this file.
+    const stamped = await withTimestampUpdateAndRecovery(
+      src.raw,
+      updated,
+      vaultRoot ?? null,
+      sourceFilePath,
+      nowIsoSecond(),
+    );
     await atomicWrite(src.resolved, stamped, src.mtimeMs, src.mode);
     // Same-file: cutting [range.start, range.end) shifts every later
     // line up by the cut size. The insertion happens *after* the
@@ -751,7 +763,13 @@ export async function refile(
   // Single timestamp shared between the two writes so the pair has a
   // consistent `modified` value when both files end up bumped.
   const writeIso = nowIsoSecond();
-  const stampedTgt = withTimestampUpdate(tgt.raw, updatedTgt, writeIso);
+  const stampedTgt = await withTimestampUpdateAndRecovery(
+    tgt.raw,
+    updatedTgt,
+    vaultRoot ?? null,
+    target.filePath,
+    writeIso,
+  );
   await atomicWrite(tgt.resolved, stampedTgt, tgt.mtimeMs, tgt.mode);
 
   const { lines: cutSrcBodyLines } = cutWithBlankCleanup(
@@ -759,7 +777,13 @@ export async function refile(
     range,
   );
   const updatedSrc = replaceBody(src.raw, cutSrcBodyLines.join("\n"));
-  const stampedSrc = withTimestampUpdate(src.raw, updatedSrc, writeIso);
+  const stampedSrc = await withTimestampUpdateAndRecovery(
+    src.raw,
+    updatedSrc,
+    vaultRoot ?? null,
+    sourceFilePath,
+    writeIso,
+  );
   await atomicWrite(src.resolved, stampedSrc, src.mtimeMs, src.mode);
 
   return {

@@ -37,10 +37,13 @@ export {
   coerceTimestamp,
   isOakManaged,
   nowIsoSecond,
+  recoverCreatedTimestamp,
   setCreatedAndModified,
+  setCreatedIfMissing,
   setModified,
   shouldBumpModified,
   withTimestampUpdate,
+  withTimestampUpdateAndRecovery,
 } from "./timestamps.js";
 export {
   writeIndex,
@@ -77,6 +80,7 @@ export type { RenderContext } from "./render.js";
 export {
   ensureGitRepo,
   ensureGitignore,
+  gitFirstAddedTime,
   isGitRepo,
   gitStatus,
   snapshot,

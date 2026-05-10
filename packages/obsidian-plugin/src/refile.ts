@@ -12,6 +12,7 @@
 
 import { Notice, TFile, type WorkspaceLeaf } from "obsidian";
 
+import { vaultRoot } from "./paths.js";
 import {
   frontmatterLineCount,
   refile,
@@ -128,6 +129,7 @@ export async function refileHeadings(
         refileConfig,
         agendaConfig,
         source.relPath,
+        vaultRoot(plugin.app),
       );
       currentTargetLine = result.targetLineAfter;
       lastInsertedBodyLine = result.insertedBodyLine;
@@ -229,6 +231,7 @@ export async function refileHeading(
       refileConfig,
       agendaConfig,
       source.relPath,
+      vaultRoot(plugin.app),
     );
     new Notice(
       result.sameFile

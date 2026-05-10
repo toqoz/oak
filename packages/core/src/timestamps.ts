@@ -17,7 +17,10 @@
 
 import matter from "gray-matter";
 import yaml from "js-yaml";
+import { stat } from "node:fs/promises";
+import { relative, resolve } from "node:path";
 
+import { gitFirstAddedTime } from "./git.js";
 import type { PageFrontmatter } from "./types.js";
 
 function pad2(n: number): string {
@@ -137,4 +140,117 @@ export function setCreatedAndModified(raw: string, nowIso: string): string {
   data["created"] = nowIso;
   data["modified"] = nowIso;
   return rewriteFrontmatter(raw, data);
+}
+
+// Set `created` only when missing/empty. Used by the recovery path so
+// a save that legitimately bumps `modified` also backfills a lost
+// `created` from the best available source, without ever overwriting
+// a user-supplied value.
+export function setCreatedIfMissing(raw: string, iso: string): string {
+  const parsed = matter(raw);
+  const data = { ...((parsed.data as Record<string, unknown> | undefined) ?? {}) };
+  const existing = coerceTimestamp(data["created"]);
+  if (existing !== null) return raw;
+  // Preserve "created precedes modified" key order.
+  const modified = data["modified"];
+  delete data["modified"];
+  data["created"] = iso;
+  if (modified !== undefined) data["modified"] = modified;
+  return rewriteFrontmatter(raw, data);
+}
+
+function frontmatterHasCreated(raw: string): boolean {
+  const parsed = matter(raw);
+  const data = parsed.data as Record<string, unknown> | undefined;
+  return coerceTimestamp(data?.["created"]) !== null;
+}
+
+// Best-effort `created` value for a file that's missing the field.
+// Cascade:
+//   1. git: author-date of the oldest commit that added this path
+//      (follows renames). The closest thing we have to "when did this
+//      note start to exist?" once frontmatter has been lost.
+//   2. filesystem mtime — survives most edits but is reset by clones,
+//      checkouts, and rsync, so it sits below git in the cascade.
+//   3. `nowIso` — last resort. Always returns *something* so callers
+//      have a value to write.
+//
+// `filePath` should be absolute; `vaultRoot` is the path passed to
+// parseVault, or null when the caller can't provide it (the cascade
+// then skips straight to mtime). Errors at any layer fall through
+// silently to the next source — we never let recovery noise block a
+// save.
+export async function recoverCreatedTimestamp(
+  vaultRoot: string | null,
+  filePath: string,
+  nowIso: string = nowIsoSecond(),
+): Promise<string> {
+  const absFile = resolve(filePath);
+  if (vaultRoot !== null) {
+    const absRoot = resolve(vaultRoot);
+    const rel = relative(absRoot, absFile);
+    // Skip git when the file lives outside the vault root (a defensive
+    // guard for symlinked mounts / unusual setups). gitFirstAddedTime
+    // would otherwise pass an escaping path to git and either fail or
+    // walk the wrong repo's history.
+    if (!rel.startsWith("..") && !rel.startsWith("/") && rel.length > 0) {
+      try {
+        const fromGit = await gitFirstAddedTime(absRoot, rel);
+        if (fromGit !== null) return normalizeIso(fromGit);
+      } catch {
+        // fall through
+      }
+    }
+  }
+  try {
+    const st = await stat(absFile);
+    return nowIsoSecond(new Date(st.mtimeMs));
+  } catch {
+    return nowIso;
+  }
+}
+
+// Normalise a git-emitted ISO timestamp ("2026-05-10T12:34:56+09:00")
+// to oak's canonical UTC second-precision form. Falls back to the
+// input string if Date parsing fails — better to write a slightly
+// off-format value than to lose the recovered information.
+function normalizeIso(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return nowIsoSecond(d);
+}
+
+// Async variant of `withTimestampUpdate` that *also* backfills a
+// missing `created` from the recovery cascade. Use this on save
+// paths where the file path / vault root are known. The frontmatter
+// is rewritten when either of these is true:
+//
+//   - the bump rule says `modified` should advance, OR
+//   - the file is oak-managed but its `created` is missing (legacy /
+//     accidentally-deleted), and the cascade returned a value
+//
+// A pure metadata edit on a file with both fields intact is a no-op,
+// matching the sync helper.
+export async function withTimestampUpdateAndRecovery(
+  oldRaw: string,
+  newRaw: string,
+  vaultRoot: string | null,
+  filePath: string,
+  nowIso: string = nowIsoSecond(),
+): Promise<string> {
+  if (!isOakManaged(newRaw)) return newRaw;
+  const bump = shouldBumpModified(oldRaw, newRaw);
+  const needCreated = !frontmatterHasCreated(newRaw);
+  if (!bump && !needCreated) return newRaw;
+  let out = newRaw;
+  if (needCreated) {
+    const recovered = await recoverCreatedTimestamp(
+      vaultRoot,
+      filePath,
+      nowIso,
+    );
+    out = setCreatedIfMissing(out, recovered);
+  }
+  if (bump) out = setModified(out, nowIso);
+  return out;
 }

@@ -511,3 +511,40 @@ export async function recentCommits(
   }
   return out;
 }
+
+// Author-date of the oldest commit that introduced `relPath`. Follows
+// renames so a file's git-history "creation" survives moves. Returns
+// null when the vault isn't a git repo, the file has no commits yet
+// (untracked, or staged but never committed), or git failed for any
+// reason — callers fall back to filesystem mtime in that case.
+//
+// Used by the timestamp-recovery path: when a save needs to write a
+// missing `created` field, this is the most reliable source we have
+// short of a manually-managed value.
+export async function gitFirstAddedTime(
+  vaultRoot: string,
+  relPath: string,
+): Promise<string | null> {
+  if (!(await isGitRepo(vaultRoot))) return null;
+  // `--diff-filter=A` selects add-introducing commits only; `--follow`
+  // walks renames. The list is newest-first, so the last line is the
+  // original add. `--reverse` would give it directly but interacts
+  // poorly with `--follow` on some git versions.
+  const r = await runGit(
+    vaultRoot,
+    [
+      "log",
+      "--diff-filter=A",
+      "--follow",
+      "--format=%aI",
+      "--",
+      relPath,
+    ],
+    { allowFailure: true },
+  );
+  if (r.code !== 0) return null;
+  const lines = r.stdout.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return null;
+  return lines[lines.length - 1]!.trim();
+}
+

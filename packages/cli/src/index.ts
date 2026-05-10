@@ -1064,6 +1064,7 @@ async function cmdAgendaDone(
       config,
       undefined,
       target.relPath,
+      vaultPath,
     );
     if (json) {
       process.stdout.write(
