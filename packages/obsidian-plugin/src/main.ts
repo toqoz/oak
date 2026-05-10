@@ -58,6 +58,9 @@ import {
   excerptFrom,
   loadAgendaConfig,
   loadRefileConfig,
+  nowIsoSecond,
+  setModified,
+  shouldBumpModified,
   slugify,
   snapshot,
   type AgendaConfig,
@@ -128,6 +131,15 @@ export default class OakPlugin extends Plugin {
   // own handler runs and shows the native menu. This flag tells our
   // capture-phase listener to wave that re-dispatch through.
   private oakContextmenuBypass = false;
+  // Per-path snapshot of the last content we observed (after our own
+  // modified-bump, when applicable). The vault.on("modify") handler
+  // diffs the live content against this baseline to decide whether a
+  // save warrants bumping `modified`. Without a baseline we can't tell
+  // a body edit apart from a metadata tweak — so the very first
+  // modify after plugin load just primes the entry and skips the
+  // bump. Memory cost grows only with the set of files actually
+  // edited in the session.
+  private lastSeenContent = new Map<string, string>();
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -200,6 +212,21 @@ export default class OakPlugin extends Plugin {
         this.state.scheduleRefresh();
         if (file instanceof TFile && file.extension === "md") {
           void this.normalizeFrontmatterSeparator(file);
+          void this.maybeBumpModified(file);
+        }
+      }),
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (file instanceof TFile) this.lastSeenContent.delete(file.path);
+      }),
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        const prev = this.lastSeenContent.get(oldPath);
+        this.lastSeenContent.delete(oldPath);
+        if (prev !== undefined && file instanceof TFile) {
+          this.lastSeenContent.set(file.path, prev);
         }
       }),
     );
@@ -785,6 +812,43 @@ export default class OakPlugin extends Plugin {
       await this.app.vault.modify(file, fixed);
     } catch (err) {
       console.warn("oak: normalizeFrontmatterSeparator failed", err);
+    }
+  }
+
+  // Bump frontmatter `modified` to "now" when the just-applied save
+  // changed body content or the title — but not when the change was
+  // pure metadata (visibility, alias, slug, llm flip). The diff is
+  // computed against the in-memory baseline cached from the previous
+  // observation; a missing baseline means this is the first modify we
+  // see for the file, so we just prime the cache and skip the bump
+  // (better to occasionally miss one bump than to fabricate an edit
+  // out of thin air for files we have no history of).
+  //
+  // The early `shouldBumpModified` check also keeps our own writeback
+  // from looping: when we call `vault.modify` below, the modify event
+  // re-fires; the second pass sees `lastSeenContent[path]` already set
+  // to the bumped content and the diff is empty, so it short-circuits.
+  private async maybeBumpModified(file: TFile): Promise<void> {
+    try {
+      const current = await this.app.vault.read(file);
+      const previous = this.lastSeenContent.get(file.path);
+      if (previous === undefined) {
+        this.lastSeenContent.set(file.path, current);
+        return;
+      }
+      if (!shouldBumpModified(previous, current)) {
+        // Refresh baseline so the *next* diff is anchored on the
+        // latest known state, even when we chose not to bump.
+        this.lastSeenContent.set(file.path, current);
+        return;
+      }
+      const stamped = setModified(current, nowIsoSecond());
+      this.lastSeenContent.set(file.path, stamped);
+      if (stamped !== current) {
+        await this.app.vault.modify(file, stamped);
+      }
+    } catch (err) {
+      console.warn("oak: maybeBumpModified failed", err);
     }
   }
 

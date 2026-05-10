@@ -39,6 +39,7 @@ import { randomBytes } from "node:crypto";
 
 import { parseAgendaPage } from "../agenda/parse.js";
 import type { AgendaConfig } from "../agenda/types.js";
+import { nowIsoSecond, withTimestampUpdate } from "../timestamps.js";
 import type { OakPage, Vault } from "../types.js";
 
 import type { RefileConfig } from "./config.js";
@@ -305,6 +306,8 @@ function makeOakPage(
     basename: filePath.split(/[\\/]/).pop() ?? filePath,
     body,
     rawFrontmatter: {},
+    created: null,
+    modified: null,
     links: [],
     parseIssues: [],
   };
@@ -704,7 +707,9 @@ export async function refile(
     const merged = spliceWithSeparator(cutBodyLines, insertBodyLine, shifted);
     const updatedBody = merged.lines.join("\n");
     const updated = replaceBody(src.raw, updatedBody);
-    await atomicWrite(src.resolved, updated, src.mtimeMs, src.mode);
+    // Refile mutates body lines; bump `modified` per the standard rule.
+    const stamped = withTimestampUpdate(src.raw, updated, nowIsoSecond());
+    await atomicWrite(src.resolved, stamped, src.mtimeMs, src.mode);
     // Same-file: cutting [range.start, range.end) shifts every later
     // line up by the cut size. The insertion happens *after* the
     // target heading, so the target line itself moves only when it
@@ -743,14 +748,19 @@ export async function refile(
   );
   const mergedTgt = spliceWithSeparator(tgtBodyLines, insertBodyLine, shifted);
   const updatedTgt = replaceBody(tgt.raw, mergedTgt.lines.join("\n"));
-  await atomicWrite(tgt.resolved, updatedTgt, tgt.mtimeMs, tgt.mode);
+  // Single timestamp shared between the two writes so the pair has a
+  // consistent `modified` value when both files end up bumped.
+  const writeIso = nowIsoSecond();
+  const stampedTgt = withTimestampUpdate(tgt.raw, updatedTgt, writeIso);
+  await atomicWrite(tgt.resolved, stampedTgt, tgt.mtimeMs, tgt.mode);
 
   const { lines: cutSrcBodyLines } = cutWithBlankCleanup(
     sourceBodyLines,
     range,
   );
   const updatedSrc = replaceBody(src.raw, cutSrcBodyLines.join("\n"));
-  await atomicWrite(src.resolved, updatedSrc, src.mtimeMs, src.mode);
+  const stampedSrc = withTimestampUpdate(src.raw, updatedSrc, writeIso);
+  await atomicWrite(src.resolved, stampedSrc, src.mtimeMs, src.mode);
 
   return {
     sourceRelPath: srcRelPath,

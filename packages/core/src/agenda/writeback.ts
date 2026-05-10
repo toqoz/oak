@@ -31,6 +31,7 @@ import {
 } from "./timestamp.js";
 import type { AgendaConfig, AgendaEntry, AgendaTimestamp } from "./types.js";
 import type { OakPage } from "../types.js";
+import { nowIsoSecond, withTimestampUpdate } from "../timestamps.js";
 
 export class WriteBackError extends Error {
   constructor(
@@ -76,6 +77,8 @@ function makeOakPage(
     basename: filePath.split(/[\\/]/).pop() ?? filePath,
     body: parsed.content,
     rawFrontmatter: parsed.data ?? {},
+    created: null,
+    modified: null,
     links: [],
     parseIssues: [],
   };
@@ -251,7 +254,11 @@ export async function markDone(
   }
 
   const updated = lines.join("\n");
-  await atomicWrite(resolvedPath, updated, preMtimeMs);
+  // markDone always rewrites body lines (the heading keyword, planning
+  // line, or :LOGBOOK: drawer), so the bump rule's body-changed branch
+  // applies — `withTimestampUpdate` will set `modified` to `now`.
+  const stamped = withTimestampUpdate(raw, updated, nowIsoSecond(now));
+  await atomicWrite(resolvedPath, stamped, preMtimeMs);
 
   return {
     filePath,

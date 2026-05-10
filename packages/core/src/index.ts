@@ -34,6 +34,15 @@ export {
 export { validateVault, partitionIssues } from "./validate.js";
 export { slugify, normalizeKey } from "./slug.js";
 export {
+  coerceTimestamp,
+  isOakManaged,
+  nowIsoSecond,
+  setCreatedAndModified,
+  setModified,
+  shouldBumpModified,
+  withTimestampUpdate,
+} from "./timestamps.js";
+export {
   writeIndex,
   readIndexMeta,
   queryIndex,

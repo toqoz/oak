@@ -9,6 +9,7 @@ import yaml from "js-yaml";
 import { ulid } from "ulid";
 
 import { slugify } from "./slug.js";
+import { nowIsoSecond } from "./timestamps.js";
 import type { LlmPolicy, Visibility } from "./types.js";
 
 const ILLEGAL_FS = /[\\/:*?"<>|]/g;
@@ -39,6 +40,8 @@ export type CreatePageOptions = {
   failIfExists?: boolean;
   // Test seam: deterministic id generation in tests.
   generateId?: () => string;
+  // Test seam: deterministic `created` / `modified` timestamps.
+  now?: () => Date;
 };
 
 export type CreatePageResult = {
@@ -145,6 +148,13 @@ export function composePage(options: CreatePageOptions): ComposedPage {
   fm["visibility"] = visibility;
   fm["slug"] = slug;
   fm["llm"] = llm;
+  // `created` / `modified` start equal — the file is brand new, so
+  // creation and last-modification are the same instant. Subsequent
+  // writes go through `withTimestampUpdate()` which only bumps
+  // `modified`.
+  const stamp = nowIsoSecond(options.now ? options.now() : new Date());
+  fm["created"] = stamp;
+  fm["modified"] = stamp;
 
   const yamlText = yaml.dump(fm, {
     sortKeys: false,
