@@ -60,8 +60,6 @@ export {
   ASSET_EXTENSIONS,
 } from "./assets.js";
 export type { AssetRef } from "./assets.js";
-export { renderPage, renderPageDocument, rewriteBody } from "./render.js";
-export type { RenderContext } from "./render.js";
 export {
   ensureGitRepo,
   ensureGitignore,
@@ -77,6 +75,9 @@ export {
   deleteBranch,
   diffBranch,
   mergeBranch,
+  branchExists,
+  createOrphanBranch,
+  commitTreeToBranch,
   GitError,
 } from "./git.js";
 export type {
@@ -108,14 +109,20 @@ export type {
   AgentContextEntry,
   AgentContextOptions,
 } from "./agent.js";
-export { publish, PublishError } from "./publish.js";
+export {
+  pubInit,
+  pubBuild,
+  pubStatus,
+  PubError,
+  DEFAULT_PUBLISH_BRANCH,
+  DEFAULT_BUILD_DIR,
+} from "./publish-branch.js";
 export type {
-  PublishOptions,
-  PublishStats,
-  PublishedPage,
-  PublishedAsset,
-  PublishManifest,
-} from "./publish.js";
+  PubInitOptions,
+  PubInitResult,
+  PubBuildOptions,
+  PubBuildResult,
+} from "./publish-branch.js";
 export {
   DEFAULT_AGENDA_CONFIG,
   addUnits,

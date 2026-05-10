@@ -13,6 +13,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@oak/core": "workspace:*"
+    "@oak/core": "workspace:*",
+    "@oak/publish-template": "workspace:*"
   }
 }

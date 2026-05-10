@@ -19,8 +19,6 @@ import {
   composePage,
   parseVault,
   partitionIssues,
-  publish,
-  PublishError,
   snapshot,
   validateVault,
   type Visibility,
@@ -381,31 +379,6 @@ export async function runValidate(plugin: OakPlugin): Promise<void> {
   new Notice(`oak: ${errors.length} error(s), ${warnings.length} warning(s)`);
   for (const e of errors.slice(0, 5)) {
     console.warn("oak validate:", e);
-  }
-}
-
-export async function runPublish(plugin: OakPlugin): Promise<void> {
-  const root = vaultRoot(plugin.app);
-  try {
-    const vault = await parseVault(root);
-    const graph = buildGraph(vault);
-    const issues = validateVault(vault, graph);
-    // Per directive: checkpoint before publish.
-    await checkpoint(root, "before publish");
-    const stats = await publish(vault, graph, issues, {
-      baseUrl: plugin.settings.baseUrl,
-    });
-    new Notice(
-      `oak: published ${stats.pages.length} page(s), ${stats.assets.length} asset(s)`,
-    );
-  } catch (err) {
-    if (err instanceof PublishError) {
-      new Notice(`oak: publish blocked (${err.issues.length} error(s))`);
-      for (const i of err.issues) console.warn("oak publish:", i);
-      return;
-    }
-    new Notice(`oak: publish failed — ${(err as Error).message}`);
-    console.error(err);
   }
 }
 

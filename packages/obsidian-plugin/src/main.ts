@@ -37,7 +37,6 @@ import {
   openScratchHistory,
   runCheckpoint,
   runMount,
-  runPublish,
   runSnapshot,
   runValidate,
   setVisibility,
@@ -301,11 +300,6 @@ export default class OakPlugin extends Plugin {
       id: "oak-validate",
       name: "Validate vault",
       callback: () => void runValidate(this),
-    });
-    this.addCommand({
-      id: "oak-publish",
-      name: "Publish",
-      callback: () => void runPublish(this),
     });
     this.addCommand({
       id: "oak-snapshot",

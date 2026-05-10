@@ -511,3 +511,159 @@ export async function recentCommits(
   }
   return out;
 }
+
+// True iff the given branch ref exists locally.
+export async function branchExists(
+  vaultRoot: string,
+  branch: string,
+): Promise<boolean> {
+  const r = await runGit(
+    vaultRoot,
+    ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+    { allowFailure: true },
+  );
+  return r.code === 0;
+}
+
+// Git's well-known empty tree object. Every git repository "knows"
+// this hash even when no empty tree object is stored in its odb, and
+// commit-tree accepts it directly — sidestepping `mktree`, which reads
+// from stdin.
+const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+// Create a new branch pointing at a fresh empty-tree commit, without
+// touching the current worktree, index, or HEAD. Used to bootstrap
+// orphan branches like the publish branch.
+export async function createOrphanBranch(
+  vaultRoot: string,
+  branch: string,
+  message = `init: ${branch}`,
+): Promise<{ commit: string }> {
+  await ensureCommitterIdentity(vaultRoot);
+  const commit = await runGit(vaultRoot, [
+    "commit-tree",
+    EMPTY_TREE_SHA,
+    "-m",
+    message,
+  ]);
+  const commitHash = commit.stdout.trim();
+  await runGit(vaultRoot, [
+    "update-ref",
+    `refs/heads/${branch}`,
+    commitHash,
+  ]);
+  return { commit: commitHash };
+}
+
+// Run `git -C <worktreePath> ...`. Used by the publish flow which
+// operates on a temporary worktree but identifies the repo by the
+// vault root.
+async function runGitInWorktree(
+  worktreePath: string,
+  args: string[],
+  options: { allowFailure?: boolean } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  return runGit(worktreePath, args, options);
+}
+
+// Replace the contents of an orphan branch with a directory tree, in a
+// temporary worktree, and (optionally) push the new commit. Designed
+// for `oak pub build`: source is the build output (e.g. `dist/`),
+// branch is the publish branch.
+export type CommitWorktreeResult = {
+  commit: string;
+  pushed: boolean;
+};
+
+export async function commitTreeToBranch(
+  vaultRoot: string,
+  options: {
+    branch: string;
+    sourceDir: string; // absolute path
+    worktreePath: string; // absolute path; will be created
+    message: string;
+    push?: boolean;
+    remote?: string;
+  },
+): Promise<CommitWorktreeResult> {
+  const { branch, sourceDir, worktreePath, message } = options;
+  const remote = options.remote ?? "origin";
+  const push = options.push ?? true;
+
+  await mkdir(dirname(worktreePath), { recursive: true });
+
+  // Lay down a worktree that already has the orphan branch checked out,
+  // so its working dir reflects whatever was last published.
+  await runGit(vaultRoot, ["worktree", "add", worktreePath, branch]);
+
+  try {
+    // Wipe everything that isn't .git so the new commit reflects exactly
+    // sourceDir's contents — no leftovers from prior publishes.
+    const { readdir, rm, cp } = await import("node:fs/promises");
+    const entries = await readdir(worktreePath);
+    await Promise.all(
+      entries
+        .filter((e) => e !== ".git")
+        .map((e) =>
+          rm(resolve(worktreePath, e), { recursive: true, force: true }),
+        ),
+    );
+
+    // Copy sourceDir/* into worktree.
+    const sourceEntries = await readdir(sourceDir);
+    await Promise.all(
+      sourceEntries.map((e) =>
+        cp(resolve(sourceDir, e), resolve(worktreePath, e), {
+          recursive: true,
+        }),
+      ),
+    );
+
+    await runGitInWorktree(worktreePath, ["add", "-A"]);
+    const status = await runGitInWorktree(worktreePath, [
+      "status",
+      "--porcelain=v1",
+    ]);
+    let commitHash: string;
+    if (status.stdout.trim().length === 0) {
+      // No changes — reuse current HEAD of the orphan branch.
+      const head = await runGitInWorktree(worktreePath, [
+        "rev-parse",
+        "HEAD",
+      ]);
+      commitHash = head.stdout.trim();
+    } else {
+      await runGitInWorktree(worktreePath, ["commit", "-m", message]);
+      const head = await runGitInWorktree(worktreePath, [
+        "rev-parse",
+        "HEAD",
+      ]);
+      commitHash = head.stdout.trim();
+    }
+
+    let pushed = false;
+    if (push) {
+      const r = await runGitInWorktree(
+        worktreePath,
+        ["push", "--force", remote, `${branch}:${branch}`],
+        { allowFailure: true },
+      );
+      pushed = r.code === 0;
+      if (!pushed) {
+        // Surface the failure but don't abort cleanup.
+        throw new GitError(
+          `git push to ${remote}/${branch} failed: ${r.stderr.trim()}`,
+          r.stdout,
+          r.stderr,
+        );
+      }
+    }
+
+    return { commit: commitHash, pushed };
+  } finally {
+    await runGit(vaultRoot, ["worktree", "remove", "--force", worktreePath], {
+      allowFailure: true,
+    });
+    await runGit(vaultRoot, ["worktree", "prune"], { allowFailure: true });
+  }
+}

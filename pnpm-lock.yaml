@@ -23,6 +23,9 @@ importers:
       '@oak/core':
         specifier: workspace:*
         version: link:../core
+      '@oak/publish-template':
+        specifier: workspace:*
+        version: link:../publish-template
 
   packages/core:
     dependencies:

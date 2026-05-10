@@ -1,12 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  cp,
-  mkdtemp,
-  readFile,
-  rm,
-  utimes,
-  writeFile,
-} from "node:fs/promises";
+import { cp, mkdtemp, rm, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,8 +9,6 @@ import {
   excerptFrom,
   homeViewModel,
   parseVault,
-  publish,
-  validateVault,
 } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -101,25 +92,3 @@ describe("homeViewModel", () => {
 
 });
 
-describe("publisher emits index.html", () => {
-  it("writes a static home page with publishable entries", async () => {
-    const root = resolve(scratch, "vault");
-    await cp(fxRoot("publish-basic"), root, { recursive: true });
-    const vault = await parseVault(root);
-    const graph = buildGraph(vault);
-    const issues = validateVault(vault, graph);
-    const stats = await publish(vault, graph, issues, { baseUrl: "/" });
-    const indexHtml = await readFile(
-      resolve(stats.outputDir, "index.html"),
-      "utf8",
-    );
-    expect(indexHtml).toContain("<title>Index</title>");
-    expect(indexHtml).toContain("Hello");
-    expect(indexHtml).toContain("About");
-    // Diary is private — must not appear.
-    expect(indexHtml).not.toContain("Diary");
-    // Page links resolve to slug URLs.
-    expect(indexHtml).toContain('href="/hello/"');
-    expect(indexHtml).toContain('href="/about/"');
-  });
-});
