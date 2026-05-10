@@ -65,11 +65,31 @@ export function isOakManaged(raw: string): boolean {
 // processFrontMatter). Non-oak-managed files (no `id:`) never bump,
 // so writing through helpers that gate on this won't fabricate a
 // frontmatter block where the user never asked for one.
+//
+// User intent takes precedence: if `modified` itself changed in the
+// save (added, replaced, but not removed), the user pinned a value
+// on purpose — never overwrite it. The body-changed branch still
+// runs for the removal case so an accidental deletion gets a
+// reasonable value back.
 export function shouldBumpModified(oldRaw: string, newRaw: string): boolean {
   if (oldRaw === newRaw) return false;
   if (!isOakManaged(newRaw)) return false;
   const oldP = matter(oldRaw);
   const newP = matter(newRaw);
+  const oldMod = coerceTimestamp(
+    (oldP.data as PageFrontmatter | undefined)?.modified,
+  );
+  const newMod = coerceTimestamp(
+    (newP.data as PageFrontmatter | undefined)?.modified,
+  );
+  // A user-supplied `modified` value — added or changed by hand —
+  // wins over the auto-bump. The reasoning: you wouldn't bother
+  // editing this field unless you wanted that specific value to
+  // stick (correcting a bad import, pinning a value before a bulk
+  // operation, restoring history). Removing the field (newMod ===
+  // null while oldMod was set) falls through to the normal rules so
+  // the next body edit refills it.
+  if (newMod !== null && newMod !== oldMod) return false;
   if (oldP.content !== newP.content) return true;
   const oldTitle = (oldP.data as PageFrontmatter | undefined)?.title;
   const newTitle = (newP.data as PageFrontmatter | undefined)?.title;

@@ -60,12 +60,44 @@ describe("shouldBumpModified", () => {
 
   // A user editing `modified` by hand (e.g. correcting a bad import,
   // pinning a value before a bulk operation) must not be clobbered by
-  // the auto-bump. The bump rule is anchored to body + title only, so
-  // a frontmatter-only `modified` change does NOT trip it.
-  it("does not bump when the user hand-edits `modified`", () => {
+  // the auto-bump. The bump rule respects user intent: if `modified`
+  // itself changed in this save, the user wanted that value to stick.
+  it("does not bump when the user hand-edits `modified` (FM-only edit)", () => {
     const before = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2024-01-01T00:00:00Z'\n---\n\nbody\n`;
     const after = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2020-12-31T00:00:00Z'\n---\n\nbody\n`;
     expect(shouldBumpModified(before, after)).toBe(false);
+  });
+
+  // The pinning rule trumps body changes too: editing `modified`
+  // alongside a body edit is unambiguous user intent. (Why else
+  // would they touch the field?) Don't clobber.
+  it("does not bump even when body changes, if user also hand-edited `modified`", () => {
+    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2024-01-01T00:00:00Z'\n---\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2020-12-31T00:00:00Z'\n---\n\nbody changed\n`;
+    expect(shouldBumpModified(before, after)).toBe(false);
+  });
+
+  it("does not bump when the user adds `modified` from absent", () => {
+    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\n---\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2020-12-31T00:00:00Z'\n---\n\nbody changed\n`;
+    expect(shouldBumpModified(before, after)).toBe(false);
+  });
+
+  // Removing `modified` is not "pinning a value" — there's no value
+  // to pin. Treat it as a normal save and let the bump rule run, so
+  // an accidental delete heals on the next body edit.
+  it("bumps normally when the user removes `modified` and edits body", () => {
+    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2024-01-01T00:00:00Z'\n---\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\n---\n\nbody changed\n`;
+    expect(shouldBumpModified(before, after)).toBe(true);
+  });
+
+  // The "same value" case is the unchanged-FM case: the user did
+  // NOT touch `modified`, so it has no claim on bump suppression.
+  it("bumps normally when `modified` is unchanged and body changes", () => {
+    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2024-01-01T00:00:00Z'\n---\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\nmodified: '2024-01-01T00:00:00Z'\n---\n\nbody changed\n`;
+    expect(shouldBumpModified(before, after)).toBe(true);
   });
 
   it("does not bump when only `created` changes (also hand-edited)", () => {
