@@ -60,9 +60,7 @@ const COLLAPSE_WS = /\s+/g;
 
 export function excerptFrom(body: string, maxChars = 200): string {
   // Strip non-prose syntax first, then walk every line so headings and
-  // list items contribute their text to the excerpt. The page's leading
-  // `# Title` line is skipped so the excerpt isn't redundant with the
-  // card title.
+  // list items contribute their text to the excerpt.
   const cleaned = body
     .replace(STRIP_FENCED, "")
     .replace(STRIP_INLINE_CODE, "")
@@ -73,14 +71,9 @@ export function excerptFrom(body: string, maxChars = 200): string {
     })
     .trim();
   const parts: string[] = [];
-  let titleSkipped = false;
   for (const rawLine of cleaned.split("\n")) {
     const line = rawLine.trim();
     if (line.length === 0) continue;
-    if (!titleSkipped && /^#\s+/.test(line)) {
-      titleSkipped = true;
-      continue;
-    }
     const text = line.replace(STRIP_LINE_MARKERS, "").trim();
     if (text.length > 0) parts.push(text);
   }
