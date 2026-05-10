@@ -11,6 +11,7 @@ import {
   Menu,
   Notice,
   Plugin,
+  Scope,
   TFile,
   WorkspaceLeaf,
   setIcon,
@@ -48,6 +49,7 @@ import {
   runValidate,
   setVisibility,
 } from "./commands.js";
+import { openOakCommandPalette } from "./command-palette.js";
 import {
   composePage,
   DEFAULT_AGENDA_CONFIG,
@@ -312,6 +314,11 @@ export default class OakPlugin extends Plugin {
       callback: () => void this.toggleOakMode(),
     });
     this.addCommand({
+      id: "oak-command-palette",
+      name: "Open oak command palette",
+      callback: () => openOakCommandPalette(this.app),
+    });
+    this.addCommand({
       id: "oak-new-page",
       name: "New oak page",
       callback: () => void createNewPage(this),
@@ -345,6 +352,28 @@ export default class OakPlugin extends Plugin {
       (ev) => this.maybeShowOakEditorMenu(ev),
       { capture: true },
     );
+    // Same idea for Mod+P: in oak mode, the system command palette gets
+    // pre-empted by our oak-only palette. Raw keydown listeners (even at
+    // window-capture) can't preempt Obsidian's own hotkey dispatcher —
+    // its listener was registered first, runs first, and opens the
+    // system palette before our handler gets a chance. Instead we push
+    // a scope onto `app.keymap`, so when Obsidian's dispatcher walks
+    // the scope chain it hits our `Mod+P` handler at the top of the
+    // stack and never gets to the built-in `command-palette:open`
+    // binding. Returning `false` calls preventDefault and stops further
+    // dispatch in the scope chain. When oak mode is off we return
+    // `undefined` so the dispatcher falls through to the parent scope.
+    // The oak palette itself carries an "Open system command palette…"
+    // escape hatch for the times the full set is needed.
+    const oakKeyScope = new Scope(this.app.scope);
+    oakKeyScope.register(["Mod"], "p", (ev) => {
+      if (!document.body.classList.contains("oak-mode-active")) return;
+      ev.preventDefault();
+      openOakCommandPalette(this.app);
+      return false;
+    });
+    this.app.keymap.pushScope(oakKeyScope);
+    this.register(() => this.app.keymap.popScope(oakKeyScope));
     this.addCommand({
       id: "oak-validate",
       name: "Validate vault",
