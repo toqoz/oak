@@ -169,3 +169,21 @@ export type {
   SkipDeadlinePrewarningPolicy,
   WarningPeriod,
 } from "./agenda/index.js";
+
+export {
+  DEFAULT_REFILE_CONFIG,
+  collectRefileTargets,
+  findEnclosingHeading,
+  findHeadingsInRange,
+  loadRefileConfig,
+  mergeRefileConfig,
+  refile,
+  RefileError,
+} from "./refile/index.js";
+export type {
+  RefileConfig,
+  RefileLocation,
+  RefileResult,
+  RefileSource,
+  RefileTarget,
+} from "./refile/index.js";

@@ -11,6 +11,7 @@ import {
   Menu,
   Notice,
   Plugin,
+  Scope,
   TFile,
   WorkspaceLeaf,
   setIcon,
@@ -28,33 +29,48 @@ import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
 import { OakAgendaView, VIEW_TYPE_OAK_AGENDA } from "./views/agenda.js";
 import { OakSearchView, VIEW_TYPE_OAK_SEARCH } from "./views/search.js";
 import {
+  OakRefilePickerView,
+  VIEW_TYPE_OAK_REFILE_PICKER,
+  type RefilePickerInit,
+} from "./views/refile-picker.js";
+import {
+  clearScratch,
   createNewPage,
   createPageFromRedlink,
+  ensureScratchFile,
   extractSelectionToPage,
+  openScratch,
+  openScratchHistory,
   runCheckpoint,
   runMount,
   runPublish,
+  runRefileFromEditor,
   runSnapshot,
   runValidate,
   setVisibility,
 } from "./commands.js";
+import { openOakCommandPalette } from "./command-palette.js";
 import {
   composePage,
   DEFAULT_AGENDA_CONFIG,
+  DEFAULT_REFILE_CONFIG,
   ensureGitRepo,
   excerptFrom,
   loadAgendaConfig,
+  loadRefileConfig,
   slugify,
   snapshot,
   type AgendaConfig,
   type OakPage,
+  type RefileConfig,
+  type RefileTarget,
 } from "@oak/core";
 import { agendaTooltipExtension } from "./agenda-tooltip.js";
 import { headingDecorationsExtension } from "./heading-decorations.js";
 import { headingMarkersExtension } from "./heading-markers.js";
 import { describeBacklinks, describeTwoHop } from "./format.js";
 import { ensureBlankAfterFrontmatter } from "./frontmatter-normalize.js";
-import { vaultRoot } from "./paths.js";
+import { SCRATCH_VAULT_REL_PATH, vaultRoot } from "./paths.js";
 import type { OakOpenFile } from "./open-file.js";
 import { commitTitleChange } from "./title-commit.js";
 
@@ -68,13 +84,45 @@ export default class OakPlugin extends Plugin {
   // Live copy of `.oak/agenda.yml`. Used by editor extensions (e.g. the
   // SCHEDULED/DEADLINE tooltip) that need to know the active TODO
   // keyword set without re-reading the file on every keystroke.
-  private agendaConfig: AgendaConfig = DEFAULT_AGENDA_CONFIG;
+  agendaConfig: AgendaConfig = DEFAULT_AGENDA_CONFIG;
+  // Live copy of `.oak/refile.yml`. Refile is its own feature with its
+  // own config (heading-level conventions for top-of-file refile and
+  // similar knobs); kept on the plugin so command callbacks pick up
+  // edits on the next vault refresh without re-reading on every call.
+  refileConfig: RefileConfig = DEFAULT_REFILE_CONFIG;
   // Last redlink target the user clicked plus when. Used by the
   // vault.on("create") fallback to detect a file that Obsidian
   // auto-created in response to the click and roll it back into a
   // ghost view.
   private lastRedlinkTarget: string | null = null;
   private lastRedlinkClickAt = 0;
+  // Reused horizontal-split leaf used to peek at the destination file
+  // after a refile. Mirrors the scratch toggle: focus stays on the
+  // source so a follow-up refile can run immediately, and the peek
+  // pane updates in place instead of stacking new splits.
+  private refilePeekLeaf: WorkspaceLeaf | null = null;
+  // The leaf the current peek was split from. We hang onto it so a
+  // peek-to-peek refile (the user refiles again while focused inside
+  // the peek) can promote the peek's file back into this main slot
+  // — keeping the "source-of-refile = main, destination = peek"
+  // invariant after every hop. Cleared when the peek closes, and not
+  // persisted: a workspace reload starts from a clean peek.
+  private refilePeekBaseLeaf: WorkspaceLeaf | null = null;
+  // Tracks whether the user has actually focused the peek pane at
+  // least once. We only auto-close on focus-leave once the user has
+  // engaged with the peek — otherwise the peek would dismiss itself
+  // immediately on creation (the source leaf retains focus by
+  // design).
+  private refilePeekEngaged = false;
+  // Suppresses the peek auto-close during the setup phase of
+  // openRefilePicker. The promote dance calls
+  // `setActiveLeaf(mainLeaf)` to force the source-file swap, which
+  // fires active-leaf-change and would otherwise trigger
+  // closeRefilePeek (the leaf we're about to turn into the picker).
+  // We hold the gate only across setup; once the picker view is up
+  // and waiting for input, the gate releases so click-elsewhere can
+  // dismiss the picker normally.
+  private refilePickerSettingUp = 0;
   // When the user picks "Show default menu" from the oak context
   // menu, we re-dispatch a fresh `contextmenu` event so Obsidian's
   // own handler runs and shows the native menu. This flag tells our
@@ -122,7 +170,7 @@ export default class OakPlugin extends Plugin {
       );
     });
     this.registerView(VIEW_TYPE_OAK_AGENDA, (leaf: WorkspaceLeaf) => {
-      return new OakAgendaView(leaf, this.state, this.app, openFile);
+      return new OakAgendaView(leaf, this.state, this.app, openFile, this);
     });
     this.registerView(VIEW_TYPE_OAK_SEARCH, (leaf: WorkspaceLeaf) => {
       return new OakSearchView(
@@ -132,6 +180,9 @@ export default class OakPlugin extends Plugin {
         openFile,
         () => this.navigateLeafBack(),
       );
+    });
+    this.registerView(VIEW_TYPE_OAK_REFILE_PICKER, (leaf: WorkspaceLeaf) => {
+      return new OakRefilePickerView(leaf, this);
     });
     // Single "oak mode" entry — toggles between the focused oak
     // surfaces (home in main, sidebar on the right, file explorer
@@ -162,10 +213,11 @@ export default class OakPlugin extends Plugin {
       this.app.vault.on("rename", () => this.state.scheduleRefresh()),
     );
     this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => {
+      this.app.workspace.on("active-leaf-change", (newLeaf) => {
         const file = this.app.workspace.getActiveFile();
         const tfile = file instanceof TFile ? file : null;
         this.sidebarRef?.setActiveFile(tfile);
+        this.handleActiveLeafChangeForPeek(newLeaf);
       }),
     );
     // Mode is defined by oak-leaf presence: any layout change re-syncs
@@ -180,6 +232,8 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
+        this.applyScratchButton();
+        this.applyCenteredViewTitle();
       }),
     );
     this.registerEvent(
@@ -190,6 +244,8 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
+        this.applyScratchButton();
+        this.applyCenteredViewTitle();
       }),
     );
     this.registerEvent(
@@ -204,9 +260,11 @@ export default class OakPlugin extends Plugin {
     this.linksUnsubscribe = this.state.subscribe(() => {
       this.applyLinksCards();
       this.applyPageMeta();
-      // The user may have edited `.oak/agenda.yml` to change TODO
-      // keywords; pick that up on the next vault refresh.
+      // The user may have edited `.oak/agenda.yml` (TODO keywords,
+      // etc.) or `.oak/refile.yml` (top-of-file level, etc.); pick
+      // those up on the next vault refresh.
       void this.refreshAgendaConfig();
+      void this.refreshRefileConfig();
     });
 
     // Intercept red-link clicks while in oak mode and route them to
@@ -256,6 +314,11 @@ export default class OakPlugin extends Plugin {
       callback: () => void this.toggleOakMode(),
     });
     this.addCommand({
+      id: "oak-command-palette",
+      name: "Open oak command palette",
+      callback: () => openOakCommandPalette(this.app),
+    });
+    this.addCommand({
       id: "oak-new-page",
       name: "New oak page",
       callback: () => void createNewPage(this),
@@ -289,6 +352,28 @@ export default class OakPlugin extends Plugin {
       (ev) => this.maybeShowOakEditorMenu(ev),
       { capture: true },
     );
+    // Same idea for Mod+P: in oak mode, the system command palette gets
+    // pre-empted by our oak-only palette. Raw keydown listeners (even at
+    // window-capture) can't preempt Obsidian's own hotkey dispatcher —
+    // its listener was registered first, runs first, and opens the
+    // system palette before our handler gets a chance. Instead we push
+    // a scope onto `app.keymap`, so when Obsidian's dispatcher walks
+    // the scope chain it hits our `Mod+P` handler at the top of the
+    // stack and never gets to the built-in `command-palette:open`
+    // binding. Returning `false` calls preventDefault and stops further
+    // dispatch in the scope chain. When oak mode is off we return
+    // `undefined` so the dispatcher falls through to the parent scope.
+    // The oak palette itself carries an "Open system command palette…"
+    // escape hatch for the times the full set is needed.
+    const oakKeyScope = new Scope(this.app.scope);
+    oakKeyScope.register(["Mod"], "p", (ev) => {
+      if (!document.body.classList.contains("oak-mode-active")) return;
+      ev.preventDefault();
+      openOakCommandPalette(this.app);
+      return false;
+    });
+    this.app.keymap.pushScope(oakKeyScope);
+    this.register(() => this.app.keymap.popScope(oakKeyScope));
     this.addCommand({
       id: "oak-validate",
       name: "Validate vault",
@@ -320,9 +405,24 @@ export default class OakPlugin extends Plugin {
       callback: () => void this.openAgenda(),
     });
     this.addCommand({
+      id: "oak-refile",
+      name: "Refile heading at cursor",
+      callback: () => void runRefileFromEditor(this),
+    });
+    this.addCommand({
       id: "oak-search",
       name: "Search vault",
       callback: () => void this.openSearch(),
+    });
+    this.addCommand({
+      id: "oak-open-scratch",
+      name: "Toggle scratch",
+      callback: () => void openScratch(this),
+    });
+    this.addCommand({
+      id: "oak-clear-scratch",
+      name: "Clear scratch",
+      callback: () => void clearScratch(this),
     });
 
     // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.
@@ -358,17 +458,26 @@ export default class OakPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.state.refresh();
       void this.refreshAgendaConfig();
+      void this.refreshRefileConfig();
       this.applyAutoSnapshot();
       // If a previous session left oak views in the workspace state,
       // Obsidian has just re-instantiated them. Re-attach the chrome
       // class so oak mode visually resumes where the user left off.
       this.syncOakModeClass();
+      // Discard any peek leaf left over from the previous session
+      // *before* the chrome appliers run, so applyTitleForView never
+      // sees a stale `isRefilePeek` candidate. (Peek state is
+      // session-local and the saved id is only useful as an orphan
+      // marker — see settings.refilePeekLeafId.)
+      this.discardOrphanedPeekLeaf();
       this.applyTitleOverrides();
       this.applyLinksCards();
       this.applyPageMeta();
       this.applyHomeButton();
       this.applyAgendaButton();
       this.applySearchButton();
+      this.applyScratchButton();
+      this.applyCenteredViewTitle();
     });
   }
 
@@ -390,6 +499,8 @@ export default class OakPlugin extends Plugin {
     this.applyHomeButton();
     this.applyAgendaButton();
     this.applySearchButton();
+    this.applyScratchButton();
+    this.applyCenteredViewTitle();
   }
 
   async loadSettings(): Promise<void> {
@@ -420,6 +531,15 @@ export default class OakPlugin extends Plugin {
     } catch (err) {
       console.warn("oak: loadAgendaConfig failed", err);
       this.agendaConfig = DEFAULT_AGENDA_CONFIG;
+    }
+  }
+
+  private async refreshRefileConfig(): Promise<void> {
+    try {
+      this.refileConfig = await loadRefileConfig(vaultRoot(this.app));
+    } catch (err) {
+      console.warn("oak: loadRefileConfig failed", err);
+      this.refileConfig = DEFAULT_REFILE_CONFIG;
     }
   }
 
@@ -745,7 +865,8 @@ export default class OakPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
       if (!(view instanceof MarkdownView) || !view.file) continue;
-      this.applyTitleForView(view, view.file, oakMode);
+      const isRefilePeek = leaf === this.refilePeekLeaf;
+      this.applyTitleForView(view, view.file, oakMode, isRefilePeek);
     }
   }
 
@@ -753,6 +874,7 @@ export default class OakPlugin extends Plugin {
     view: MarkdownView,
     file: TFile,
     oakMode: boolean,
+    isRefilePeek = false,
   ): void {
     void file; // accessed via metadataCache below; kept for callers
     const cache = this.app.metadataCache.getFileCache(view.file!);
@@ -763,7 +885,7 @@ export default class OakPlugin extends Plugin {
         ? fmTitleRaw.trim()
         : null;
 
-    const existingRow = view.contentEl.querySelector<HTMLElement>(
+    let existingRow = view.contentEl.querySelector<HTMLElement>(
       ".oak-page-title-row",
     );
     // `titleEl` is a runtime property on Obsidian's View base class
@@ -781,11 +903,162 @@ export default class OakPlugin extends Plugin {
         ? fmVisibilityRaw
         : "private";
 
+    const isScratch = view.file?.path === SCRATCH_VAULT_REL_PATH;
+
+    // The scratch row lives in the view-header bar (replacing the
+    // standard back/forward chrome via CSS); regular oak rows live
+    // inside the cm-scroller. Look up both candidates so we can
+    // clean up a stale row in the wrong place when the leaf
+    // transitions between scratch and a regular page.
+    const headerEl = view.containerEl.querySelector<HTMLElement>(
+      ".view-header",
+    );
+    const headerScratchRow =
+      headerEl?.querySelector<HTMLElement>(
+        ".oak-page-title-row.oak-row-scratch",
+      ) ?? null;
+    const headerRefilePeekRow =
+      headerEl?.querySelector<HTMLElement>(
+        ".oak-page-title-row.oak-row-refile-peek",
+      ) ?? null;
+
+    // Refile peek pane: hide standard view-header navigation and the
+    // tab strip via the marker class + a × close button injected into
+    // the view-header. We *don't* return from this branch — the
+    // regular oak title row (editable title + visibility selector,
+    // injected into the scroll container further below) still runs,
+    // so the peek pane shows the destination file's page title in the
+    // same place a regular oak md file would.
+    if (oakMode && isRefilePeek) {
+      view.containerEl.classList.add("oak-leaf-refile-peek");
+      if (headerScratchRow) headerScratchRow.remove();
+      if (headerEl) {
+        let row = headerRefilePeekRow;
+        if (!row || row.parentElement !== headerEl) {
+          if (row) row.remove();
+          row = document.createElement("div");
+          row.classList.add("oak-page-title-row", "oak-row-refile-peek");
+          const closeBtn = document.createElement("button");
+          closeBtn.classList.add("clickable-icon", "oak-refile-peek-close");
+          closeBtn.setAttribute("type", "button");
+          closeBtn.setAttribute("aria-label", "Close refile peek");
+          setIcon(closeBtn, "x");
+          closeBtn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            this.closeRefilePeek();
+          });
+          row.appendChild(closeBtn);
+          headerEl.appendChild(row);
+        }
+      }
+    } else {
+      // Drop the marker class + close row in case the leaf was
+      // previously a peek and is now repurposed.
+      view.containerEl.classList.remove("oak-leaf-refile-peek");
+      if (headerRefilePeekRow) headerRefilePeekRow.remove();
+    }
+
+    if (oakMode && isScratch) {
+      // Drop any stale cm-scroller row left over from before this
+      // file became the scratch buffer (or from an earlier version
+      // that injected scratch chrome there).
+      if (existingRow) {
+        existingRow.remove();
+        existingRow = null;
+      }
+      if (!headerEl) return;
+      let row = headerScratchRow;
+      if (!row || row.parentElement !== headerEl) {
+        if (row) row.remove();
+        row = document.createElement("div");
+        row.classList.add("oak-page-title-row", "oak-row-scratch");
+
+        // Left cluster: scratch sub-actions (clear / history). Lives
+        // at the leading edge of the row so the chrome reads as
+        // "actions on the left, title in the middle, close on the
+        // right" — same convention as a typical app window.
+        const actions = document.createElement("div");
+        actions.classList.add("oak-scratch-actions");
+
+        const clearBtn = document.createElement("button");
+        clearBtn.classList.add("clickable-icon", "oak-scratch-clear");
+        clearBtn.setAttribute("type", "button");
+        clearBtn.setAttribute("aria-label", "Clear scratch");
+        setIcon(clearBtn, "eraser");
+        clearBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          void clearScratch(this);
+        });
+        actions.appendChild(clearBtn);
+
+        // History icon — opens a modal listing every backup written
+        // by `clearScratch` (under `.oak/scratch.history/`). The
+        // modal previews each backup as plain text and offers
+        // copy / restore actions.
+        const historyBtn = document.createElement("button");
+        historyBtn.classList.add("clickable-icon", "oak-scratch-history");
+        historyBtn.setAttribute("type", "button");
+        historyBtn.setAttribute("aria-label", "Scratch history");
+        setIcon(historyBtn, "history");
+        historyBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          void openScratchHistory(this);
+        });
+        actions.appendChild(historyBtn);
+
+        row.appendChild(actions);
+
+        // Center column: `Scratch` heading. Wrapped in
+        // `.oak-scratch-title-group` so future sub-elements (e.g. an
+        // unsaved-marker dot) have somewhere to land without
+        // restructuring.
+        const titleGroup = document.createElement("div");
+        titleGroup.classList.add("oak-scratch-title-group");
+        const heading = document.createElement("div");
+        heading.classList.add("oak-scratch-page-title");
+        heading.textContent = "Scratch";
+        titleGroup.appendChild(heading);
+        row.appendChild(titleGroup);
+
+        // Right: × close button. Detaches the scratch leaf —
+        // autosave keeps content on disk, so closing is
+        // non-destructive. Mirrors what clicking the `Scratch`
+        // header link does from another pane (toggle close).
+        const closeBtn = document.createElement("button");
+        closeBtn.classList.add("clickable-icon", "oak-scratch-close");
+        closeBtn.setAttribute("type", "button");
+        closeBtn.setAttribute("aria-label", "Close scratch");
+        setIcon(closeBtn, "x");
+        closeBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          void this.toggleScratch();
+        });
+        row.appendChild(closeBtn);
+
+        headerEl.appendChild(row);
+      }
+      if (tabTitleEl) {
+        tabTitleEl.dataset["oakTitle"] = "Scratch";
+        tabTitleEl.classList.add("oak-tab-title-override");
+      }
+      return;
+    }
+
+    // Non-scratch path: drop any stale scratch row from the view-
+    // header so it doesn't outlive the file transition.
+    if (headerScratchRow) headerScratchRow.remove();
+
     if (oakMode && fmTitle) {
       // Inject the title row *inside* the scroll container so the
       // scrollbar runs the full pane height and so the title
       // scrolls with the content. The row holds the title input on
       // the left and the visibility selector pinned to the right.
+      // Drop a stale scratch row from a prior file before creating
+      // the editable row in its place.
+      if (existingRow && existingRow.classList.contains("oak-row-scratch")) {
+        existingRow.remove();
+        existingRow = null;
+      }
       const target = this.findTitleInjectionTarget(view);
       let row = existingRow;
       if (!row || (target && row.parentElement !== target)) {
@@ -1241,8 +1514,9 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToHome(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
-    // Keep order home → agenda → search regardless of which apply
-    // was called first.
+    // Keep order home → agenda → search regardless of which apply was
+    // called first. (Scratch lives outside the nav cluster, on the
+    // right edge of the header.)
     const successor = navButtons.querySelector<HTMLElement>(
       ".oak-agenda-button, .oak-search-button",
     );
@@ -1326,10 +1600,10 @@ export default class OakPlugin extends Plugin {
     // Insert before the search button when present so the order in
     // every header is home → agenda → search regardless of which
     // button was applied first.
-    const searchButton = navButtons.querySelector<HTMLElement>(
+    const successor = navButtons.querySelector<HTMLElement>(
       ".oak-search-button",
     );
-    navButtons.insertBefore(button, searchButton ?? null);
+    navButtons.insertBefore(button, successor ?? null);
   }
 
   private async navigateLeafToAgenda(leaf: WorkspaceLeaf): Promise<void> {
@@ -1390,6 +1664,8 @@ export default class OakPlugin extends Plugin {
       void this.navigateLeafToSearch(leaf);
     });
     this.setNavButtonCurrent(button, isCurrent);
+    // Search is the last entry in the nav cluster — scratch lives on
+    // the right edge of the header, outside this group.
     navButtons.appendChild(button);
   }
 
@@ -1417,6 +1693,445 @@ export default class OakPlugin extends Plugin {
   async openSearch(): Promise<void> {
     const leaf = this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
     await this.navigateLeafToSearch(leaf);
+  }
+
+  // Scratch lives at the right edge of every view-header as a
+  // `line-squiggle` icon button — same `clickable-icon` chrome as
+  // the back/forward + home/agenda/search nav buttons elsewhere in
+  // the bar, so it visually fits the header row. Clicking is a
+  // toggle: when scratch is closed it opens as a horizontal split
+  // below the trigger leaf (the "bottom pane" affordance) so the
+  // user keeps their main editing context visible; when scratch is
+  // already open it detaches the leaf (autosave keeps the buffer
+  // contents on disk so closing is non-destructive). The icon is
+  // accent-tinted while a scratch leaf is open anywhere in the
+  // workspace.
+  //
+  // We also tag the scratch leaf's container with
+  // `oak-leaf-scratch` so the stylesheet can hide the per-pane tab
+  // strip — the scratch row inside the leaf's own view-header
+  // carries enough identity that the tab is redundant.
+  private applyScratchButton(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    const isOpen = this.findScratchLeaf() !== null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as { containerEl?: HTMLElement };
+      const root = view.containerEl;
+      if (!root) return;
+      const header = root.querySelector<HTMLElement>(".view-header");
+      if (header) this.applyScratchLinkForHeader(header, leaf, oakMode, isOpen);
+      this.applyScratchLeafClass(leaf);
+    });
+  }
+
+  private applyScratchLinkForHeader(
+    header: HTMLElement,
+    leaf: WorkspaceLeaf,
+    oakMode: boolean,
+    isOpen: boolean,
+  ): void {
+    const existing = header.querySelector<HTMLButtonElement>(
+      ".oak-scratch-link",
+    );
+    if (!oakMode) {
+      existing?.remove();
+      return;
+    }
+    let link = existing;
+    if (!link) {
+      link = document.createElement("button");
+      link.classList.add("clickable-icon", "oak-scratch-link");
+      link.setAttribute("type", "button");
+      link.setAttribute("aria-label", "Oak Scratch");
+      setIcon(link, "line-squiggle");
+      link.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        void this.toggleScratch(leaf);
+      });
+      header.appendChild(link);
+    }
+    link.classList.toggle("is-active", isOpen);
+  }
+
+  // Inject a static, centered title into each oak view's
+  // view-header so the title position doesn't drift with the body
+  // content. Applies to oak-home / oak-agenda / oak-search;
+  // markdown leaves keep their inline editor title (preserving the
+  // plain-text feel of a note). Scratch already has its title in
+  // the view-header via the scratch row.
+  private applyCenteredViewTitle(): void {
+    const oakMode = document.body.classList.contains("oak-mode-active");
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as {
+        containerEl?: HTMLElement;
+        getViewType?: () => string;
+      };
+      const root = view.containerEl;
+      if (!root) return;
+      const headerEl = root.querySelector<HTMLElement>(".view-header");
+      if (!headerEl) return;
+      const viewType = view.getViewType?.() ?? "";
+      let label: string | null = null;
+      if (viewType === VIEW_TYPE_OAK_HOME) label = "Home";
+      else if (viewType === VIEW_TYPE_OAK_AGENDA) label = "Agenda";
+      else if (viewType === VIEW_TYPE_OAK_SEARCH) label = "Search";
+      const existing =
+        headerEl.querySelector<HTMLElement>(".oak-view-title");
+      if (!oakMode || !label) {
+        existing?.remove();
+        return;
+      }
+      let el = existing;
+      if (!el) {
+        el = document.createElement("div");
+        el.classList.add("oak-view-title");
+        headerEl.appendChild(el);
+      }
+      if (el.textContent !== label) el.textContent = label;
+    });
+  }
+
+  private applyScratchLeafClass(leaf: WorkspaceLeaf): void {
+    const view = leaf.view as { containerEl?: HTMLElement };
+    const root = view.containerEl;
+    if (!root) return;
+    const isScratch =
+      leaf.view instanceof MarkdownView &&
+      leaf.view.file?.path === SCRATCH_VAULT_REL_PATH;
+    root.classList.toggle("oak-leaf-scratch", isScratch);
+  }
+
+  private findScratchLeaf(): WorkspaceLeaf | null {
+    let found: WorkspaceLeaf | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (found) return;
+      const view = leaf.view;
+      if (
+        view instanceof MarkdownView &&
+        view.file?.path === SCRATCH_VAULT_REL_PATH
+      ) {
+        found = leaf;
+      }
+    });
+    return found;
+  }
+
+  // Open the refile target picker in the peek pane and resolve with
+  // the user's choice (or null on cancel). The picker is a custom
+  // ItemView (`OakRefilePickerView`) — file list on the left, live
+  // preview on the right — that replaces the old FuzzySuggestModal.
+  //
+  // The peek leaf is set up before the picker opens:
+  //   - peek-to-peek hop: the user is invoking refile from inside
+  //     the existing peek. Promote the peek's file (the source) into
+  //     the main slot first, then turn the peek into the picker.
+  //     That way "source = main, destination = peek" stays true
+  //     across hops.
+  //   - existing peek (from a prior refile): reuse the leaf, just
+  //     swap its view to the picker.
+  //   - no peek yet: split a new horizontal leaf below the source
+  //     leaf and open the picker in it.
+  //
+  // After the user picks, the caller (`refile.ts`) runs the actual
+  // core refile and then calls `revealRefileTarget` to swap the peek
+  // view back to a MarkdownView of the destination.
+  async openRefilePicker(opts: {
+    sourceTitle: string;
+    excludeKeys: Set<string>;
+    sourceLeaf?: WorkspaceLeaf;
+    sourceFile?: TFile;
+    isPeekSource?: boolean;
+  }): Promise<RefileTarget | null> {
+    const { sourceLeaf, sourceFile, isPeekSource } = opts;
+
+    // Hold the auto-close gate across the setup phase. The promote
+    // path activates the main leaf to force the source-file swap,
+    // and that focus shift would otherwise call closeRefilePeek and
+    // detach the very leaf we're about to turn into the picker.
+    // Released in the finally block so the user-interaction phase
+    // sees normal click-to-dismiss behavior.
+    this.refilePickerSettingUp += 1;
+
+    let view: OakRefilePickerView;
+    try {
+      let peekLeaf: WorkspaceLeaf;
+
+      if (
+        isPeekSource &&
+        sourceLeaf &&
+        sourceFile &&
+        this.isLeafAlive(sourceLeaf)
+      ) {
+        // Promote: open the source file in the main leaf the peek
+        // was split from. We activate `main` eagerly to force the
+        // file-swap to land (Obsidian otherwise can defer the
+        // visual change on a non-active leaf).
+        let main: WorkspaceLeaf | null =
+          this.refilePeekBaseLeaf &&
+          this.isLeafAlive(this.refilePeekBaseLeaf) &&
+          this.refilePeekBaseLeaf !== sourceLeaf
+            ? this.refilePeekBaseLeaf
+            : null;
+        if (!main) {
+          main = this.findMainLeafExcluding(sourceLeaf);
+        }
+        if (main) {
+          this.app.workspace.setActiveLeaf(main, { focus: false });
+          await main.openFile(sourceFile);
+          this.app.workspace.revealLeaf(main);
+          this.refilePeekBaseLeaf = main;
+        }
+        peekLeaf = sourceLeaf;
+      } else if (
+        this.refilePeekLeaf &&
+        this.isLeafAlive(this.refilePeekLeaf)
+      ) {
+        peekLeaf = this.refilePeekLeaf;
+      } else {
+        const base =
+          sourceLeaf && this.isLeafAlive(sourceLeaf)
+            ? sourceLeaf
+            : (this.app.workspace.activeLeaf ?? this.currentMainLeaf());
+        peekLeaf = this.app.workspace.createLeafBySplit(
+          base,
+          "horizontal",
+          false,
+        );
+        this.refilePeekBaseLeaf = base;
+      }
+
+      this.refilePeekLeaf = peekLeaf;
+      this.refilePeekEngaged = true;
+      const persistId = leafId(peekLeaf);
+      if (persistId && this.settings.refilePeekLeafId !== persistId) {
+        this.settings.refilePeekLeafId = persistId;
+        void this.saveSettings();
+      }
+
+      // Swap the leaf to the picker view. setViewState rebuilds the
+      // view DOM; the resolve callback gets wired in afterwards via
+      // `init()` so the picker can settle the awaiting promise.
+      await peekLeaf.setViewState({
+        type: VIEW_TYPE_OAK_REFILE_PICKER,
+        active: true,
+      });
+      const v = peekLeaf.view;
+      if (!(v instanceof OakRefilePickerView)) {
+        // setViewState should have produced our view; if Obsidian
+        // ended up with something else, surface as cancel rather
+        // than hanging the caller.
+        return null;
+      }
+      view = v;
+      this.app.workspace.setActiveLeaf(peekLeaf, { focus: true });
+    } finally {
+      this.refilePickerSettingUp -= 1;
+    }
+
+    return new Promise<RefileTarget | null>((resolve) => {
+      const init: RefilePickerInit = {
+        sourceTitle: opts.sourceTitle,
+        excludeKeys: opts.excludeKeys,
+        resolve,
+      };
+      view.init(init);
+    });
+  }
+
+  // Swap the peek leaf's view back to a MarkdownView of `file` after
+  // the picker resolved and the core refile succeeded. The peek leaf
+  // is the same one the picker was rendered into — `openFile` simply
+  // replaces the picker view with a markdown view of the destination.
+  async revealRefileTarget(
+    file: TFile,
+    fileLine: number | null,
+  ): Promise<void> {
+    const peek = this.refilePeekLeaf;
+    if (!peek || !this.isLeafAlive(peek)) {
+      // openRefilePicker should always have set this. If we arrive
+      // here without a live peek leaf, fall back to opening the
+      // file in a fresh split so the destination at least surfaces.
+      const base = this.app.workspace.activeLeaf ?? this.currentMainLeaf();
+      const fresh = this.app.workspace.createLeafBySplit(
+        base,
+        "horizontal",
+        false,
+      );
+      this.refilePeekLeaf = fresh;
+      this.refilePeekBaseLeaf = base;
+      const openState =
+        fileLine !== null ? { eState: { line: fileLine } } : undefined;
+      await fresh.openFile(file, openState);
+      this.applyTitleOverrides();
+      this.bindRefilePeekEscape(fresh);
+      this.app.workspace.setActiveLeaf(fresh, { focus: true });
+      return;
+    }
+    const openState =
+      fileLine !== null ? { eState: { line: fileLine } } : undefined;
+    await peek.openFile(file, openState);
+    this.applyTitleOverrides();
+    this.bindRefilePeekEscape(peek);
+    this.refilePeekEngaged = true;
+    const id = leafId(peek);
+    if (id && this.settings.refilePeekLeafId !== id) {
+      this.settings.refilePeekLeafId = id;
+      void this.saveSettings();
+    }
+    this.app.workspace.setActiveLeaf(peek, { focus: true });
+  }
+
+  // Detach the peek leaf, if any, and forget the reference so the next
+  // refile creates a fresh split. Wired to the × button injected into
+  // the peek pane's view-header, the auto-close on focus-leave, and
+  // the Esc-key binding inside the peek.
+  closeRefilePeek(): void {
+    const leaf = this.refilePeekLeaf;
+    this.refilePeekLeaf = null;
+    this.refilePeekBaseLeaf = null;
+    this.refilePeekEngaged = false;
+    document.body.classList.remove("oak-refile-peek-active");
+    if (this.settings.refilePeekLeafId !== null) {
+      this.settings.refilePeekLeafId = null;
+      void this.saveSettings();
+    }
+    if (leaf && this.isLeafAlive(leaf)) leaf.detach();
+  }
+
+  private findMainLeafExcluding(
+    excluded: WorkspaceLeaf,
+  ): WorkspaceLeaf | null {
+    let found: WorkspaceLeaf | null = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (found) return;
+      if (leaf === excluded) return;
+      if (this.isMainPaneLeaf(leaf)) found = leaf;
+    });
+    return found;
+  }
+
+  // active-leaf-change hook for the peek pane:
+  //   - `mod-active` on the peek leaf flips the body dim class on so
+  //     the source pane fades while the peek is in focus.
+  //   - Once the user has actually engaged with the peek (focused it
+  //     at least once), the *next* main-pane focus shift away from
+  //     the peek detaches it — emulating a transient floating panel.
+  //     Sidebar focus changes are ignored so clicking the file
+  //     explorer doesn't dismiss the peek.
+  private handleActiveLeafChangeForPeek(
+    newLeaf: WorkspaceLeaf | null,
+  ): void {
+    const peek = this.refilePeekLeaf;
+    if (!peek || !this.isLeafAlive(peek)) {
+      this.refilePeekEngaged = false;
+      document.body.classList.remove("oak-refile-peek-active");
+      return;
+    }
+    if (newLeaf === peek) {
+      this.refilePeekEngaged = true;
+      document.body.classList.add("oak-refile-peek-active");
+      return;
+    }
+    document.body.classList.remove("oak-refile-peek-active");
+    if (!this.refilePeekEngaged) return;
+    if (this.refilePickerSettingUp > 0) return;
+    if (newLeaf && this.isMainPaneLeaf(newLeaf)) {
+      this.closeRefilePeek();
+    }
+  }
+
+  // Snapshot of the current peek leaf for callers that need to
+  // decide, at command-start time, whether the source leaf they're
+  // about to refile from IS the peek. Captured early so a transient
+  // closeRefilePeek mid-flow doesn't strand the promotion logic.
+  peekLeaf(): WorkspaceLeaf | null {
+    return this.refilePeekLeaf;
+  }
+
+  private isMainPaneLeaf(leaf: WorkspaceLeaf): boolean {
+    const root = (
+      leaf as unknown as { getRoot?: () => unknown }
+    ).getRoot?.();
+    return root === this.app.workspace.rootSplit;
+  }
+
+  // Capture-phase Esc handler scoped to the peek leaf's container.
+  // Capture so it wins over Obsidian's own Esc bindings (which would
+  // otherwise close suggestion menus / clear selection inside the
+  // editor before our handler ever sees the key). Stored on the DOM
+  // node so a later openFile (which rebuilds the container) replaces
+  // a stale handler instead of stacking.
+  private bindRefilePeekEscape(leaf: WorkspaceLeaf): void {
+    const container = (
+      leaf.view as { containerEl?: HTMLElement }
+    ).containerEl;
+    if (!container) return;
+    type Slot = { __oakPeekEsc?: (ev: KeyboardEvent) => void };
+    const slot = container as unknown as Slot;
+    if (slot.__oakPeekEsc) {
+      container.removeEventListener("keydown", slot.__oakPeekEsc, true);
+    }
+    const handler = (ev: KeyboardEvent): void => {
+      if (ev.key !== "Escape") return;
+      // Let `<input>` / `<textarea>` swallow Esc themselves so the
+      // editable title input retains its commit-or-cancel behaviour
+      // (Esc inside the input would otherwise dismiss the peek
+      // before the input could process the keystroke).
+      const target = ev.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.closeRefilePeek();
+    };
+    container.addEventListener("keydown", handler, true);
+    slot.__oakPeekEsc = handler;
+  }
+
+  // Detach the leaf left over from the previous session's peek, if
+  // Obsidian's workspace restoration brought it back. Peek state
+  // (chrome, dim class, escape handler, refilePeekBaseLeaf,
+  // refilePeekEngaged) is ephemeral and lost across reload — re-
+  // claiming the leaf as a peek without that state would surface the
+  // next refile's destination in whatever screen position Obsidian
+  // placed the leaf in, unrelated to the user's current main.
+  // Detaching is cleaner: the next refile creates a fresh peek below
+  // the current main via the normal split path.
+  private discardOrphanedPeekLeaf(): void {
+    const id = this.settings.refilePeekLeafId;
+    if (!id) return;
+    this.settings.refilePeekLeafId = null;
+    void this.saveSettings();
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leafId(leaf) === id) leaf.detach();
+    });
+  }
+
+  async toggleScratch(triggerLeaf?: WorkspaceLeaf): Promise<void> {
+    const existing = this.findScratchLeaf();
+    if (existing) {
+      existing.detach();
+      return;
+    }
+    let file: TFile;
+    try {
+      file = await ensureScratchFile(this.app);
+    } catch (err) {
+      new Notice(`oak: open scratch failed — ${(err as Error).message}`);
+      return;
+    }
+    const base =
+      triggerLeaf && this.isLeafAlive(triggerLeaf)
+        ? triggerLeaf
+        : this.currentMainLeaf();
+    const newLeaf = this.app.workspace.createLeafBySplit(
+      base,
+      "horizontal",
+      false,
+    );
+    await newLeaf.openFile(file);
+    this.app.workspace.revealLeaf(newLeaf);
   }
 
   // Walk one step back in the active leaf's history. Used by the
@@ -1545,4 +2260,14 @@ export default class OakPlugin extends Plugin {
       this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
     await this.navigateLeafToAgenda(leaf);
   }
+}
+
+// Obsidian's runtime `WorkspaceLeaf` carries an `id` string that is
+// part of the workspace JSON layout — stable across save/restore. The
+// public type doesn't expose it, so we cast through `unknown`. Returns
+// null when the runtime didn't materialise an id (defensive: should
+// never happen for a leaf currently attached to the workspace).
+function leafId(leaf: WorkspaceLeaf): string | null {
+  const id = (leaf as unknown as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : null;
 }
