@@ -8,7 +8,7 @@ for the inbox-processing workflow that uses refile heavily.)
 
 ## Triggering a refile
 
-Three entrypoints, all opening the same fuzzy picker once a source
+Three entrypoints, all opening the same target picker once a source
 heading has been identified:
 
 - From the agenda: focus an entry (`j`/`k` or click) and press
@@ -26,9 +26,26 @@ heading has been identified:
   carries its descendant headings along, so descendants don't double-
   up in the move list.
 
-The picker lists every heading in the vault, prefixed by the file's
-vault path. Each file also offers `(top of file)` to refile under the
-file root.
+## Target picker
+
+The target picker takes over the peek pane (a horizontal split below
+the source) as a 2-column view: a filterable file list on the left
+and a live preview of the selected file on the right.
+
+Default mode is **file mode**:
+
+- Type to filter the file list by vault-relative path.
+- `↓` / `↑` (or `Ctrl-n` / `Ctrl-p`) move the selection.
+- `Enter` refiles under the selected file's root (top of file).
+- `Shift-Enter` drills into the selected file's headings — the left
+  pane flips to **section mode**.
+- `Esc` cancels the picker and closes the peek pane.
+
+In section mode:
+
+- Type to filter the heading list by title chain.
+- `Enter` refiles under the highlighted heading.
+- `Esc` returns to file mode.
 
 ## Heading levels at the destination
 
@@ -54,35 +71,39 @@ silently clobbering changes.
 
 ## Peek pane
 
-After a cross-file refile, the destination opens in a horizontal split
-below the source leaf, scrolls to the moved heading, and takes focus —
-the user lands at the destination ready to inspect or edit. The source
-pane fades to half opacity while the peek is focused so the peek reads
-as the active surface. Standard tab and view-header navigation are
-hidden in the peek (same treatment as the scratch buffer); a single ×
-button on the trailing edge of the view-header detaches it.
+The peek pane below the source leaf has two roles in a single hop:
+
+1. **Picker**: the moment a refile is triggered, the picker view
+   takes over the peek pane. The user picks a target there.
+2. **Destination preview**: after a cross-file refile completes, the
+   peek pane swaps to a markdown view of the destination, scrolled
+   to the moved heading. The user lands there ready to inspect or
+   edit.
+
+The source pane fades to half opacity while the peek is focused so the
+peek reads as the active surface. Standard tab and view-header
+navigation are hidden in the peek (same treatment as the scratch
+buffer).
 
 Peek dismissal behaves like a transient inspection panel:
 
-- Press `Esc` while the peek has focus to detach it.
-- Move focus back to another main-pane leaf (e.g. click the source
-  pane) and the peek detaches automatically. Sidebar focus changes
-  do not dismiss it — clicking the file explorer leaves the peek
-  alone.
-- Esc inside an `<input>` / `<textarea>` (e.g. the editable title
-  row) is left alone — the input owns that key for its own
-  commit-or-cancel handling.
+- Press `Esc` to detach it. While the picker is up, this also cancels
+  the in-flight refile.
+- Move focus back to a main-pane leaf and the peek detaches
+  automatically once you've engaged with it. Sidebar focus changes do
+  not dismiss it.
 
-Same-file refiles skip the peek — the source view is already showing
-the updated buffer.
+Same-file refiles auto-close the peek as soon as the move completes —
+the source view is already showing the updated buffer.
 
 Refiling again from inside the peek (a peek-to-peek hop) keeps the
-"source = main, destination = peek" shape consistent: the file
-currently in the peek (the one you are refiling out of) is moved up
-into the main slot it was originally split from, the old peek is
-detached, and the new destination opens in a fresh peek below. The
-file that previously occupied the main slot is dropped from view but
-preserved in that leaf's tab history (← walks back to it).
+"source = main, destination = peek" shape consistent: the moment the
+new refile is triggered from the peek, the file currently in the peek
+(the one you are refiling out of) is opened in the main slot it was
+originally split from, and the peek pane becomes the picker for the
+new destination. The file that previously occupied the main slot is
+dropped from view but preserved in that leaf's tab history (← walks
+back to it).
 
 ## Configuration — `.oak/refile.yml`
 

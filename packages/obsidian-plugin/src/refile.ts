@@ -1,114 +1,26 @@
-// Org-refile UI: pick a target heading from across the vault and move
-// the source heading + its subtree there.
-//
-// Two source identifications are supported:
+// Org-refile orchestration. Two source identifications are supported:
 //   - entryId: agenda view path, robust against snapshot/disk drift
 //     because the core re-derives the heading on disk via parseAgendaPage.
 //   - line+level: editor command path, used when the cursor sits on a
 //     plain heading that isn't an agenda entry (no TODO state, no
 //     planning line, no active timestamp).
 //
-// Targets are collected from the latest vault snapshot; the user picks
-// one via Obsidian's `FuzzySuggestModal`. Display strings put the
-// vault-relative path first so a fuzzy query like `tasks/work/refactor`
-// hits both file and heading components.
+// The target picker itself is a 2-column ItemView rendered in the peek
+// pane (see views/refile-picker.ts) — the plugin's `openRefilePicker`
+// handles peek-leaf placement (including the peek-to-peek promote
+// dance) and resolves with the user's choice.
+
+import { Notice, TFile, type WorkspaceLeaf } from "obsidian";
 
 import {
-  FuzzySuggestModal,
-  Notice,
-  TFile,
-  type App,
-  type WorkspaceLeaf,
-} from "obsidian";
-
-import {
-  collectRefileTargets,
   frontmatterLineCount,
   refile,
   RefileError,
   type AgendaConfig,
   type RefileConfig,
-  type RefileTarget,
 } from "@oak/core";
 
 import type OakPlugin from "./main.js";
-
-const TOP_OF_FILE_LABEL = "(top of file)";
-
-function targetDisplay(target: RefileTarget): string {
-  if (target.line === null) {
-    return `${target.relPath} ${TOP_OF_FILE_LABEL}`;
-  }
-  // headingPath[0] is the file basename without `.md`; the rest is the
-  // heading hierarchy. Replacing the basename with the relPath puts the
-  // full vault location in the display so two same-named files stay
-  // distinguishable.
-  const [, ...headings] = target.headingPath;
-  return `${target.relPath} ▸ ${headings.join(" ▸ ")}`;
-}
-
-class RefileTargetModal extends FuzzySuggestModal<RefileTarget> {
-  // Track whether we have already resolved the outer promise so the
-  // cancel path in onClose does not race ahead of onChooseItem. Required
-  // because current Obsidian fires onClose *before* onChooseItem when
-  // the user picks an item (selectSuggestion calls close() first, then
-  // the handler) — so we cannot resolve null synchronously in onClose
-  // or every selection would silently come back as cancel.
-  private settled = false;
-
-  constructor(
-    app: App,
-    private targets: RefileTarget[],
-    private sourceTitle: string,
-    private resolve: (target: RefileTarget | null) => void,
-  ) {
-    super(app);
-    this.setPlaceholder(`Refile "${sourceTitle}" under…`);
-    this.setInstructions([
-      { command: "↑↓", purpose: "navigate" },
-      { command: "↵", purpose: "refile" },
-      { command: "esc", purpose: "cancel" },
-    ]);
-  }
-
-  override getItems(): RefileTarget[] {
-    return this.targets;
-  }
-
-  override getItemText(item: RefileTarget): string {
-    return targetDisplay(item);
-  }
-
-  override onChooseItem(item: RefileTarget): void {
-    if (this.settled) return;
-    this.settled = true;
-    this.resolve(item);
-  }
-
-  override onClose(): void {
-    super.onClose();
-    // Defer the cancel resolution one microtask so an `onChooseItem`
-    // dispatched right after `onClose` (the order Obsidian uses on Enter
-    // / click selection) gets a chance to settle the promise with the
-    // chosen item first. If we get here without onChooseItem running,
-    // the user really did cancel and the microtask resolves null.
-    queueMicrotask(() => {
-      if (this.settled) return;
-      this.settled = true;
-      this.resolve(null);
-    });
-  }
-}
-
-function pickTarget(
-  app: App,
-  targets: RefileTarget[],
-  sourceTitle: string,
-): Promise<RefileTarget | null> {
-  return new Promise((resolve) => {
-    new RefileTargetModal(app, targets, sourceTitle, resolve).open();
-  });
-}
 
 // Caller-supplied description of the heading being moved. `entryId` is
 // optional: present when the agenda view dispatches the refile (we want
@@ -157,51 +69,32 @@ export async function refileHeadings(
     await refileHeading(plugin, sources[0]!, refileConfig, agendaConfig, opts);
     return;
   }
-  plugin.beginRefile();
-  try {
-    await refileHeadingsInner(
-      plugin,
-      sources,
-      refileConfig,
-      agendaConfig,
-      opts,
-    );
-  } finally {
-    plugin.endRefile();
-  }
-}
-
-async function refileHeadingsInner(
-  plugin: OakPlugin,
-  sources: RefileSourceDescriptor[],
-  refileConfig: RefileConfig,
-  agendaConfig: AgendaConfig,
-  opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
-): Promise<void> {
-
-  const snap = plugin.state.current();
-  if (!snap) {
-    new Notice("oak: vault index not ready yet");
-    return;
-  }
-
   // Exclude every selected source heading from the picker so the
   // user can't choose one of them as the destination.
-  const sourceKeys = new Set(
+  const excludeKeys = new Set(
     sources.map((s) => `${s.relPath}:${s.line}`),
   );
-  const targets = collectRefileTargets(snap.vault).filter((t) => {
-    if (t.line === null) return true;
-    return !sourceKeys.has(`${t.relPath}:${t.line}`);
+
+  // Resolve the source TFile up front — the peek-promotion path in
+  // openRefilePicker can't depend on `peek.view.file` because core's
+  // atomic-rename writes can leave it transiently null. Multi-source
+  // calls share a single source file (single-file invariant), so the
+  // first source's relPath is fine.
+  const firstSource = sources[0]!;
+  const sourceAbs = plugin.app.vault.getAbstractFileByPath(firstSource.relPath);
+  const sourceFile = sourceAbs instanceof TFile ? sourceAbs : undefined;
+
+  const target = await plugin.openRefilePicker({
+    sourceTitle: `${sources.length} sections`,
+    excludeKeys,
+    sourceLeaf: opts.sourceLeaf,
+    sourceFile,
+    isPeekSource: opts.isPeekSource,
   });
-  if (targets.length === 0) {
-    new Notice("oak: no refile targets available");
+  if (!target) {
+    plugin.closeRefilePeek();
     return;
   }
-
-  const placeholder = `${sources.length} sections`;
-  const target = await pickTarget(plugin.app, targets, placeholder);
-  if (!target) return;
 
   // Top-down: smallest line number first. Each refile inserts at the
   // end of the destination's subtree, so processing in document order
@@ -262,7 +155,12 @@ async function refileHeadingsInner(
         (failureMessage ? ` (stopped: ${failureMessage})` : ""),
     );
     plugin.state.scheduleRefresh();
-    if (!lastSameFile && lastInsertedBodyLine !== null) {
+    if (lastSameFile || lastInsertedBodyLine === null) {
+      // Same-file refile: the source pane is already showing the
+      // updated buffer, so the picker pane has nothing useful to
+      // display — close it.
+      plugin.closeRefilePeek();
+    } else {
       const targetFile = plugin.app.vault.getAbstractFileByPath(
         target.relPath,
       );
@@ -270,26 +168,18 @@ async function refileHeadingsInner(
         const targetRaw = await plugin.app.vault.cachedRead(targetFile);
         const fileLine =
           lastInsertedBodyLine - 1 + frontmatterLineCount(targetRaw);
-        // Resolve the source TFile up front. Required by the
-        // peek-promotion path: core's atomic-rename writes can leave
-        // the peek view's `.file` transiently null, so the workspace
-        // can't be trusted as a fallback. All multi-source calls
-        // share a single source file (by invariant), so picking the
-        // first source's relPath is fine.
-        const firstSource = sources[0]!;
-        const sourceAbs = plugin.app.vault.getAbstractFileByPath(
-          firstSource.relPath,
-        );
-        const sourceFile = sourceAbs instanceof TFile ? sourceAbs : undefined;
-        await plugin.revealRefileTarget(targetFile, fileLine, {
-          sourceLeaf: opts.sourceLeaf,
-          sourceFile,
-          isPeekSource: opts.isPeekSource,
-        });
+        // Swap the peek's view from the picker back to a markdown
+        // view of the destination, scrolled to the moved heading.
+        await plugin.revealRefileTarget(targetFile, fileLine);
       }
     }
-  } else if (failureMessage) {
-    new Notice(`oak: refile — ${failureMessage}`);
+  } else {
+    // Refile failed before any section landed — drop the picker pane
+    // so the user isn't stuck staring at it.
+    plugin.closeRefilePeek();
+    if (failureMessage) {
+      new Notice(`oak: refile — ${failureMessage}`);
+    }
   }
 }
 
@@ -303,45 +193,26 @@ export async function refileHeading(
   agendaConfig: AgendaConfig,
   opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
 ): Promise<void> {
-  plugin.beginRefile();
-  try {
-    await refileHeadingInner(
-      plugin,
-      source,
-      refileConfig,
-      agendaConfig,
-      opts,
-    );
-  } finally {
-    plugin.endRefile();
-  }
-}
+  // Exclude the source heading itself from the picker so the user
+  // can't pick the heading they're trying to move (same-file
+  // self-refile is rejected by core anyway, but we keep it out of
+  // the list so the UX stays clean).
+  const excludeKeys = new Set([`${source.relPath}:${source.line}`]);
 
-async function refileHeadingInner(
-  plugin: OakPlugin,
-  source: RefileSourceDescriptor,
-  refileConfig: RefileConfig,
-  agendaConfig: AgendaConfig,
-  opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
-): Promise<void> {
-  const snap = plugin.state.current();
-  if (!snap) {
-    new Notice("oak: vault index not ready yet");
-    return;
-  }
-  const targets = collectRefileTargets(snap.vault).filter((t) => {
-    // Exclude the source heading itself from the picker. Cross-file
-    // self-refile can't happen, but for same-file we'd otherwise show
-    // the entry as a target and then reject it in core.
-    if (t.relPath !== source.relPath) return true;
-    return t.line !== source.line;
+  const sourceAbs = plugin.app.vault.getAbstractFileByPath(source.relPath);
+  const sourceFile = sourceAbs instanceof TFile ? sourceAbs : undefined;
+
+  const target = await plugin.openRefilePicker({
+    sourceTitle: source.title,
+    excludeKeys,
+    sourceLeaf: opts.sourceLeaf,
+    sourceFile,
+    isPeekSource: opts.isPeekSource,
   });
-  if (targets.length === 0) {
-    new Notice("oak: no refile targets available");
+  if (!target) {
+    plugin.closeRefilePeek();
     return;
   }
-  const target = await pickTarget(plugin.app, targets, source.title);
-  if (!target) return;
 
   try {
     const result = await refile(
@@ -365,12 +236,11 @@ async function refileHeadingInner(
         : `Refiled to ${target.relPath}`,
     );
     plugin.state.scheduleRefresh();
-    // Same-file refile: Obsidian's own editor already shows the
-    // updated buffer at the new heading, so a peek pane would just be
-    // a duplicate view of the active leaf. Skip it. For cross-file we
-    // open the destination below so the user can see where the heading
-    // landed without losing the source caret position (emacs-style).
-    if (!result.sameFile) {
+    if (result.sameFile) {
+      // Same-file refile: the source pane already shows the updated
+      // buffer, so the picker pane is no longer useful — close it.
+      plugin.closeRefilePeek();
+    } else {
       const targetFile = plugin.app.vault.getAbstractFileByPath(
         target.relPath,
       );
@@ -378,21 +248,13 @@ async function refileHeadingInner(
         const targetRaw = await plugin.app.vault.cachedRead(targetFile);
         const fileLine =
           result.insertedBodyLine - 1 + frontmatterLineCount(targetRaw);
-        // Resolve the source TFile up front — promotion can't
-        // depend on `peek.view.file` because core's atomic-rename
-        // write briefly clears it.
-        const sourceAbs = plugin.app.vault.getAbstractFileByPath(
-          source.relPath,
-        );
-        const sourceFile = sourceAbs instanceof TFile ? sourceAbs : undefined;
-        await plugin.revealRefileTarget(targetFile, fileLine, {
-          sourceLeaf: opts.sourceLeaf,
-          sourceFile,
-          isPeekSource: opts.isPeekSource,
-        });
+        // Swap the peek's view from the picker back to a markdown
+        // view of the destination, scrolled to the moved heading.
+        await plugin.revealRefileTarget(targetFile, fileLine);
       }
     }
   } catch (err) {
+    plugin.closeRefilePeek();
     if (err instanceof RefileError) {
       new Notice(`oak: refile — ${err.message}`);
     } else {
