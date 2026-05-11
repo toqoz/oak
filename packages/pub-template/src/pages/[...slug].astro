@@ -1,7 +1,7 @@
 ---
 import { getCollection, render } from "astro:content";
 import Base from "../layouts/Base.astro";
-import Backlinks from "../components/Backlinks.astro";
+import Related from "../components/Related.astro";
 
 export async function getStaticPaths() {
   const docs = await getCollection("docs");
@@ -17,6 +17,6 @@ const { Content } = await render(doc);
       <h1>{doc.data.title}</h1>
       <Content />
     </article>
-    <Backlinks inbound={doc.data.inbound} />
+    <Related inbound={doc.data.inbound} twoHop={doc.data.twoHop} />
   </main>
 </Base>

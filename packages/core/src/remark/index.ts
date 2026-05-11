@@ -39,8 +39,13 @@ export type RemarkOakLinksOptions = {
   // Map a wiki-style asset embed (e.g. `![[diagram.png]]`) to its
   // published URL. Returning null leaves the embed as plain alt text.
   assetUrl?: (target: string) => string | null | undefined;
-  // CSS class applied to the `<span>` that stands in for unresolved
-  // wiki links. Default: `oak-redlink`.
+  // Map an unresolved wiki link target to its placeholder URL. When
+  // provided and the resolver returns a non-empty string, the redlink
+  // is emitted as an `<a>` instead of a `<span>` so it's clickable.
+  // Returning null/undefined keeps the current span behavior.
+  redlinkUrl?: (target: string) => string | null | undefined;
+  // CSS class applied to the redlink element (anchor or span).
+  // Default: `oak-redlink`.
   redlinkClass?: string;
 };
 
@@ -119,6 +124,18 @@ function makeRedlinkHtml(target: string, label: string, cls: string): Html {
   };
 }
 
+function makeRedlinkAnchor(
+  target: string,
+  label: string,
+  url: string,
+  cls: string,
+): Html {
+  return {
+    type: "html",
+    value: `<a class="${cls}" href="${escapeHtml(url)}" data-target="${escapeHtml(target)}">${escapeHtml(label)}</a>`,
+  };
+}
+
 function makeImage(url: string, alt: string | null): Image {
   return { type: "image", url, title: null, alt };
 }
@@ -172,7 +189,12 @@ function resolveWikiNode(
   }
 
   if (resolution.status === "unresolved") {
-    return makeRedlinkHtml(parsed.target, parsed.label ?? parsed.target, redlinkClass);
+    const label = parsed.label ?? parsed.target;
+    const url = options.redlinkUrl?.(parsed.target);
+    if (typeof url === "string" && url.length > 0) {
+      return makeRedlinkAnchor(parsed.target, label, url, redlinkClass);
+    }
+    return makeRedlinkHtml(parsed.target, label, redlinkClass);
   }
 
   // External / invalid: emit alt-text only to avoid leaking the target.

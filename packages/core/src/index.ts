@@ -155,6 +155,26 @@ export type {
 } from "./publish-branch.js";
 export { syncPaths } from "./sync-tree.js";
 export type { SyncResult } from "./sync-tree.js";
+export { relatedView } from "./related.js";
+export type {
+  OutboundEntry,
+  InboundEntry,
+  PageRef,
+  RelatedOptions,
+  RelatedView,
+  TwoHopBridgeEntry,
+  TwoHopEntry,
+} from "./related.js";
+export {
+  collectRedlinks,
+  redlinkIdFor,
+  redlinkSlug,
+} from "./redlinks.js";
+export type {
+  RedlinkBridge,
+  RedlinkOptions,
+  RedlinkSummary,
+} from "./redlinks.js";
 export {
   DEFAULT_AGENDA_CONFIG,
   addUnits,

@@ -17,7 +17,15 @@ import type { Loader, LoaderContext } from "astro/loaders";
 import { parseVault } from "../parse.js";
 import { buildGraph } from "../graph.js";
 import { processBodyAssets } from "../asset-process.js";
-import type { Graph, OakPage, Vault, Visibility } from "../types.js";
+import { relatedView } from "../related.js";
+import { collectRedlinks } from "../redlinks.js";
+import type {
+  InboundEntry,
+  OutboundEntry,
+  TwoHopEntry,
+} from "../related.js";
+import type { RedlinkSummary } from "../redlinks.js";
+import type { OakPage, Visibility } from "../types.js";
 
 const DEFAULT_VISIBILITY: Visibility[] = ["public", "unlisted"];
 const DEFAULT_ASSET_URL_PREFIX = "/_oak";
@@ -48,65 +56,22 @@ export type OakLoaderOptions = {
   imageQuality?: number;
 };
 
-// What ends up in `entry.data`. The shape is intentionally close to
-// OakPage but flat and serialisable, so consumers can use it in
-// frontmatter-style template code without reaching into core types.
+// What ends up in `entry.data`. The shape mirrors `RelatedView` from
+// @oak/core/related so templates can render outbound, inbound, and
+// 2-hop cards without doing graph traversal themselves.
 export type OakEntryData = {
   oakId: string;
   title: string;
   slug: string;
   visibility: Visibility;
   aliases: string[];
-  // Outbound resolved links to other publishable pages.
-  outbound: Array<{ id: string; title: string; slug: string }>;
-  // Inbound (backlink) summary, with the line of context where the
-  // link appears in the source page.
-  inbound: Array<{ id: string; title: string; slug: string; context: string }>;
+  outbound: OutboundEntry[];
+  inbound: InboundEntry[];
+  twoHop: TwoHopEntry[];
 };
 
 function defaultIdFor(page: OakPage): string {
   return page.slug;
-}
-
-function computeOutbound(
-  page: OakPage,
-  vault: Vault,
-  graph: Graph,
-  visible: Set<Visibility>,
-): OakEntryData["outbound"] {
-  const links = graph.outgoing.get(page.id) ?? [];
-  const out: OakEntryData["outbound"] = [];
-  const seen = new Set<string>();
-  for (const link of links) {
-    if (link.resolution.status !== "resolved") continue;
-    const target = vault.pages.get(link.resolution.targetId);
-    if (!target || !visible.has(target.visibility)) continue;
-    if (seen.has(target.id)) continue;
-    seen.add(target.id);
-    out.push({ id: target.id, title: target.title, slug: target.slug });
-  }
-  return out;
-}
-
-function computeInbound(
-  page: OakPage,
-  vault: Vault,
-  graph: Graph,
-  visible: Set<Visibility>,
-): OakEntryData["inbound"] {
-  const back = graph.incoming.get(page.id) ?? [];
-  const out: OakEntryData["inbound"] = [];
-  for (const b of back) {
-    const from = vault.pages.get(b.fromId);
-    if (!from || !visible.has(from.visibility)) continue;
-    out.push({
-      id: from.id,
-      title: from.title,
-      slug: from.slug,
-      context: b.context,
-    });
-  }
-  return out;
 }
 
 // Astro requires entry filePaths to be relative to the project root
@@ -162,14 +127,18 @@ export async function loadOakPagesInto(
   const writtenAssets = new Set<string>();
   for (const page of vault.pages.values()) {
     if (!visible.has(page.visibility)) continue;
+    const related = relatedView(vault, graph, page.id, {
+      visibilityFilter,
+    });
     const data: OakEntryData = {
       oakId: page.id,
       title: page.title,
       slug: page.slug,
       visibility: page.visibility,
       aliases: page.aliases,
-      outbound: computeOutbound(page, vault, graph, visible),
-      inbound: computeInbound(page, vault, graph, visible),
+      outbound: related.outbound,
+      inbound: related.inbound,
+      twoHop: related.twoHop,
     };
 
     const processed = await processBodyAssets(
@@ -264,6 +233,60 @@ export function oakLoader(options: OakLoaderOptions): Loader {
         ctx.watcher.on("change", onChange);
         ctx.watcher.on("unlink", onChange);
       }
+    },
+  };
+}
+
+// Options for `oakRedlinkLoader`.
+export type OakRedlinkLoaderOptions = {
+  // Vault path (same convention as oakLoader).
+  vault: string;
+  // Which visibilities contribute redlinks. Defaults to {public, unlisted}.
+  visibilityFilter?: Visibility[];
+};
+
+// Entry shape stored in the redlinks collection. The slug is also
+// the entry id, so routes can target `redlinks/<slug>`.
+export type OakRedlinkData = RedlinkSummary;
+
+// Astro Content Layer loader that materialises unresolved wiki link
+// targets into a collection. Use alongside `oakLoader` so the
+// publish-template can render one placeholder route per redlink:
+//
+// ```ts
+// // src/content.config.ts
+// export const collections = {
+//   docs: defineCollection({ loader: oakLoader({ vault: "./vault" }) }),
+//   redlinks: defineCollection({ loader: oakRedlinkLoader({ vault: "./vault" }) }),
+// };
+// ```
+export function oakRedlinkLoader(options: OakRedlinkLoaderOptions): Loader {
+  return {
+    name: "@oak/core/astro:oakRedlinkLoader",
+    load: async (ctx: LoaderContext): Promise<void> => {
+      const projectRoot = fileURLToPath(ctx.config.root);
+      const vaultRoot = isAbsolute(options.vault)
+        ? options.vault
+        : resolve(projectRoot, options.vault);
+
+      const vault = await parseVault(vaultRoot);
+      const graph = buildGraph(vault);
+      const redlinks = collectRedlinks(vault, graph, {
+        ...(options.visibilityFilter
+          ? { visibilityFilter: options.visibilityFilter }
+          : {}),
+      });
+
+      ctx.store.clear();
+      for (const r of redlinks) {
+        const digest = ctx.generateDigest({ data: r });
+        ctx.store.set({
+          id: r.slug,
+          data: r as unknown as Record<string, unknown>,
+          digest,
+        });
+      }
+      ctx.logger.info(`oak: loaded ${redlinks.length} redlink(s)`);
     },
   };
 }

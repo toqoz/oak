@@ -1,5 +1,5 @@
 import { defineConfig } from "astro/config";
-import { parseVault } from "@oak/core";
+import { parseVault, redlinkSlug } from "@oak/core";
 import { remarkOakLinks } from "@oak/core/remark";
 
 // Boilerplate Astro config for the publish template. Users are
@@ -29,6 +29,9 @@ export default defineConfig({
         // Keep URLs aligned with the [...slug].astro routing. Override
         // here if you change the route shape.
         pageUrl: (page) => `/${page.slug}/`,
+        // Unresolved `[[target]]` becomes a clickable anchor going to
+        // the auto-generated /redlink/<slug>/ placeholder page.
+        redlinkUrl: (target) => `/redlink/${redlinkSlug(target)}/`,
       }),
     ],
   },

@@ -22,7 +22,10 @@ async function loadFixture(name: string) {
 async function render(
   body: string,
   vault: Awaited<ReturnType<typeof loadFixture>>["vault"],
-  extras: { assetUrl?: (target: string) => string | null } = {},
+  extras: {
+    assetUrl?: (target: string) => string | null;
+    redlinkUrl?: (target: string) => string | null;
+  } = {},
 ): Promise<string> {
   const processor = unified()
     .use(remarkParse)
@@ -30,6 +33,7 @@ async function render(
       remarkOakLinks({
         vault,
         ...(extras.assetUrl ? { assetUrl: extras.assetUrl } : {}),
+        ...(extras.redlinkUrl ? { redlinkUrl: extras.redlinkUrl } : {}),
       }),
     )
     .use(remarkRehype, { allowDangerousHtml: true })
@@ -64,6 +68,17 @@ describe("remarkOakLinks", () => {
       '<span class="oak-redlink" data-target="Nonexistent Page">Nonexistent Page</span>',
     );
     expect(html).not.toContain("[[Nonexistent Page]]");
+  });
+
+  it("emits an anchor for unresolved targets when redlinkUrl is set", async () => {
+    const { vault } = await loadFixture("publish-basic");
+    const html = await render("Where is [[Nonexistent Page]]?", vault, {
+      redlinkUrl: (target) =>
+        `/redlink/${target.toLowerCase().replace(/\s+/g, "-")}/`,
+    });
+    expect(html).toContain(
+      '<a class="oak-redlink" href="/redlink/nonexistent-page/" data-target="Nonexistent Page">Nonexistent Page</a>',
+    );
   });
 
   it("does not touch text inside fenced code blocks", async () => {

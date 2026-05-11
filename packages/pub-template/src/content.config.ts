@@ -1,5 +1,5 @@
 import { defineCollection } from "astro:content";
-import { oakLoader } from "@oak/core/astro";
+import { oakLoader, oakRedlinkLoader } from "@oak/core/astro";
 
 // `./vault` is the publishable subset of the vault, sync'd into the
 // publish worktree by `oak pub build`. Pages with visibility `private`
@@ -15,5 +15,11 @@ export const collections = {
       vault: "./vault",
       optimizeImages: true,
     }),
+  }),
+  // One entry per unresolved `[[target]]` referenced from publishable
+  // pages. Consumed by `src/pages/redlink/[slug].astro` to render
+  // placeholder pages listing the pages that reference the concept.
+  redlinks: defineCollection({
+    loader: oakRedlinkLoader({ vault: "./vault" }),
   }),
 };

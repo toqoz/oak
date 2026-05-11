@@ -109,7 +109,10 @@ describe("oakLoader / loadOakPagesInto", () => {
       assetOutDir,
     });
     const hello = store.get("hello")!.data as unknown as OakEntryData;
-    expect(hello.outbound.map((o) => o.slug)).toContain("about");
+    const helloPages = hello.outbound.flatMap((o) =>
+      o.kind === "page" ? [o.slug] : [],
+    );
+    expect(helloPages).toContain("about");
 
     const about = store.get("about")!.data as unknown as OakEntryData;
     expect(about.inbound.map((i) => i.slug)).toContain("hello");

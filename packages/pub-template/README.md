@@ -14,10 +14,11 @@ src/
     SiteHeader.astro          top nav (Index / Search)
     SiteFooter.astro
     PageList.astro            alphabetised page list w/ backlink count
-    Backlinks.astro           inbound-link section for a page
+    Related.astro             backlinks + 2-hop card grid
   pages/
     index.astro               page list
-    [...slug].astro           rendered page + backlinks
+    [...slug].astro           rendered page + related cards
+    redlink/[slug].astro      placeholder page per unresolved [[target]]
     search.astro              client-side editor-style search UI
     search.json.ts            corpus dump consumed by search.astro
   lib/

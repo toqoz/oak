@@ -149,10 +149,11 @@ After `oak pub init`, the publish worktree contains:
 │   │   ├── SiteHeader.astro       top nav (Index / Search)
 │   │   ├── SiteFooter.astro
 │   │   ├── PageList.astro         alphabetised page list w/ backlink count
-│   │   └── Backlinks.astro        inbound-link section for a page
+│   │   └── Related.astro          backlinks + 2-hop card grid
 │   ├── pages/
 │   │   ├── index.astro            page list
-│   │   ├── [...slug].astro        rendered page + backlinks
+│   │   ├── [...slug].astro        rendered page + related cards
+│   │   ├── redlink/[slug].astro   placeholder page per unresolved [[target]]
 │   │   ├── search.astro           client-side search UI
 │   │   └── search.json.ts         corpus dump consumed by search.astro
 │   ├── lib/
@@ -181,9 +182,24 @@ blocks inside each `.astro` file.
 ### Page rendering
 
 `src/pages/[...slug].astro`. The body comes from `{Content}`
-(Astro's render of the markdown collection entry). Backlinks come
-from `doc.data.inbound` (populated by oakLoader). Add fields to the
-rendered shell freely.
+(Astro's render of the markdown collection entry). Backlinks and
+2-hop neighbours come from `doc.data.inbound` / `doc.data.twoHop`
+(populated by oakLoader). The `Related` component merges them into a
+single deduplicated card grid, matching how the Obsidian plugin
+renders its per-page "関連項目" footer.
+
+### Redlinks
+
+Unresolved wiki targets (`[[NotYetCreated]]`) are emitted by
+`remarkOakLinks` as anchors pointing at `/redlink/<slug>/`. Each
+redlink target gets a placeholder page (`src/pages/redlink/[slug].astro`)
+listing the pages that reference it, so the reader can still navigate
+the concept even when no real page exists yet.
+
+The redlink set is materialised as a separate Astro content collection
+via `oakRedlinkLoader` (see `src/content.config.ts`). The slug is
+derived from the target string via `redlinkSlug(target)` from
+`@oak/core` — keep this in sync if you change route shape.
 
 ### Search behavior
 
