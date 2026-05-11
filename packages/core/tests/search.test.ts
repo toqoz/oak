@@ -28,6 +28,8 @@ function makePage(init: PageInit): OakPage {
     basename: init.id,
     body: init.body ?? "",
     rawFrontmatter: {},
+    created: null,
+    modified: null,
     links: [],
     parseIssues: [],
   };
@@ -137,6 +139,26 @@ describe("searchVault", () => {
       visibilityFilter: ["public"],
     }).map((h) => h.pageId);
     expect(ids).toEqual(["pub"]);
+  });
+
+  it("excludes unmanaged pages (those with `missing-id` parse issues)", () => {
+    const real = makePage({ id: "real", title: "Findable", body: "needle" });
+    const orphan = makePage({
+      id: "unidentified:dropped.md",
+      title: "Findable",
+      body: "needle",
+    });
+    orphan.parseIssues = [
+      {
+        severity: "error",
+        code: "missing-id",
+        message: "Page is missing required `id` frontmatter",
+      },
+    ];
+    const ids = searchVault(makeVault([real, orphan]), "needle").map(
+      (h) => h.pageId,
+    );
+    expect(ids).toEqual(["real"]);
   });
 
   it("respects the global limit", () => {

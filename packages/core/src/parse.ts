@@ -17,6 +17,7 @@ import type {
 } from "./types.js";
 import { extractLinks } from "./links.js";
 import { normalizeKey, slugify } from "./slug.js";
+import { coerceTimestamp } from "./timestamps.js";
 
 const SYSTEM_DIRS = new Set([
   "_assets",
@@ -50,6 +51,19 @@ function basenameNoExt(filePath: string): string {
   const base = filePath.split(sep).pop()!;
   const ext = extname(base);
   return ext ? base.slice(0, -ext.length) : base;
+}
+
+// True iff the page has the structural prerequisites for oak to manage
+// it — namely, an `id` in its frontmatter. Files that lack one are
+// surfaced via the home view's "Unmanaged" section so the user can
+// import them; until then they're excluded from search, the SQLite
+// index, and link resolution lookup tables (an `unidentified:<path>`
+// id is meaningless as a backlink target).
+export function isManagedPage(page: OakPage): boolean {
+  for (const issue of page.parseIssues) {
+    if (issue.code === "missing-id") return false;
+  }
+  return true;
 }
 
 function coerceAliases(value: unknown): string[] {
@@ -136,6 +150,11 @@ export async function parsePage(
 
   const links = extractLinks(body);
 
+  const created = coerceTimestamp((fm as Record<string, unknown>)["created"]);
+  const modified = coerceTimestamp(
+    (fm as Record<string, unknown>)["modified"],
+  );
+
   return {
     type: "page",
     id,
@@ -148,6 +167,8 @@ export async function parsePage(
     basename,
     body,
     rawFrontmatter: fm,
+    created,
+    modified,
     links,
     parseIssues: issues,
   };
@@ -403,6 +424,12 @@ export async function parseVault(rootPath: string): Promise<Vault> {
   const basenameConflicts = new Map<string, string[]>();
 
   for (const page of pages.values()) {
+    // Unmanaged pages (no `id` in frontmatter) get a synthesised
+    // `unidentified:<path>` id that is useless as a link target, so
+    // skip the lookup tables entirely. The page stays in `pages` so
+    // the home view can surface it for import.
+    if (!isManagedPage(page)) continue;
+
     const tk = normalizeKey(page.title);
     if (byTitle.has(tk) && byTitle.get(tk) !== page.id) {
       recordConflict(titleConflicts, tk, byTitle.get(tk)!);

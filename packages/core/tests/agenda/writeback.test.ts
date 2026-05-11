@@ -33,6 +33,8 @@ function makePage(filePath: string, body: string): OakPage {
     basename: filePath.split(/[\\/]/).pop() ?? filePath,
     body,
     rawFrontmatter: {},
+    created: null,
+    modified: null,
     links: [],
     parseIssues: [],
   };

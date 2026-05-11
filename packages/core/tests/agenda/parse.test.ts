@@ -16,6 +16,8 @@ function makePage(body: string, frontmatter: Record<string, unknown> = {}): OakP
     basename: "Test",
     body,
     rawFrontmatter: frontmatter,
+    created: null,
+    modified: null,
     links: [],
     parseIssues: [],
   };

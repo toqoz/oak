@@ -13,6 +13,7 @@ export type {
   HomeViewOptions,
   HomeEntry,
   HomeStats,
+  UnmanagedEntry,
 } from "./home.js";
 export { searchVault } from "./search.js";
 export type {
@@ -33,6 +34,25 @@ export {
 } from "./graph.js";
 export { validateVault, partitionIssues } from "./validate.js";
 export { slugify, normalizeKey } from "./slug.js";
+export {
+  coerceTimestamp,
+  isOakManaged,
+  nowIsoSecond,
+  recoverCreatedTimestamp,
+  setCreatedAndModified,
+  setCreatedIfMissing,
+  setModified,
+  setModifiedIfMissing,
+  shouldBumpModified,
+  withTimestampUpdate,
+  withTimestampUpdateAndRecovery,
+} from "./timestamps.js";
+export {
+  migrateTimestamps,
+  type MigrateTimestampsOptions,
+  type TimestampMigrationEntry,
+  type TimestampMigrationReport,
+} from "./timestamps-migrate.js";
 export {
   writeIndex,
   readIndexMeta,
@@ -68,6 +88,7 @@ export type { RenderContext } from "./render.js";
 export {
   ensureGitRepo,
   ensureGitignore,
+  gitFirstAddedTime,
   isGitRepo,
   gitStatus,
   snapshot,

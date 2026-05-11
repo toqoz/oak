@@ -15,6 +15,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 
+import { isManagedPage } from "./parse.js";
 import type { Graph, Issue, Vault } from "./types.js";
 
 // Vite's resolver mangles `node:sqlite` (strips the prefix) when it
@@ -201,8 +202,15 @@ export async function writeIndex(
 
       let aliasCount = 0;
       let linkCount = 0;
+      let pageCount = 0;
 
       for (const page of vault.pages.values()) {
+        // Unmanaged pages are absent from the lookup tables and graph;
+        // mirror that here so the SQLite snapshot stays internally
+        // consistent. The `missing-id` parse issue is still recorded
+        // in the issues table so the file is discoverable.
+        if (!isManagedPage(page)) continue;
+        pageCount++;
         insertPage.run(
           page.id,
           page.title,
@@ -292,7 +300,7 @@ export async function writeIndex(
       db.exec("COMMIT");
 
       return {
-        pages: vault.pages.size,
+        pages: pageCount,
         aliases: aliasCount,
         links: linkCount,
         mounts: vault.mounts.size,

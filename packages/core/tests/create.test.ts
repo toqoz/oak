@@ -55,6 +55,13 @@ describe("composePage (pure)", () => {
       /vault-relative/,
     );
   });
+
+  it("stamps `created` and `modified` to the same instant", () => {
+    const fixed = new Date("2026-05-10T12:34:56Z");
+    const composed = composePage({ title: "ts", now: () => fixed });
+    expect(composed.text).toContain("created: '2026-05-10T12:34:56Z'");
+    expect(composed.text).toContain("modified: '2026-05-10T12:34:56Z'");
+  });
 });
 
 describe("createPage (filesystem)", () => {
@@ -77,6 +84,10 @@ describe("createPage (filesystem)", () => {
     expect(page.visibility).toBe("public");
     expect(page.aliases).toEqual(["hello"]);
     expect(page.parseIssues.filter((i) => i.severity === "error")).toEqual([]);
+    // Newly-composed page should round-trip through parseVault with
+    // both timestamps populated to ISO-second UTC strings.
+    expect(page.created).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(page.modified).toBe(page.created);
 
     const graph = buildGraph(vault);
     expect(graph.outgoing.get(page.id) ?? []).toEqual([]);

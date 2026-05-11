@@ -9,6 +9,7 @@
 //   title-prefix match > title-contains > alias-contains > body-only
 // Ties break by snippet count desc, then title asc.
 
+import { isManagedPage } from "./parse.js";
 import type { OakPage, Vault, Visibility } from "./types.js";
 
 export type SearchMatchKind = "title" | "alias" | "body";
@@ -73,6 +74,7 @@ export function searchVault(
   const hits: SearchHit[] = [];
 
   for (const page of vault.pages.values()) {
+    if (!isManagedPage(page)) continue;
     if (visFilter && !visFilter.has(page.visibility)) continue;
     const hit = scorePage(page, q, qLower, bodyCap, snippetMax);
     if (hit) hits.push(hit);

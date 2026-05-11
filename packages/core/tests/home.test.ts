@@ -34,18 +34,49 @@ afterEach(async () => {
 });
 
 describe("excerptFrom", () => {
-  it("strips wiki syntax, code, and headings; truncates", () => {
+  it("strips wiki syntax and code; preserves line breaks between paragraphs", () => {
     const body = [
-      "# Title",
+      "Intro paragraph.",
       "",
       "First paragraph with [[Wiki|alias]] and `code` reference.",
       "",
       "Second paragraph.",
     ].join("\n");
     expect(excerptFrom(body, 200)).toBe(
-      "First paragraph with alias and reference.",
+      [
+        "Intro paragraph.",
+        "First paragraph with alias and reference.",
+        "Second paragraph.",
+      ].join("\n"),
     );
     expect(excerptFrom("a".repeat(300), 100)).toMatch(/^a+…$/);
+  });
+
+  it("includes heading and list text on separate lines with markers stripped", () => {
+    const body = [
+      "# Top heading",
+      "",
+      "## Section A",
+      "",
+      "- item one",
+      "- [x] item two",
+      "1. ordered",
+      "",
+      "> quoted line",
+      "",
+      "Body prose.",
+    ].join("\n");
+    expect(excerptFrom(body, 200)).toBe(
+      [
+        "Top heading",
+        "Section A",
+        "item one",
+        "item two",
+        "ordered",
+        "quoted line",
+        "Body prose.",
+      ].join("\n"),
+    );
   });
 });
 
@@ -81,6 +112,35 @@ describe("homeViewModel", () => {
       "About",
       "Hello",
     ]);
+  });
+
+  it("surfaces files without `id` frontmatter as unmanaged and excludes them from pages/recent", async () => {
+    const root = resolve(scratch, "vault");
+    await cp(fxRoot("publish-basic"), root, { recursive: true });
+    // Drop a file the way an external system would: no oak frontmatter
+    // at all. parseVault will synthesize an `unidentified:…` id and
+    // emit a `missing-id` parse issue, which homeViewModel reads to
+    // segregate it from the real pages.
+    await writeFile(
+      resolve(root, "dropped.md"),
+      "# Dropped from elsewhere\n\nbody body body\n",
+      "utf8",
+    );
+
+    const vault = await parseVault(root);
+    const graph = buildGraph(vault);
+    const home = await homeViewModel(vault, graph);
+
+    expect(home.unmanaged.map((u) => u.vaultRelPath)).toEqual(["dropped.md"]);
+    expect(home.unmanaged[0]!.basename).toBe("dropped");
+    expect(home.stats.unmanaged).toBe(1);
+    // Counted out of pages / visibility totals.
+    expect(home.pages.map((p) => p.title).sort()).toEqual([
+      "About",
+      "Diary",
+      "Hello",
+    ]);
+    expect(home.recent.find((r) => r.vaultRelPath === "dropped.md")).toBeUndefined();
   });
 
   it("sorts recent by mtime descending", async () => {
