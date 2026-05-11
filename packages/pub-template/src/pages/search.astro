@@ -97,7 +97,16 @@ import Base from "../layouts/Base.astro";
   </style>
 
   <script>
-    import { searchCorpus, highlight, type SearchDoc } from "../lib/search.ts";
+    // Pull the scorer + types from @oak/core's search subpath. The
+    // editor's full-pane search uses the same function over its live
+    // vault, so the ranking + multi-term-AND + heading-boost rules
+    // here match the editor 1:1 without sharing UI code.
+    import {
+      searchDocs,
+      type SearchDoc,
+      type SearchHit,
+      type SearchSnippet,
+    } from "@oak/core/search";
 
     const input = document.getElementById("q") as HTMLInputElement;
     const status = document.getElementById("status") as HTMLParagraphElement;
@@ -105,7 +114,7 @@ import Base from "../layouts/Base.astro";
 
     let corpus: SearchDoc[] = [];
     let active = -1;
-    let lastHits: ReturnType<typeof searchCorpus> = [];
+    let lastHits: SearchHit[] = [];
 
     async function loadCorpus(): Promise<void> {
       const res = await fetch("/search.json");
@@ -113,26 +122,53 @@ import Base from "../layouts/Base.astro";
       status.textContent = `${corpus.length} page${corpus.length === 1 ? "" : "s"} indexed.`;
     }
 
+    function escapeHtml(s: string): string {
+      return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function highlight(snip: SearchSnippet): string {
+      let out = "";
+      let cursor = 0;
+      for (const r of snip.ranges) {
+        if (r.start > cursor) {
+          out += escapeHtml(snip.text.slice(cursor, r.start));
+        }
+        out += `<mark>${escapeHtml(snip.text.slice(r.start, r.end))}</mark>`;
+        cursor = r.end;
+      }
+      if (cursor < snip.text.length) out += escapeHtml(snip.text.slice(cursor));
+      return out;
+    }
+
     function render(): void {
       results.innerHTML = "";
       lastHits.forEach((hit, i) => {
         const li = document.createElement("li");
-        li.dataset["slug"] = hit.doc.slug;
+        li.dataset["slug"] = hit.path;
         if (i === active) li.classList.add("is-active");
         li.setAttribute("role", "option");
-        const titleHtml = highlight(hit.doc.title, hit.titleMatches);
-        const linesHtml = hit.lines
-          .map((l) => `<p class="line">${highlight(l.text, l.ranges)}</p>`)
+        const titleSnip = hit.snippets.find((s) => s.kind === "title");
+        const titleHtml = titleSnip
+          ? highlight(titleSnip)
+          : escapeHtml(hit.title);
+        const bodyLinesHtml = hit.snippets
+          .filter((s) => s.kind === "body")
+          .map((s) => `<p class="line">${highlight(s)}</p>`)
           .join("");
-        li.innerHTML = `<span class="title">${titleHtml}</span><span class="slug">/${hit.doc.slug}/</span>${linesHtml}`;
-        li.addEventListener("click", () => navigate(hit.doc.slug));
+        li.innerHTML = `<span class="title">${titleHtml}</span><span class="slug">/${escapeHtml(hit.path)}/</span>${bodyLinesHtml}`;
+        li.addEventListener("click", () => navigate(hit.path));
         results.appendChild(li);
       });
     }
 
-    function search(query: string): void {
+    function runSearch(query: string): void {
       if (corpus.length === 0) return;
-      lastHits = searchCorpus(corpus, query);
+      lastHits = searchDocs(corpus, query);
       active = lastHits.length > 0 ? 0 : -1;
       status.textContent =
         query.trim() === ""
@@ -153,7 +189,7 @@ import Base from "../layouts/Base.astro";
       el?.scrollIntoView({ block: "nearest" });
     }
 
-    input.addEventListener("input", () => search(input.value));
+    input.addEventListener("input", () => runSearch(input.value));
     input.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -165,11 +201,11 @@ import Base from "../layouts/Base.astro";
         const hit = lastHits[active];
         if (hit) {
           e.preventDefault();
-          navigate(hit.doc.slug);
+          navigate(hit.path);
         }
       } else if (e.key === "Escape") {
         input.value = "";
-        search("");
+        runSearch("");
       }
     });
 
@@ -179,7 +215,7 @@ import Base from "../layouts/Base.astro";
       const initial = new URL(window.location.href).searchParams.get("q");
       if (initial) {
         input.value = initial;
-        search(initial);
+        runSearch(initial);
       }
     });
   </script>
