@@ -169,6 +169,13 @@ export default class OakPlugin extends Plugin {
         this.app,
         openFile,
         () => this.toggleOakMode(),
+        {
+          get: () => this.settings.autoSnapshotIntervalMs,
+          set: async (ms) => {
+            this.settings.autoSnapshotIntervalMs = ms;
+            await this.saveSettings();
+          },
+        },
       );
     });
     this.registerView(VIEW_TYPE_OAK_GHOST, (leaf: WorkspaceLeaf) => {

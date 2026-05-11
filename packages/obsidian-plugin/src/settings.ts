@@ -20,6 +20,11 @@ export type OakPluginSettings = {
   refilePeekLeafId: string | null;
 };
 
+// Interval applied when auto-snapshot is enabled from the home view
+// without an explicit value. Power users can still tune the raw
+// number from the settings tab.
+export const DEFAULT_AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
 export const DEFAULT_SETTINGS: OakPluginSettings = {
   baseUrl: "/",
   autoSnapshotIntervalMs: 0,
