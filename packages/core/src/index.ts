@@ -42,6 +42,7 @@ export {
   recoverCreatedTimestamp,
   setCreatedAndModified,
   setCreatedIfMissing,
+  setFrontmatterVersion,
   setModified,
   setModifiedIfMissing,
   shouldBumpModified,
@@ -49,11 +50,17 @@ export {
   withTimestampUpdateAndRecovery,
 } from "./timestamps.js";
 export {
-  migrateTimestamps,
-  type MigrateTimestampsOptions,
-  type TimestampMigrationEntry,
-  type TimestampMigrationReport,
-} from "./timestamps-migrate.js";
+  LATEST_FRONTMATTER_VERSION,
+  getFrontmatterVersion,
+  migrateFrontmatter,
+  migratePageRaw,
+  type AddedFields,
+  type FrontmatterMigrationEntry,
+  type FrontmatterMigrationReport,
+  type MigrateFrontmatterOptions,
+  type MigrationContext,
+  type MigrationStep,
+} from "./frontmatter-migrate.js";
 export {
   writeIndex,
   readIndexMeta,

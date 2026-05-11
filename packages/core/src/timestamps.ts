@@ -191,6 +191,19 @@ export function setModifiedIfMissing(raw: string, iso: string): string {
   return rewriteFrontmatter(raw, data);
 }
 
+// Write `version: <n>` at the top of the frontmatter, replacing any
+// existing value. The version stamp leads the block because it's the
+// thing every reader (migration tooling first and foremost) cares
+// about — putting it first means a single regex pass can decide
+// whether the file needs touching at all.
+export function setFrontmatterVersion(raw: string, version: number): string {
+  const parsed = matter(raw);
+  const existing = { ...((parsed.data as Record<string, unknown> | undefined) ?? {}) };
+  delete existing["version"];
+  const data: Record<string, unknown> = { version, ...existing };
+  return rewriteFrontmatter(raw, data);
+}
+
 function frontmatterHasCreated(raw: string): boolean {
   const parsed = matter(raw);
   const data = parsed.data as Record<string, unknown> | undefined;

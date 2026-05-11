@@ -7,6 +7,11 @@
 export type Visibility = "private" | "unlisted" | "public";
 
 export type PageFrontmatter = {
+  // Schema version of this page's frontmatter. Missing == 1 (the
+  // pre-timestamp era). Latest is `LATEST_FRONTMATTER_VERSION` in
+  // `./frontmatter-migrate.ts`; `oak migrate` upgrades older files
+  // to the latest.
+  version?: number;
   id?: string;
   title?: string;
   aliases?: string[];
