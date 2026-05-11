@@ -10,6 +10,7 @@ import type {
   TwoHopBridge,
   Vault,
 } from "./types.js";
+import { isManagedPage } from "./parse.js";
 import { normalizeKey } from "./slug.js";
 
 const EXTERNAL_PREFIX = "_external/";
@@ -109,6 +110,7 @@ export function buildGraph(vault: Vault): Graph {
   const incoming = new Map<string, Backlink[]>();
 
   for (const page of vault.pages.values()) {
+    if (!isManagedPage(page)) continue;
     const resolved = resolveLinks(vault, page.links);
     outgoing.set(page.id, resolved);
 

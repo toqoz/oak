@@ -6,6 +6,7 @@
 
 import { stat } from "node:fs/promises";
 
+import { isManagedPage } from "./parse.js";
 import type {
   Backlink,
   Graph,
@@ -33,13 +34,25 @@ export type HomeStats = {
   private: number;
   redLinks: number; // total unresolved wiki links across the vault
   externals: number; // configured external mounts
+  unmanaged: number; // .md files in the vault that lack an `id` frontmatter
+};
+
+// A vault file the indexer found but oak does not yet manage — it has
+// no `id` in its frontmatter, so parse synthesised an `unidentified:…`
+// id. Surfaced separately from `pages` so the home view can offer an
+// explicit "import" action that fills in the missing frontmatter.
+export type UnmanagedEntry = {
+  vaultRelPath: string;
+  basename: string;
+  updatedAt: string | null; // ISO mtime
 };
 
 export type HomeViewModel = {
   generatedAt: string;
   stats: HomeStats;
-  pages: HomeEntry[]; // sorted by title (case-insensitive)
-  recent: HomeEntry[]; // sorted by updatedAt desc, capped to recentLimit
+  pages: HomeEntry[]; // sorted by title (case-insensitive); excludes unmanaged
+  recent: HomeEntry[]; // sorted by updatedAt desc, capped to recentLimit; excludes unmanaged
+  unmanaged: UnmanagedEntry[]; // sorted by vaultRelPath
 };
 
 export type HomeViewOptions = {
@@ -126,10 +139,24 @@ export async function homeViewModel(
     private: 0,
     redLinks: 0,
     externals: vault.externals.size,
+    unmanaged: 0,
   };
 
   const all: HomeEntry[] = [];
+  const unmanaged: UnmanagedEntry[] = [];
   for (const page of vault.pages.values()) {
+    if (!isManagedPage(page)) {
+      stats.unmanaged++;
+      unmanaged.push({
+        vaultRelPath: page.relPath,
+        basename: page.basename,
+        updatedAt: await fileMtime(page.filePath),
+      });
+      // Skip stats / link counting / pages list — the file is not yet
+      // an oak page in any meaningful sense.
+      continue;
+    }
+
     stats.pages++;
     if (page.visibility === "public") stats.public++;
     else if (page.visibility === "unlisted") stats.unlisted++;
@@ -156,6 +183,8 @@ export async function homeViewModel(
     });
   }
 
+  unmanaged.sort((a, b) => a.vaultRelPath.localeCompare(b.vaultRelPath));
+
   const pages = [...all].sort((a, b) =>
     a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
   );
@@ -169,5 +198,6 @@ export async function homeViewModel(
     stats,
     pages,
     recent,
+    unmanaged,
   };
 }
