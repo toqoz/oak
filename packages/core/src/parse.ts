@@ -18,6 +18,7 @@ import type {
 } from "./types.js";
 import { extractLinks } from "./links.js";
 import { normalizeKey, slugify } from "./slug.js";
+import { coerceTimestamp } from "./timestamps.js";
 
 const SYSTEM_DIRS = new Set([
   "_assets",
@@ -171,6 +172,11 @@ export async function parsePage(
 
   const links = extractLinks(body);
 
+  const created = coerceTimestamp((fm as Record<string, unknown>)["created"]);
+  const modified = coerceTimestamp(
+    (fm as Record<string, unknown>)["modified"],
+  );
+
   return {
     type: "page",
     id,
@@ -184,6 +190,8 @@ export async function parsePage(
     basename,
     body,
     rawFrontmatter: fm,
+    created,
+    modified,
     links,
     parseIssues: issues,
   };

@@ -35,6 +35,25 @@ export {
 export { validateVault, partitionIssues } from "./validate.js";
 export { slugify, normalizeKey } from "./slug.js";
 export {
+  coerceTimestamp,
+  isOakManaged,
+  nowIsoSecond,
+  recoverCreatedTimestamp,
+  setCreatedAndModified,
+  setCreatedIfMissing,
+  setModified,
+  setModifiedIfMissing,
+  shouldBumpModified,
+  withTimestampUpdate,
+  withTimestampUpdateAndRecovery,
+} from "./timestamps.js";
+export {
+  migrateTimestamps,
+  type MigrateTimestampsOptions,
+  type TimestampMigrationEntry,
+  type TimestampMigrationReport,
+} from "./timestamps-migrate.js";
+export {
   writeIndex,
   readIndexMeta,
   queryIndex,
@@ -69,6 +88,7 @@ export type { RenderContext } from "./render.js";
 export {
   ensureGitRepo,
   ensureGitignore,
+  gitFirstAddedTime,
   isGitRepo,
   gitStatus,
   snapshot,

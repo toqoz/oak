@@ -18,6 +18,8 @@ function makePage(relPath: string, body: string): OakPage {
     basename: relPath.replace(/\.md$/, ""),
     body,
     rawFrontmatter: {},
+    created: null,
+    modified: null,
     links: [],
     parseIssues: [],
   };

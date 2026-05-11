@@ -29,6 +29,8 @@ function makePage(init: PageInit): OakPage {
     basename: init.id,
     body: init.body ?? "",
     rawFrontmatter: {},
+    created: null,
+    modified: null,
     links: [],
     parseIssues: [],
   };

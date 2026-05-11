@@ -712,6 +712,7 @@ export class OakAgendaView extends ItemView {
         this.config,
         undefined,
         target.entry.relPath,
+        vaultRoot(this.app2),
       );
       new Notice(result.repeated ? "Advanced repeater" : "Marked DONE");
       this.state.scheduleRefresh();

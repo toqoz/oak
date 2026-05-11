@@ -40,6 +40,7 @@ import {
   listMountStatus,
   loadAgendaConfig,
   markDone,
+  migrateTimestamps,
   mountDoctor,
   parseVault,
   partitionIssues,
@@ -101,6 +102,9 @@ Commands:
   agenda s <regex>           Search entry titles + bodies
   agenda done <path>:<line>  Mark an entry DONE; advances repeaters
 
+  migrate timestamps         Backfill missing created/modified on oak pages
+                             (use --dry-run to preview)
+
 Common options:
   --vault <path>             Vault root (default: current directory)
   --json                     Emit JSON instead of human-readable text
@@ -157,6 +161,8 @@ async function main(argv: string[]): Promise<number> {
       return await cmdLog(vaultPath, parsed.flags, json);
     case "agenda":
       return await cmdAgenda(vaultPath, parsed.positional, parsed.flags, json);
+    case "migrate":
+      return await cmdMigrate(vaultPath, parsed.positional, parsed.flags, json);
     default:
       process.stderr.write(`Unknown command: ${parsed.command}\n\n`);
       process.stdout.write(HELP);
@@ -1064,6 +1070,7 @@ async function cmdAgendaDone(
       config,
       undefined,
       target.relPath,
+      vaultPath,
     );
     if (json) {
       process.stdout.write(
@@ -1091,6 +1098,46 @@ async function cmdAgendaDone(
     }
     throw err;
   }
+}
+
+async function cmdMigrate(
+  vaultPath: string,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const sub = positional[0];
+  if (sub !== "timestamps") {
+    process.stderr.write("Usage: oak migrate timestamps [--dry-run]\n");
+    return 1;
+  }
+  const dryRun = getBool(flags, "dry-run");
+  const report = await migrateTimestamps({ vaultRoot: vaultPath, dryRun });
+  if (json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    return 0;
+  }
+  if (report.changed === 0) {
+    process.stdout.write(
+      `migrate timestamps: scanned ${report.scanned} page(s); nothing to fill.\n`,
+    );
+    return 0;
+  }
+  const prefix = dryRun ? "[dry-run] would update" : "updated";
+  for (const entry of report.entries) {
+    const parts: string[] = [];
+    if (entry.added.created !== undefined) {
+      parts.push(`created=${entry.added.created}`);
+    }
+    if (entry.added.modified !== undefined) {
+      parts.push(`modified=${entry.added.modified}`);
+    }
+    process.stdout.write(`${prefix} ${entry.relPath}  ${parts.join(" ")}\n`);
+  }
+  process.stdout.write(
+    `\nmigrate timestamps: ${report.changed} changed, ${report.unchanged} unchanged, ${report.scanned} scanned${dryRun ? " (dry-run, no files written)" : ""}.\n`,
+  );
+  return 0;
 }
 
 function serialiseView(view: AgendaView): unknown {

@@ -14,6 +14,15 @@ export type PageFrontmatter = {
   visibility?: Visibility;
   slug?: string;
   llm?: LlmPolicy;
+  // ISO 8601 UTC instants ("YYYY-MM-DDTHH:MM:SSZ"). Both are written by
+  // oak — `created` once on page composition, `modified` whenever a
+  // save changes the body or the title. Pure frontmatter edits that
+  // leave the title alone (visibility flip, alias add, …) intentionally
+  // skip the bump so a casual metadata tweak doesn't masquerade as a
+  // content edit in agendas/feeds. Older files without these fields
+  // round-trip untouched.
+  created?: string;
+  modified?: string;
 };
 
 export type LinkSyntax = "wiki" | "markdown";
@@ -51,6 +60,10 @@ export type OakPage = {
   basename: string;
   body: string;
   rawFrontmatter: PageFrontmatter;
+  // null for files that pre-date the timestamp feature or that were
+  // authored outside oak's write paths.
+  created: string | null;
+  modified: string | null;
   links: RawLink[];
   // Issues encountered during parsing (e.g. invalid frontmatter values).
   parseIssues: Issue[];
