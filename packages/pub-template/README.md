@@ -11,7 +11,7 @@ upstream contract to honor; oak treats it as your own.
 src/
   layouts/Base.astro          page shell (head, header, footer)
   components/
-    SiteHeader.astro          top nav (Index / Search / Graph)
+    SiteHeader.astro          top nav (Index / Search)
     SiteFooter.astro
     PageList.astro            alphabetised page list w/ backlink count
     Backlinks.astro           inbound-link section for a page
@@ -20,11 +20,8 @@ src/
     [...slug].astro           rendered page + backlinks
     search.astro              client-side editor-style search UI
     search.json.ts            corpus dump consumed by search.astro
-    graph.astro               force-directed graph view
-    graph.json.ts             nodes + edges consumed by graph.astro
   lib/
     search.ts                 search algorithm (pure functions)
-    force-layout.ts           tiny force-directed layout (no deps)
   content.config.ts           wires oakLoader for the docs collection
   styles/global.css           reset + typography + light/dark
 vault/                        publishable vault snapshot (managed by oak pub build)
@@ -40,7 +37,6 @@ modify directly:
 - Nav links            → `src/components/SiteHeader.astro`
 - Page rendering       → `src/pages/[...slug].astro`
 - Search behavior      → `src/lib/search.ts`, `src/pages/search.astro`
-- Graph layout         → `src/lib/force-layout.ts`, `src/pages/graph.astro`
 
 There is no theme system, no plugin API, no config DSL. Just code.
 

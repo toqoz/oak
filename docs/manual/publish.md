@@ -146,7 +146,7 @@ After `oak pub init`, the publish worktree contains:
 │   ├── content.config.ts          wires oakLoader for the docs collection
 │   ├── layouts/Base.astro         page shell (head, header, footer)
 │   ├── components/
-│   │   ├── SiteHeader.astro       top nav (Index / Search / Graph)
+│   │   ├── SiteHeader.astro       top nav (Index / Search)
 │   │   ├── SiteFooter.astro
 │   │   ├── PageList.astro         alphabetised page list w/ backlink count
 │   │   └── Backlinks.astro        inbound-link section for a page
@@ -154,12 +154,9 @@ After `oak pub init`, the publish worktree contains:
 │   │   ├── index.astro            page list
 │   │   ├── [...slug].astro        rendered page + backlinks
 │   │   ├── search.astro           client-side search UI
-│   │   ├── search.json.ts         corpus dump consumed by search.astro
-│   │   ├── graph.astro            force-directed graph view
-│   │   └── graph.json.ts          nodes + edges consumed by graph.astro
+│   │   └── search.json.ts         corpus dump consumed by search.astro
 │   ├── lib/
-│   │   ├── search.ts              search algorithm (pure functions)
-│   │   └── force-layout.ts        tiny force-directed layout
+│   │   └── search.ts              search algorithm (pure functions)
 │   └── styles/global.css          reset + typography + light/dark
 └── vault/                         publishable vault snapshot (managed)
 ```
@@ -196,14 +193,6 @@ across title / aliases / headings / body, ranks title matches higher,
 and surfaces matching body lines as snippets with `<mark>` highlights.
 Editor-style keyboard nav (↑ / ↓ / Enter / Esc) is in
 `src/pages/search.astro`.
-
-### Graph view
-
-`src/lib/force-layout.ts` is a ~50-line Fruchterman–Reingold-ish
-layout. `src/pages/graph.astro` consumes it: fetches `/graph.json`,
-runs the layout client-side, draws SVG nodes/edges, click a node to
-navigate. To add zoom/pan, hover labels, or filtering, edit
-`graph.astro`.
 
 ## Images and other assets
 
