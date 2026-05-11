@@ -42,7 +42,8 @@ npm run dev                 # local preview from the snapshot
 # whenever you want to publish:
 cd <vault>
 oak pub build               # sync publishable pages + assets into
-                            # the worktree's vault/, commit, push
+                            # the worktree's vault/ and commit
+                            # (add --push to push to origin/oak/pub)
 ```
 
 `oak pub build` only sync's pages whose frontmatter visibility is

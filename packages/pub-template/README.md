@@ -57,8 +57,9 @@ npm run build    # produces dist/
 ```
 
 After committing template/source changes, run `oak pub build` from
-the vault root to refresh the `vault/` snapshot and push the
-`oak/pub` branch. The deploy host (Cloudflare Pages, Vercel,
+the vault root to refresh the `vault/` snapshot and commit it on
+the `oak/pub` branch. Pass `--push` to push so the deploy host
+(Cloudflare Pages, Vercel,
 Netlify, …) then clones the branch and runs `npm run build`.
 
 ## The `vault/` snapshot

@@ -484,14 +484,14 @@ Usage:
   oak pub init               Create the publish orphan branch and check
                              out a worktree at <vault>/.git/oak/pub
   oak pub build              Refresh the publishable vault snapshot in
-                             the publish worktree, commit, and push
+                             the publish worktree and commit (local only)
   oak pub status             Show whether the publish branch and
                              worktree exist
 
 Options for \`oak pub build\`:
   --branch <name>            Publish branch name (default: ${DEFAULT_PUBLISH_BRANCH})
   --remote <name>            Git remote (default: origin)
-  --no-push                  Commit locally without pushing
+  --push                     Push to <remote>/<branch> after committing
 `;
 
 function resolveTemplateDir(): string {
@@ -610,7 +610,9 @@ async function cmdPubBuild(
 ): Promise<number> {
   const branch = getString(flags, "branch") ?? DEFAULT_PUBLISH_BRANCH;
   const remote = getString(flags, "remote") ?? "origin";
-  const push = !getBool(flags, "no-push");
+  // Default: commit locally, don't push. Pushing the publish branch
+  // triggers a deploy on most CD hosts — make it a deliberate action.
+  const push = getBool(flags, "push");
 
   const result = await pubBuild({
     vaultRoot: vaultPath,

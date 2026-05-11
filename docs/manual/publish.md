@@ -13,7 +13,8 @@ pub-template) into that worktree. Your notes branch stays clean.
 `oak pub build` syncs the **publishable subset** of your vault (pages
 whose visibility is `public` or `unlisted`, plus the assets they
 reference) into `<worktree>/vault/`, commits the change, and
-force-pushes the `oak/pub` branch. The deploy host (Cloudflare
+commits the change. Add `--push` to force-push `oak/pub` to the
+remote so the deploy host can pick it up. The deploy host (Cloudflare
 Pages, Vercel, Netlify, …) clones the branch and runs the Astro
 build itself.
 
@@ -62,7 +63,7 @@ npm install                               # install Astro deps
 npm run dev                               # local preview at http://localhost:4321
 # Then, whenever you want to publish:
 cd <vault>
-oak pub build                             # refresh vault/ snapshot, commit, push
+oak pub build --push                      # refresh snapshot, commit, push
 ```
 
 After the first push, point your host at the `oak/pub` branch and
@@ -90,13 +91,16 @@ committed to git for someone else to clone.
 ### `oak pub build`
 
 Syncs the publishable subset of the vault into the publish worktree's
-`vault/` directory, commits the change, and force-pushes.
+`vault/` directory and commits the change. Pass `--push` to also
+force-push `<remote>/<branch>`. The default is local-only because
+pushing the publish branch triggers a deploy on most CD hosts —
+opting in keeps that a deliberate action.
 
 | Flag | Default | Effect |
 |---|---|---|
 | `--branch <name>` | `oak/pub` | Publish branch name |
 | `--remote <name>` | `origin` | Remote to push to |
-| `--no-push` | (off) | Commit locally without pushing |
+| `--push` | (off) | Push `<remote>/<branch>` after committing |
 
 If the source vault's working tree is dirty, the commit subject is
 tagged `publish: <source-sha> (dirty)` so the mismatch is visible in

@@ -177,13 +177,7 @@ describe("oak pub status", () => {
 describe("oak pub build", () => {
   it("refuses to build when the publish branch doesn't exist yet", async () => {
     const vault = await makeVault();
-    const r = await runOak(vault, [
-      "pub",
-      "build",
-      "--vault",
-      vault,
-      "--no-push",
-    ]);
+    const r = await runOak(vault, ["pub", "build", "--vault", vault]);
     expect(r.code).not.toBe(0);
     expect(r.stderr).toMatch(/branch.*does not exist/);
   });
@@ -197,13 +191,7 @@ describe("oak pub build", () => {
 
     await runOak(vault, ["pub", "init", "--vault", vault]);
 
-    const r = await runOak(vault, [
-      "pub",
-      "build",
-      "--vault",
-      vault,
-      "--no-push",
-    ]);
+    const r = await runOak(vault, ["pub", "build", "--vault", vault]);
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/Published [0-9a-f]{7} to `oak\/pub`/);
     expect(r.stdout).toMatch(/sync: +\+\d+ =\d+ -\d+/);
@@ -233,13 +221,7 @@ describe("oak pub build", () => {
     // Dirty the source tree.
     await writeFile(resolve(vault, "draft.md"), "wip\n", "utf8");
 
-    const r = await runOak(vault, [
-      "pub",
-      "build",
-      "--vault",
-      vault,
-      "--no-push",
-    ]);
+    const r = await runOak(vault, ["pub", "build", "--vault", vault]);
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/\(dirty\)/);
 
@@ -261,14 +243,8 @@ describe("oak pub build", () => {
     await exec("git", ["-C", vault, "commit", "-m", "seed"]);
 
     await runOak(vault, ["pub", "init", "--vault", vault]);
-    await runOak(vault, ["pub", "build", "--vault", vault, "--no-push"]);
-    const r2 = await runOak(vault, [
-      "pub",
-      "build",
-      "--vault",
-      vault,
-      "--no-push",
-    ]);
+    await runOak(vault, ["pub", "build", "--vault", vault]);
+    const r2 = await runOak(vault, ["pub", "build", "--vault", vault]);
     expect(r2.code).toBe(0);
     expect(r2.stdout).toMatch(/No changes since last publish/);
   });
