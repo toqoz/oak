@@ -1,52 +1,84 @@
 # Publishing
 
-oak publishes a vault as a static site by handing off to an Astro app
-you own. The CLI's job ends at "build artifact + git branch"; the app
-controls the rest. This guide covers the end-to-end flow.
+oak publishes a vault as a static site through an Astro app you own.
+The CLI's job ends at "publishable snapshot + git branch"; the deploy
+host runs the Astro build. This guide covers the end-to-end flow.
 
 ## Architecture in one paragraph
 
 A vault is plain markdown. `oak pub init` creates an orphan git branch
-called `public` and scaffolds an Astro project (the publish-template)
-into your repo. You build that project (`npm run build`) → produces
-`dist/`. `oak pub build` copies `dist/` onto the `public` branch as a
-new commit and force-pushes it. From there, any host that watches a
-git branch — Cloudflare Pages, Netlify, GitHub Pages, Vercel — picks
-it up and deploys.
+called `oak/publish` and lays down a sibling worktree at
+`<vault>/.git/oak-publish`, then scaffolds an Astro project (the
+publish-template) into that worktree. Your notes branch stays clean.
+`oak pub build` syncs the **publishable subset** of your vault (pages
+whose visibility is `public` or `unlisted`, plus the assets they
+reference) into `<worktree>/vault/`, commits the change, and
+force-pushes the `oak/publish` branch. The deploy host (Cloudflare
+Pages, Vercel, Netlify, …) clones the branch and runs the Astro
+build itself.
 
 ```
-vault (markdown)
-    │
-    │ oakLoader (Astro Content Layer)
-    ▼
-content collection ──► remarkOakLinks ──► HTML + assets in dist/
-                                              │
-                                              │ oak pub build
+vault repo
+├── main (notes only — your normal worktree)
+│   └── content/, _assets/, …
+└── oak/publish (orphan, force-pushed)
+    └── checked out at .git/oak-publish/
+        ├── src/                     Astro app
+        ├── astro.config.mjs
+        ├── package.json
+        └── vault/                   publishable snapshot
+            ├── public-page.md
+            └── _assets/img.png
+
+                           │
+                           │ git push --force
+                           ▼
+                       origin/oak/publish ──► deploy host
+                                              │ npm install
+                                              │ npm run build
                                               ▼
-                                        public branch
-                                              │
-                                              ▼
-                                        host CD pipeline
+                                            deployed site
 ```
+
+## Why a publish worktree?
+
+Keeping the Astro project off the notes branch buys two things:
+
+- **Notes branch stays clean.** No `node_modules`, no `dist/`, no
+  `.astro/`, no Astro source code mixed in with your markdown. You
+  manage your notes branch on its own merits.
+- **Private content never enters the publish branch.** The sync step
+  works from an allow-list (publishable pages + their assets), not an
+  exclusion list. Even a bug in some downstream filter can't leak a
+  private page's bytes into deployed output, because they were never
+  copied in the first place.
 
 ## Quick start
 
 ```bash
-oak pub init                # create the public branch + scaffold Astro
-npm install                 # in the scaffolded project
-npm run build               # build dist/
-oak pub build               # commit + push dist/ onto public
+oak pub init                              # create branch + worktree + scaffold
+cd .git/oak-publish
+npm install                               # install Astro deps
+npm run dev                               # local preview at http://localhost:4321
+# Then, whenever you want to publish:
+cd <vault>
+oak pub build                             # refresh vault/ snapshot, commit, push
 ```
 
-Then point your host at the `public` branch.
+After the first push, point your host at the `oak/publish` branch and
+let it run `npm run build`.
 
 ## CLI reference
 
 ### `oak pub init`
 
-Idempotent. Creates a local `public` orphan branch (no push) and copies
-the template files into the current directory. Existing files are
-**skipped** — re-running won't clobber your edits.
+Creates the local `oak/publish` orphan branch (or reuses
+`origin/oak/publish` if it already exists upstream) and adds a
+worktree at `<vault>/.git/oak-publish`. If the branch is freshly
+created, scaffolds the publish-template into the worktree.
+
+Refuses if `<vault>/.git/oak-publish` already exists — remove it or
+use it as-is.
 
 In a development install (oak from source rather than from npm), the
 scaffolded `package.json` has `workspace:*` references to oak. Init
@@ -57,65 +89,75 @@ committed to git for someone else to clone.
 
 ### `oak pub build`
 
-Pushes a build artifact onto the publish branch.
+Syncs the publishable subset of the vault into the publish worktree's
+`vault/` directory, commits the change, and force-pushes.
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--source <dir>` | `dist` | Directory whose contents become the new commit |
-| `--branch <name>` | `public` | Publish branch name |
+| `--branch <name>` | `oak/publish` | Publish branch name |
 | `--remote <name>` | `origin` | Remote to push to |
 | `--no-push` | (off) | Commit locally without pushing |
-| `--no-checkpoint` | (off) | Refuse to publish if working tree is dirty |
-| `--allow-dirty` | (off) | Publish dirty tree, mark commit `(dirty)` |
 
-By default, if the working tree has uncommitted changes, oak takes a
-`checkpoint: before publish` commit on the source branch first. This
-guarantees that the source SHA embedded in the publish commit message
-(`publish: <source-sha>`) actually corresponds to the content that was
-built. With `--no-checkpoint`, oak refuses to publish a dirty tree;
-with `--allow-dirty`, it proceeds and tags the commit subject so you
-can see the mismatch in `git log public`.
-
-The build runs inside a temporary git worktree pointing at the
-publish branch. Your main checkout never moves, your index isn't
-touched, and force-push always succeeds because the orphan branch has
-no shared history to protect.
+If the source vault's working tree is dirty, the commit subject is
+tagged `publish: <source-sha> (dirty)` so the mismatch is visible in
+`git log oak/publish`. The CLI does not refuse — there is no
+checkpoint dance. If you want strict guarantees, commit before
+publishing.
 
 ### `oak pub status`
 
-Reports whether the publish branch exists locally.
+Reports whether the publish branch and worktree exist locally.
 
 ### `oak pub`
 
 With no subcommand: prints help.
 
+## Visibility filter
+
+`oak pub build` only writes a page into `vault/` if its frontmatter
+`visibility` is in {`public`, `unlisted`}. Assets are included only
+when referenced from one of those pages. Anything else stays out of
+the publish branch.
+
+This is the **source-side** defense. The Astro loader
+(`@oak/core/astro` → `oakLoader`) also filters by visibility at load
+time, but you should not rely on it alone: the file simply being
+absent from the snapshot is a stronger guarantee than a filter
+running over its contents.
+
+If you want a different filter (say, public-only with no unlisted
+pages), pass `visibilityFilter` to `pubBuild` from a script — the CLI
+flag for this is not exposed yet.
+
 ## Template structure
 
-After `oak pub init`, your repo gains:
+After `oak pub init`, the publish worktree contains:
 
 ```
-astro.config.mjs              wires remarkOakLinks + the vault path
-src/
-  content.config.ts           wires oakLoader for the docs collection
-  layouts/Base.astro          page shell (head, header, footer)
-  components/
-    SiteHeader.astro          top nav (Index / Search / Graph)
-    SiteFooter.astro
-    PageList.astro            alphabetised page list w/ backlink count
-    Backlinks.astro           inbound-link section for a page
-  pages/
-    index.astro               page list
-    [...slug].astro           rendered page + backlinks
-    search.astro              client-side search UI
-    search.json.ts            corpus dump consumed by search.astro
-    graph.astro               force-directed graph view
-    graph.json.ts             nodes + edges consumed by graph.astro
-  lib/
-    search.ts                 search algorithm (pure functions)
-    force-layout.ts           tiny force-directed layout
-  styles/global.css           reset + typography + light/dark
-content/                      your markdown vault
-package.json
+.git/oak-publish/
+├── astro.config.mjs               wires remarkOakLinks + the vault path
+├── package.json
+├── tsconfig.json
+├── src/
+│   ├── content.config.ts          wires oakLoader for the docs collection
+│   ├── layouts/Base.astro         page shell (head, header, footer)
+│   ├── components/
+│   │   ├── SiteHeader.astro       top nav (Index / Search / Graph)
+│   │   ├── SiteFooter.astro
+│   │   ├── PageList.astro         alphabetised page list w/ backlink count
+│   │   └── Backlinks.astro        inbound-link section for a page
+│   ├── pages/
+│   │   ├── index.astro            page list
+│   │   ├── [...slug].astro        rendered page + backlinks
+│   │   ├── search.astro           client-side search UI
+│   │   ├── search.json.ts         corpus dump consumed by search.astro
+│   │   ├── graph.astro            force-directed graph view
+│   │   └── graph.json.ts          nodes + edges consumed by graph.astro
+│   ├── lib/
+│   │   ├── search.ts              search algorithm (pure functions)
+│   │   └── force-layout.ts        tiny force-directed layout
+│   └── styles/global.css          reset + typography + light/dark
+└── vault/                         publishable vault snapshot (managed)
 ```
 
 This template is intentionally small — read it end-to-end before
@@ -137,22 +179,19 @@ blocks inside each `.astro` file.
 
 ### Page rendering
 
-`src/pages/[...slug].astro`. The body comes from
-`{Content}` (Astro's render of the markdown collection entry).
-Backlinks come from `doc.data.inbound` (populated by oakLoader).
-Add fields to the rendered shell freely.
+`src/pages/[...slug].astro`. The body comes from `{Content}`
+(Astro's render of the markdown collection entry). Backlinks come
+from `doc.data.inbound` (populated by oakLoader). Add fields to the
+rendered shell freely.
 
 ### Search behavior
 
-`src/lib/search.ts` is the algorithm. It splits the query on whitespace
-(AND semantics across terms), matches case-insensitively across title /
-aliases / headings / body, ranks title matches higher, and surfaces
-matching body lines as snippets with `<mark>` highlights. Editor-style
-keyboard nav (↑ / ↓ / Enter / Esc) is in `src/pages/search.astro`.
-
-To switch matching to substring, regex, or fuzzy: rewrite the loop in
-`searchCorpus`. The corpus is just an array of plain objects — no
-indexing structures to fight.
+`src/lib/search.ts` is the algorithm. It splits the query on
+whitespace (AND semantics across terms), matches case-insensitively
+across title / aliases / headings / body, ranks title matches higher,
+and surfaces matching body lines as snippets with `<mark>` highlights.
+Editor-style keyboard nav (↑ / ↓ / Enter / Esc) is in
+`src/pages/search.astro`.
 
 ### Graph view
 
@@ -172,8 +211,8 @@ oak handles vault assets at load time:
   → `_assets/`, paths with `/` → vault-rooted, `./` → page-relative,
   see `resolveAssetSource` in `@oak/core`).
 - The resolved file is content-hashed (sha256, first 16 chars) and
-  copied to `public/_oak/<hash>.<ext>` — same hash → one physical write,
-  even across pages and reloads.
+  copied to `public/_oak/<hash>.<ext>` — same hash → one physical
+  write, even across pages and reloads.
 - Body URLs are rewritten to point at the hashed copies.
 
 ### Image optimization
@@ -181,109 +220,89 @@ oak handles vault assets at load time:
 If you set `optimizeImages: true` in `oakLoader` (the default in the
 scaffolded template), png/jpg/jpeg files additionally go through
 [`sharp`](https://sharp.pixelplumbing.com) to produce responsive WebP
-variants. Each image emits as raw `<img srcset>`:
-
-```html
-<img alt="My cover"
-     src="/_oak/<hash>-1200w.webp"
-     srcset="/_oak/<hash>-400w.webp 400w,
-             /_oak/<hash>-800w.webp 800w,
-             /_oak/<hash>-1200w.webp 1200w"
-     sizes="(max-width: 1200px) 100vw, 1200px"
-     loading="lazy" decoding="async">
-```
-
-Tunables on `oakLoader`:
-
-- `optimizeImages: boolean` (default false in core, true in the template)
-- `imageWidths: number[]` (default `[400, 800]`; the original width is
-  always added)
-- `imageQuality: number` (default 80)
-
-The original image is also copied as-is, so direct references (e.g.
-from outside markdown, or a future RSS feed) still work.
-
-Non-image assets (svg, pdf, mp4, etc.) are copied unchanged regardless
-of `optimizeImages` — sharp doesn't transcode them.
-
-`sharp` is a peer dependency of `@oak/core`. The scaffolded template
-declares it directly because pnpm's strict mode hides Astro's
-transitive copy from sibling packages. If you remove image
-optimization, you can also remove sharp from your dependencies.
+variants. See `src/content.config.ts` for tunables (`optimizeImages`,
+`imageWidths`, `imageQuality`).
 
 ## Deployment patterns
 
-Because the publish artifact is just a git branch, deployment is "any
-host that knows how to read a branch". A few common shapes:
+Because the publish branch is a real Astro project (not pre-built
+HTML), the deploy target needs to be a host that runs the build. The
+expected flow:
 
 ### Cloudflare Pages
 
 1. Connect your repo.
-2. Set the production branch to `public`.
-3. Build command: empty (the branch is already built).
-4. Build output: `/`.
-
-### GitHub Pages
-
-1. Repo settings → Pages → Source: "Deploy from a branch".
-2. Branch: `public` / root.
-
-### Netlify
-
-Same as Cloudflare: set the publish branch to `public`, no build
-command.
+2. Set the production branch to `oak/publish`.
+3. Framework preset: Astro.
+4. Build command: `npm run build`.
+5. Build output directory: `dist`.
 
 ### Vercel
 
-Set "Output Directory" to `/`, "Build Command" to `:` (no-op), and
-configure the production branch as `public`.
+1. Connect your repo.
+2. Set the production branch to `oak/publish`.
+3. Vercel auto-detects Astro and runs `npm run build` → `dist/`.
 
-### Cloudflare Workers / SSR hosts
+### Netlify
 
-The publish branch is static HTML + assets. If you want SSR / dynamic
-rendering, switch the template's `astro.config.mjs` to a non-static
-output and skip `oak pub build` entirely — deploy via the host's
-native flow.
+1. Connect your repo.
+2. Set the publish branch to `oak/publish`.
+3. Build command: `npm run build`.
+4. Publish directory: `dist`.
+
+### GitHub Pages
+
+GitHub Pages doesn't run arbitrary builds for free private repos. For
+public repos, use a GitHub Actions workflow that watches the
+`oak/publish` branch and runs `npm run build` + uploads `dist/` to
+`gh-pages`. Add the workflow yourself; oak doesn't ship one.
+
+### SSR / dynamic rendering
+
+The publish branch is just an Astro project — change `output: "server"`
+in `astro.config.mjs` and configure an adapter to deploy with full
+SSR. The `vault/` snapshot is still your source for content; the
+deploy host runs whatever Astro is configured to run.
 
 ## Troubleshooting
 
-### "publish branch `public` does not exist"
+### `publish branch oak/publish does not exist`
 
-Run `oak pub init` first. The branch is created locally only; it gets
-pushed to the remote on the first `oak pub build`.
+Run `oak pub init` first. It creates the branch locally only; the
+first `oak pub build` pushes it.
 
-### "build artifact directory `dist` not found"
+### `publish worktree not found at .git/oak-publish`
 
-You forgot to run `npm run build` before `oak pub build`. The CLI
-deliberately doesn't trigger your build — it's your build runner's
-concern, so CI matrices and one-off deploys both compose cleanly.
+The worktree was removed but the branch still exists. Re-run
+`oak pub init` to recreate it (the branch and any prior publish
+history are preserved).
 
-### Working tree is dirty error with `--no-checkpoint`
+### `publish worktree already exists`
 
-`--no-checkpoint` enforces a clean tree. Either commit your changes
-first, drop the flag (oak will checkpoint for you), or pass
-`--allow-dirty` to publish anyway with a `(dirty)` tag in the commit
-subject.
+The directory `<vault>/.git/oak-publish` is already there. If it's a
+valid worktree, just `cd` into it and keep working. If it's stale,
+remove it with `git worktree remove --force .git/oak-publish` and
+re-run init.
+
+### A page I expected isn't on the site
+
+Check the page's frontmatter `visibility`. Only `public` and
+`unlisted` are sync'd. A page without `visibility` defaults to
+`private` and is omitted.
 
 ### Sharp errors at build time
 
-If image optimization throws, check that `sharp` is installed in your
-template's `node_modules` (it should be in `package.json` deps). On
-unusual platforms, sharp's prebuilt binaries may be missing —
-`npm rebuild sharp` or set `SHARP_FORCE_GLOBAL_LIBVIPS` per
-[sharp's docs](https://sharp.pixelplumbing.com/install).
-
-To disable optimization entirely, set `optimizeImages: false` in
+`sharp` is required for image optimization. On unusual platforms its
+prebuilt binaries may be missing — `npm rebuild sharp` or set
+`SHARP_FORCE_GLOBAL_LIBVIPS` per
+[sharp's docs](https://sharp.pixelplumbing.com/install). To disable
+optimization entirely, set `optimizeImages: false` in
 `src/content.config.ts`.
 
-### Search index doesn't reflect a change
+### Edits to my vault don't show up in `npm run dev`
 
-`oak pub init` doesn't watch — run `npm run dev` instead. The
-oakLoader watcher re-syncs the content collection on `.md` saves and
-Astro HMRs the affected pages.
-
-### Stale assets in `public/_oak/`
-
-oak doesn't currently delete old hashed assets; references that no
-longer exist in any page leave their files behind. If this matters,
-`rm -rf public/_oak && npm run build` is safe — they get regenerated.
+Dev mode reads from `.git/oak-publish/vault/`, which is only refreshed
+by `oak pub build`. Re-run `oak pub build` (or just the sync portion
+via a script) to refresh local dev. This is a known trade-off:
+keeping vault and publish branches separate means no live link from
+your notes editor to the dev server.

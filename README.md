@@ -27,25 +27,31 @@ packages/
 
 ## Publishing flow
 
-The static site lives on its own git branch. There's no HTML rendering
-inside oak — that job belongs to a small Astro app you own.
+The publish workspace lives on its own orphan git branch — your notes
+branch stays clean. The Astro app you own builds the site; oak owns
+the branch, the worktree, and the visibility filter.
 
 ```bash
-oak pub init                # create the `public` orphan branch +
-                            # scaffold the Astro template into ./
-npm install                 # one-time, in the scaffolded project
-npm run build               # build dist/
-oak pub build               # commit dist/ onto `public`, force-push
+oak pub init                # create the `oak/publish` orphan branch
+                            # + a worktree at .git/oak-publish/
+                            # + scaffold the Astro template into it
+cd .git/oak-publish
+npm install                 # one-time, in the publish worktree
+npm run dev                 # local preview from the snapshot
+
+# whenever you want to publish:
+cd <vault>
+oak pub build               # sync publishable pages + assets into
+                            # the worktree's vault/, commit, push
 ```
 
-`oak pub build`:
+`oak pub build` only sync's pages whose frontmatter visibility is
+`public` or `unlisted`, plus the assets those pages reference. Private
+content never reaches the publish branch — defense in depth on top of
+the loader's visibility filter.
 
-- auto-checkpoints a dirty working tree before reading HEAD, so the
-  embedded source SHA always matches the published content
-- uses a temp git worktree, so your main checkout never moves
-- supports `--source <dir>` (default `dist`), `--branch <name>`
-  (default `public`), `--no-push`, `--no-checkpoint`, `--allow-dirty`,
-  `--remote <name>`
+The deploy host (Cloudflare Pages, Vercel, Netlify, …) clones
+`oak/publish` and runs `npm run build` itself.
 
 ## Documentation
 

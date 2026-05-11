@@ -1,8 +1,9 @@
 # @oak/publish-template
 
-Astro boilerplate scaffolded into your vault by `oak pub init`. Once
-copied, this code lives in **your** repo — edit it freely. There is
-no upstream contract to honor; oak treats it as your own.
+Astro boilerplate scaffolded into the publish worktree by
+`oak pub init`. Once scaffolded, this code lives on the `oak/publish`
+orphan branch of **your** vault repo — edit it freely. There is no
+upstream contract to honor; oak treats it as your own.
 
 ## What's in here
 
@@ -24,10 +25,10 @@ src/
   lib/
     search.ts                 search algorithm (pure functions)
     force-layout.ts           tiny force-directed layout (no deps)
+  content.config.ts           wires oakLoader for the docs collection
   styles/global.css           reset + typography + light/dark
-content/                      your markdown vault (gitkeep'd by default)
+vault/                        publishable vault snapshot (managed by oak pub build)
 astro.config.mjs              wires remarkOakLinks + the vault path
-src/content.config.ts         wires oakLoader for the docs collection
 ```
 
 ## Customising
@@ -45,14 +46,32 @@ There is no theme system, no plugin API, no config DSL. Just code.
 
 ## Build
 
+The publish worktree lives at `<vault>/.git/oak-publish` after
+`oak pub init`. Run development and build commands from inside it:
+
 ```bash
+cd <vault>/.git/oak-publish
 npm install      # or pnpm / yarn
 npm run dev      # local preview at http://localhost:4321
 npm run build    # produces dist/
 ```
 
-Then `oak pub build` from the same directory commits `dist/` onto the
-`public` orphan branch and pushes.
+After committing template/source changes, run `oak pub build` from
+the vault root to refresh the `vault/` snapshot and push the
+`oak/publish` branch. The deploy host (Cloudflare Pages, Vercel,
+Netlify, …) then clones the branch and runs `npm run build`.
+
+## The `vault/` snapshot
+
+`oak pub build` copies the **publishable subset** of the vault into
+`./vault` here:
+
+- pages whose frontmatter visibility is `public` or `unlisted`
+- assets those pages reference (resolved against oak's path
+  conventions: `./relative`, `vault-rooted/`, `_assets/<bare>`)
+
+Pages with `visibility: private` are never copied — defense in depth
+on top of the loader's visibility filter.
 
 ## Image optimization
 

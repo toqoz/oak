@@ -33,7 +33,6 @@ import {
   buildGraph,
   checkpoint,
   createPage,
-  DEFAULT_BUILD_DIR,
   DEFAULT_PUBLISH_BRANCH,
   ensureGitRepo,
   extractVaultAgendaEntries,
@@ -482,18 +481,17 @@ const PUB_HELP = `oak pub — publish branch tooling
 
 Usage:
   oak pub                    Show this help
-  oak pub init               Create the publish branch and scaffold the
-                             template into the current directory
-  oak pub build              Push the build artifact (default: dist/)
-                             to the publish branch as a new commit
+  oak pub init               Create the publish orphan branch and check
+                             out a worktree at <vault>/.git/oak-publish
+  oak pub build              Refresh the publishable vault snapshot in
+                             the publish worktree, commit, and push
+  oak pub status             Show whether the publish branch and
+                             worktree exist
 
 Options for \`oak pub build\`:
-  --source <dir>             Build artifact directory (default: ${DEFAULT_BUILD_DIR})
   --branch <name>            Publish branch name (default: ${DEFAULT_PUBLISH_BRANCH})
   --remote <name>            Git remote (default: origin)
   --no-push                  Commit locally without pushing
-  --no-checkpoint            Refuse to publish if working tree is dirty
-  --allow-dirty              Publish dirty tree, mark commit "(dirty)"
 `;
 
 function resolveTemplateDir(): string {
@@ -574,20 +572,17 @@ async function cmdPubInit(
     );
   } else {
     process.stdout.write(
-      `Publish branch \`${result.branch}\` already exists — skipped\n`,
+      `Reused publish branch \`${result.branch}\`\n`,
     );
   }
-  process.stdout.write(`Scaffolded ${result.scaffolded.length} file(s)`);
-  if (result.skipped.length > 0) {
-    process.stdout.write(`, skipped ${result.skipped.length} existing\n`);
+  process.stdout.write(`Worktree:    ${result.worktreePath}\n`);
+  if (result.scaffolded.length > 0) {
+    process.stdout.write(`Scaffolded ${result.scaffolded.length} file(s)\n`);
+    for (const f of result.scaffolded) {
+      process.stdout.write(`  + ${f}\n`);
+    }
   } else {
-    process.stdout.write("\n");
-  }
-  for (const f of result.scaffolded) {
-    process.stdout.write(`  + ${f}\n`);
-  }
-  for (const f of result.skipped) {
-    process.stdout.write(`  . ${f} (exists)\n`);
+    process.stdout.write(`Scaffold skipped (branch already populated)\n`);
   }
   if (result.rewrittenDevDeps.length > 0) {
     process.stdout.write(
@@ -609,36 +604,36 @@ async function cmdPubBuild(
   json: boolean,
 ): Promise<number> {
   const branch = getString(flags, "branch") ?? DEFAULT_PUBLISH_BRANCH;
-  const source = getString(flags, "source") ?? DEFAULT_BUILD_DIR;
   const remote = getString(flags, "remote") ?? "origin";
   const push = !getBool(flags, "no-push");
-  const noCheckpoint = getBool(flags, "no-checkpoint");
-  const allowDirty = getBool(flags, "allow-dirty");
 
   const result = await pubBuild({
     vaultRoot: vaultPath,
     branch,
-    source,
     remote,
     push,
-    noCheckpoint,
-    allowDirty,
   });
   if (json) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
     return 0;
   }
-  process.stdout.write(
-    `Published ${result.publishedCommit.slice(0, 7)} to \`${result.branch}\`\n`,
-  );
-  process.stdout.write(`  source HEAD:  ${result.sourceCommit.slice(0, 7)}`);
-  if (result.sourceDirty) process.stdout.write(" (dirty)");
-  process.stdout.write("\n");
-  if (result.checkpointCommit) {
+  if (result.committed) {
     process.stdout.write(
-      `  checkpoint:   ${result.checkpointCommit.slice(0, 7)} (auto)\n`,
+      `Published ${result.publishedCommit.slice(0, 7)} to \`${result.branch}\`\n`,
+    );
+  } else {
+    process.stdout.write(
+      `No changes since last publish — \`${result.branch}\` already at ${result.publishedCommit.slice(0, 7)}\n`,
     );
   }
+  process.stdout.write(
+    `  source HEAD:  ${result.sourceCommit.slice(0, 7)}`,
+  );
+  if (result.sourceDirty) process.stdout.write(" (dirty)");
+  process.stdout.write("\n");
+  process.stdout.write(
+    `  sync:         +${result.syncCopied} =${result.syncUnchanged} -${result.syncDeleted}\n`,
+  );
   process.stdout.write(
     `  pushed:       ${result.pushed ? `${result.pushedRemote}/${result.branch}` : "no"}\n`,
   );
@@ -656,9 +651,13 @@ async function cmdPubStatus(
     process.stdout.write(JSON.stringify(status, null, 2) + "\n");
     return 0;
   }
-  process.stdout.write(`branch:  ${status.branch}\n`);
+  process.stdout.write(`branch:    ${status.branch}\n`);
   process.stdout.write(
-    `exists:  ${status.branchExists ? "yes" : "no — run `oak pub init`"}\n`,
+    `exists:    ${status.branchExists ? "yes" : "no — run `oak pub init`"}\n`,
+  );
+  process.stdout.write(`worktree:  ${status.worktreePath}\n`);
+  process.stdout.write(
+    `           ${status.worktreeExists ? "present" : "missing — run `oak pub init`"}\n`,
   );
   return 0;
 }

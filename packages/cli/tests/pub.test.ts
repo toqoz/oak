@@ -17,9 +17,7 @@ const cliBin = resolve(__dirname, "..", "dist", "index.js");
 let scratch: string;
 
 async function buildCliIfMissing(): Promise<void> {
-  // Re-run the build to guarantee we're exercising the current
-  // sources. tsc is fast enough that this is fine to do once per
-  // suite.
+  // Re-run the build to guarantee we're exercising the current sources.
   await exec("pnpm", ["build"], { cwd: resolve(__dirname, "..") });
 }
 
@@ -35,9 +33,6 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-// Stand up a git repo without ensureGitRepo() so we can disable
-// commit signing before any commit is made — some CI environments
-// inherit a global signing requirement the test process can't satisfy.
 async function makeVault(): Promise<string> {
   const v = resolve(scratch, "vault");
   await mkdir(v, { recursive: true });
@@ -56,16 +51,28 @@ async function makeVault(): Promise<string> {
   return v;
 }
 
+async function writePage(
+  vault: string,
+  relPath: string,
+  visibility: "public" | "unlisted" | "private",
+  body: string,
+): Promise<void> {
+  const abs = resolve(vault, relPath);
+  await mkdir(resolve(abs, ".."), { recursive: true });
+  await writeFile(
+    abs,
+    `---\nvisibility: ${visibility}\n---\n\n${body}`,
+    "utf8",
+  );
+}
+
 type CliResult = {
   code: number;
   stdout: string;
   stderr: string;
 };
 
-async function runOak(
-  cwd: string,
-  args: string[],
-): Promise<CliResult> {
+async function runOak(cwd: string, args: string[]): Promise<CliResult> {
   try {
     const { stdout, stderr } = await exec("node", [cliBin, ...args], {
       cwd,
@@ -73,11 +80,7 @@ async function runOak(
     });
     return { code: 0, stdout, stderr };
   } catch (err) {
-    const e = err as {
-      code?: number;
-      stdout?: string;
-      stderr?: string;
-    };
+    const e = err as { code?: number; stdout?: string; stderr?: string };
     return {
       code: typeof e.code === "number" ? e.code : 1,
       stdout: e.stdout ?? "",
@@ -85,6 +88,9 @@ async function runOak(
     };
   }
 }
+
+const BRANCH = "oak/publish";
+const WORKTREE_REL = ".git/oak-publish";
 
 describe("oak pub", () => {
   it("prints help with no subcommand", async () => {
@@ -105,77 +111,72 @@ describe("oak pub", () => {
 });
 
 describe("oak pub init", () => {
-  it("creates the public branch and scaffolds files", async () => {
+  it("creates the publish branch + worktree and scaffolds the template", async () => {
     const vault = await makeVault();
     const r = await runOak(vault, ["pub", "init", "--vault", vault]);
     expect(r.code).toBe(0);
-    expect(r.stdout).toMatch(/Created publish branch `public`/);
+    expect(r.stdout).toMatch(/Created publish branch `oak\/publish`/);
+    expect(r.stdout).toMatch(/Worktree:/);
     expect(r.stdout).toMatch(/Scaffolded \d+ file/);
+
     // Branch exists.
     const refs = await exec("git", [
       "-C",
       vault,
       "branch",
       "--list",
-      "public",
+      BRANCH,
     ]);
-    expect(refs.stdout).toContain("public");
-    // Some core scaffolded files landed.
-    const pkg = await readFile(resolve(vault, "package.json"), "utf8");
+    expect(refs.stdout).toContain(BRANCH);
+
+    // Scaffolded files landed in the worktree, not the vault root.
+    const pkg = await readFile(
+      resolve(vault, WORKTREE_REL, "package.json"),
+      "utf8",
+    );
     expect(pkg).toContain("astro");
   });
 
   it("emits the dev-rewrite notice when running from source", async () => {
     const vault = await makeVault();
     const r = await runOak(vault, ["pub", "init", "--vault", vault]);
-    // We're running inside the oak monorepo where the template ships
-    // workspace:* refs that get rewritten to file: paths.
     expect(r.stdout).toMatch(/Development install detected/);
     expect(r.stdout).toMatch(/@oak\/core -> file:/);
-    // Scaffolded package.json should have the file: ref.
     const pkg = JSON.parse(
-      await readFile(resolve(vault, "package.json"), "utf8"),
+      await readFile(resolve(vault, WORKTREE_REL, "package.json"), "utf8"),
     );
     expect(pkg.dependencies["@oak/core"]).toMatch(/^file:/);
   });
 
-  it("is idempotent on re-run (branch already exists, files skipped)", async () => {
+  it("errors on re-run because the worktree path is already taken", async () => {
     const vault = await makeVault();
     await runOak(vault, ["pub", "init", "--vault", vault]);
     const r2 = await runOak(vault, ["pub", "init", "--vault", vault]);
-    expect(r2.code).toBe(0);
-    expect(r2.stdout).toMatch(
-      /Publish branch `public` already exists — skipped/,
-    );
-    expect(r2.stdout).toMatch(/\(exists\)/);
+    expect(r2.code).not.toBe(0);
+    expect(r2.stderr).toMatch(/already exists/);
   });
 });
 
 describe("oak pub status", () => {
-  it("reports branch absence before init and presence after", async () => {
+  it("reports branch + worktree absence before init and presence after", async () => {
     const vault = await makeVault();
     const before = await runOak(vault, ["pub", "status", "--vault", vault]);
     expect(before.code).toBe(0);
     expect(before.stdout).toMatch(/exists: +no/);
+    expect(before.stdout).toMatch(/missing/);
 
     await runOak(vault, ["pub", "init", "--vault", vault]);
 
     const after = await runOak(vault, ["pub", "status", "--vault", vault]);
     expect(after.code).toBe(0);
     expect(after.stdout).toMatch(/exists: +yes/);
+    expect(after.stdout).toMatch(/present/);
   });
 });
 
 describe("oak pub build", () => {
-  async function makeBuildArtifact(vault: string): Promise<void> {
-    const dist = resolve(vault, "dist");
-    await mkdir(dist, { recursive: true });
-    await writeFile(resolve(dist, "index.html"), "<html>hi</html>", "utf8");
-  }
-
   it("refuses to build when the publish branch doesn't exist yet", async () => {
     const vault = await makeVault();
-    await makeBuildArtifact(vault);
     const r = await runOak(vault, [
       "pub",
       "build",
@@ -187,27 +188,14 @@ describe("oak pub build", () => {
     expect(r.stderr).toMatch(/branch.*does not exist/);
   });
 
-  it("refuses --no-checkpoint when the working tree is dirty", async () => {
+  it("publishes the publishable subset and reports counts", async () => {
     const vault = await makeVault();
-    await runOak(vault, ["pub", "init", "--vault", vault]);
-    await makeBuildArtifact(vault);
-    // Dirty file (the init scaffolded files already make the tree dirty).
-    const r = await runOak(vault, [
-      "pub",
-      "build",
-      "--vault",
-      vault,
-      "--no-push",
-      "--no-checkpoint",
-    ]);
-    expect(r.code).not.toBe(0);
-    expect(r.stderr).toMatch(/working tree is dirty/);
-  });
+    await writePage(vault, "alpha.md", "public", "# Alpha\n");
+    await writePage(vault, "secret.md", "private", "# Secret\n");
+    await exec("git", ["-C", vault, "add", "."]);
+    await exec("git", ["-C", vault, "commit", "-m", "seed"]);
 
-  it("publishes a build artifact and embeds the source SHA in the commit", async () => {
-    const vault = await makeVault();
     await runOak(vault, ["pub", "init", "--vault", vault]);
-    await makeBuildArtifact(vault);
 
     const r = await runOak(vault, [
       "pub",
@@ -217,40 +205,32 @@ describe("oak pub build", () => {
       "--no-push",
     ]);
     expect(r.code).toBe(0);
-    expect(r.stdout).toMatch(/Published [0-9a-f]{7} to `public`/);
+    expect(r.stdout).toMatch(/Published [0-9a-f]{7} to `oak\/publish`/);
+    expect(r.stdout).toMatch(/sync: +\+\d+ =\d+ -\d+/);
     expect(r.stdout).toMatch(/pushed: +no/);
 
-    // The publish branch now contains index.html.
+    // alpha.md ends up in the published branch under vault/, secret.md does not.
     const ls = await exec("git", [
       "-C",
       vault,
       "ls-tree",
       "-r",
       "--name-only",
-      "public",
+      BRANCH,
     ]);
-    expect(ls.stdout.trim().split("\n")).toContain("index.html");
-
-    // The commit subject references the source HEAD.
-    const subject = await exec("git", [
-      "-C",
-      vault,
-      "log",
-      "-1",
-      "--format=%s",
-      "public",
-    ]);
-    expect(subject.stdout.trim()).toMatch(/^publish: [0-9a-f]{40}/);
+    const files = ls.stdout.trim().split("\n");
+    expect(files).toContain("vault/alpha.md");
+    expect(files).not.toContain("vault/secret.md");
   });
 
-  it("--allow-dirty publishes without checkpointing, tags commit dirty", async () => {
+  it("tags commits with (dirty) when the source tree is dirty", async () => {
     const vault = await makeVault();
-    await runOak(vault, ["pub", "init", "--vault", vault]);
-    await makeBuildArtifact(vault);
-    // Tree is dirty from the scaffold; commit it so we have a clean
-    // baseline, then dirty it again to test --allow-dirty specifically.
+    await writePage(vault, "alpha.md", "public", "# Alpha\n");
     await exec("git", ["-C", vault, "add", "."]);
-    await exec("git", ["-C", vault, "commit", "-m", "scaffold"]);
+    await exec("git", ["-C", vault, "commit", "-m", "seed"]);
+
+    await runOak(vault, ["pub", "init", "--vault", vault]);
+    // Dirty the source tree.
     await writeFile(resolve(vault, "draft.md"), "wip\n", "utf8");
 
     const r = await runOak(vault, [
@@ -259,7 +239,6 @@ describe("oak pub build", () => {
       "--vault",
       vault,
       "--no-push",
-      "--allow-dirty",
     ]);
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/\(dirty\)/);
@@ -270,8 +249,27 @@ describe("oak pub build", () => {
       "log",
       "-1",
       "--format=%s",
-      "public",
+      BRANCH,
     ]);
     expect(subject.stdout.trim()).toMatch(/^publish: [0-9a-f]{40} \(dirty\)$/);
+  });
+
+  it("reports no-op when nothing has changed since last publish", async () => {
+    const vault = await makeVault();
+    await writePage(vault, "alpha.md", "public", "# Alpha\n");
+    await exec("git", ["-C", vault, "add", "."]);
+    await exec("git", ["-C", vault, "commit", "-m", "seed"]);
+
+    await runOak(vault, ["pub", "init", "--vault", vault]);
+    await runOak(vault, ["pub", "build", "--vault", vault, "--no-push"]);
+    const r2 = await runOak(vault, [
+      "pub",
+      "build",
+      "--vault",
+      vault,
+      "--no-push",
+    ]);
+    expect(r2.code).toBe(0);
+    expect(r2.stdout).toMatch(/No changes since last publish/);
   });
 });

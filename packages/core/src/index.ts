@@ -107,7 +107,6 @@ export {
   mergeBranch,
   branchExists,
   createOrphanBranch,
-  commitTreeToBranch,
   GitError,
 } from "./git.js";
 export type {
@@ -140,12 +139,13 @@ export type {
   AgentContextOptions,
 } from "./agent.js";
 export {
+  collectPublishablePaths,
   pubInit,
   pubBuild,
   pubStatus,
   PubError,
   DEFAULT_PUBLISH_BRANCH,
-  DEFAULT_BUILD_DIR,
+  PUBLISH_WORKTREE_REL,
 } from "./publish-branch.js";
 export type {
   PubInitOptions,
@@ -153,6 +153,8 @@ export type {
   PubBuildOptions,
   PubBuildResult,
 } from "./publish-branch.js";
+export { syncPaths } from "./sync-tree.js";
+export type { SyncResult } from "./sync-tree.js";
 export {
   DEFAULT_AGENDA_CONFIG,
   addUnits,

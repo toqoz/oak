@@ -2,14 +2,19 @@ import { defineConfig } from "astro/config";
 import { parseVault } from "@oak/core";
 import { remarkOakLinks } from "@oak/core/remark";
 
-// Boilerplate Astro config consumed by `oak publish`. Users are
+// Boilerplate Astro config for the publish template. Users are
 // expected to fork this and customize freely.
+//
+// The `./vault` directory is a snapshot of the publishable subset of
+// the vault, refreshed by `oak pub build`. It contains only pages
+// whose visibility is in {public, unlisted} plus any assets those
+// pages reference. Private pages are physically absent.
 //
 // The vault is parsed once at config-load time so the remark plugin
 // can resolve `[[wiki]]` links. The Content Layer loader (see
 // src/content.config.ts) parses again — that's wasteful but
-// build-time only; revisit with a shared cache later.
-const vault = await parseVault("./content");
+// build-time only.
+const vault = await parseVault("./vault");
 
 export default defineConfig({
   output: "static",

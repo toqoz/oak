@@ -1,52 +1,79 @@
 // `oak pub init` and `oak pub build`: the new publish flow.
 //
-// Responsibilities are split:
-//   - init  : create the publish orphan branch (locally only) and copy
-//             the @oak/publish-template files into the vault.
-//   - build : take an already-built artifact directory (default `dist/`)
-//             and put it on the publish branch as a new commit, then
-//             push.
+// Layout the user sees:
+//   - main worktree (the vault repo's normal branch) keeps notes only.
+//   - publish orphan branch `oak/publish` is checked out into a sibling
+//     worktree at `<vault>/.git/oak-publish/`. The Astro app source, its
+//     `package.json`, and a `vault/` mirror of the publishable subset of
+//     the vault all live in that worktree.
 //
-// Everything that used to live in the old publish.ts (HTML rendering,
-// home page generation, manifest cleanup) has moved to user-land. oak
-// only owns: the branch, the worktree dance, and the commit message
-// convention.
+// Responsibilities are split:
+//   - init  : create the orphan branch (locally only, or fetch from
+//             origin if it already exists there), add the worktree at
+//             the canonical path, and scaffold the publish-template
+//             into the worktree when the branch is freshly created.
+//   - build : refresh `<worktree>/vault/` with a snapshot of every
+//             publishable page plus its referenced assets, commit if
+//             changed, force-push.
+//
+// The visibility filter is enforced at sync time: only pages whose
+// frontmatter visibility is in {public, unlisted} are sync'd. Private
+// pages never enter the publish branch, so even a bug downstream
+// cannot leak their content into deployed output.
 
-import { mkdtemp, mkdir, readdir, readFile, stat, copyFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
   branchExists,
-  checkpoint,
-  commitTreeToBranch,
   createOrphanBranch,
+  createWorktree,
   gitStatus,
   headCommit,
   isGitRepo,
 } from "./git.js";
+import { parseVault } from "./parse.js";
+import { extractAssetRefs } from "./assets.js";
+import { resolveAssetSource } from "./asset-process.js";
+import type { Visibility } from "./types.js";
+import { syncPaths } from "./sync-tree.js";
+import { spawn } from "node:child_process";
 
-export const DEFAULT_PUBLISH_BRANCH = "public";
-export const DEFAULT_BUILD_DIR = "dist";
+export const DEFAULT_PUBLISH_BRANCH = "oak/publish";
+
+// Worktree path is fixed: under the vault's own `.git/`. This keeps it
+// out of the main worktree's `git status` (git never walks into its
+// own metadata dir for working-tree purposes) and ties its lifetime to
+// the repo. The trailing segment is deliberately non-canonical
+// (`oak-publish`, not `oak/publish`) to avoid colliding with the
+// branch's own metadata directory under `.git/worktrees/`.
+export const PUBLISH_WORKTREE_REL = ".git/oak-publish";
 
 export type PubInitOptions = {
   vaultRoot: string;
   templateDir: string; // absolute path to a publish-template package root
   branch?: string;
+  remote?: string; // default "origin"; used to detect a pre-existing branch
 };
 
 export type PubInitResult = {
   branch: string;
+  worktreePath: string;
   branchCreated: boolean;
   branchAlreadyExisted: boolean;
   initialCommit: string | null;
-  scaffolded: string[]; // vault-relative paths
-  skipped: string[]; // vault-relative paths (already existed)
-  // workspace:* deps that got rewritten to file: refs because oak was
-  // running from source (typically the monorepo). Empty in the
-  // post-publish path because pnpm publish has already replaced them
-  // with semver ranges before the template was distributed.
+  scaffolded: string[]; // worktree-relative paths
+  // Tracked workspace dep rewrites (workspace:* → file:) applied to
+  // package.json files copied from the template. Empty in published
+  // installs because pnpm/npm strips workspace specs on publish.
   rewrittenDevDeps: Array<{ file: string; name: string; resolvedTo: string }>;
 };
 
@@ -61,8 +88,8 @@ export class PubError extends Error {
 }
 
 // Files inside the template package that should never be copied into
-// a user's vault (build artifacts, vendored deps, monorepo internals,
-// the template's own test infrastructure).
+// the publish worktree (build artifacts, vendored deps, monorepo
+// internals, the template's own test infra).
 const SCAFFOLD_SKIP = new Set([
   "node_modules",
   "dist",
@@ -83,8 +110,7 @@ async function pathExists(p: string): Promise<boolean> {
 
 async function isDirectory(p: string): Promise<boolean> {
   try {
-    const s = await stat(p);
-    return s.isDirectory();
+    return (await stat(p)).isDirectory();
   } catch {
     return false;
   }
@@ -97,9 +123,6 @@ const DEP_FIELDS = [
   "optionalDependencies",
 ] as const;
 
-// Resolve the on-disk directory of an installed package, by way of its
-// package.json. Returns null if the package can't be found from the
-// caller's resolution context.
 function resolveInstalledPackageDir(
   name: string,
   fromDir: string,
@@ -113,15 +136,6 @@ function resolveInstalledPackageDir(
   }
 }
 
-// Rewrite any `workspace:` dep specs in a package.json to absolute
-// `file:` refs pointing at the resolved on-disk package directory.
-//
-// The point: when oak is running from source (monorepo), the template
-// it copies still has `workspace:*` in its package.json — npm/pnpm
-// outside a workspace can't resolve that. By rewriting we let the
-// scaffolded project install via filesystem links to the local oak
-// checkout. After `pnpm publish` the source no longer contains any
-// `workspace:` specs, so this branch never fires in production.
 async function rewriteWorkspaceDeps(
   filePath: string,
   resolveFromDir: string,
@@ -141,11 +155,7 @@ async function rewriteWorkspaceDeps(
     for (const [name, spec] of Object.entries(map)) {
       if (typeof spec !== "string" || !spec.startsWith("workspace:")) continue;
       const dir = resolveInstalledPackageDir(name, resolveFromDir);
-      if (!dir) {
-        // No installed copy resolvable — leave as-is. The caller
-        // should surface this so the user knows install will fail.
-        continue;
-      }
+      if (!dir) continue;
       map[name] = `file:${dir}`;
       rewrites.push({ name, resolvedTo: dir });
     }
@@ -155,8 +165,6 @@ async function rewriteWorkspaceDeps(
   return rewrites;
 }
 
-// Walk `dir` recursively and return paths relative to `dir`. Skips
-// entries listed in SCAFFOLD_SKIP at any depth.
 async function listFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
   async function walk(current: string, relPrefix: string): Promise<void> {
@@ -176,11 +184,72 @@ async function listFiles(dir: string): Promise<string[]> {
   return out;
 }
 
+// Run git in a given directory. Inlined here so this module doesn't
+// take a hard dependency on git.ts internals.
+type RunResult = { stdout: string; stderr: string; code: number };
+
+async function runGit(
+  cwd: string,
+  args: string[],
+  options: { allowFailure?: boolean } = {},
+): Promise<RunResult> {
+  return new Promise((resolveP, rejectP) => {
+    const child = spawn("git", args, { cwd });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d.toString()));
+    child.stderr.on("data", (d) => (stderr += d.toString()));
+    child.on("error", rejectP);
+    child.on("close", (code) => {
+      const c = code ?? 0;
+      if (c !== 0 && !options.allowFailure) {
+        rejectP(
+          new Error(
+            `git ${args.join(" ")} (in ${cwd}) exited ${c}: ${stderr.trim()}`,
+          ),
+        );
+        return;
+      }
+      resolveP({ stdout, stderr, code: c });
+    });
+  });
+}
+
+async function remoteBranchExists(
+  vaultRoot: string,
+  remote: string,
+  branch: string,
+): Promise<boolean> {
+  const r = await runGit(
+    vaultRoot,
+    ["rev-parse", "--verify", "--quiet", `refs/remotes/${remote}/${branch}`],
+    { allowFailure: true },
+  );
+  return r.code === 0;
+}
+
+async function remoteConfigured(
+  vaultRoot: string,
+  remote: string,
+): Promise<boolean> {
+  const r = await runGit(vaultRoot, ["remote"], { allowFailure: true });
+  if (r.code !== 0) return false;
+  return r.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .includes(remote);
+}
+
+function worktreePath(vaultRoot: string): string {
+  return resolve(vaultRoot, PUBLISH_WORKTREE_REL);
+}
+
 export async function pubInit(
   options: PubInitOptions,
 ): Promise<PubInitResult> {
   const { vaultRoot, templateDir } = options;
   const branch = options.branch ?? DEFAULT_PUBLISH_BRANCH;
+  const remote = options.remote ?? "origin";
 
   if (!(await isGitRepo(vaultRoot))) {
     throw new PubError(
@@ -195,74 +264,146 @@ export async function pubInit(
     );
   }
 
-  // 1. Branch — local only, no push.
-  const existed = await branchExists(vaultRoot, branch);
-  let initialCommit: string | null = null;
-  if (!existed) {
-    const r = await createOrphanBranch(
-      vaultRoot,
-      branch,
-      `init: oak ${branch} branch`,
+  const wt = worktreePath(vaultRoot);
+  if (await pathExists(wt)) {
+    throw new PubError(
+      "worktree-exists",
+      `publish worktree already exists at ${wt} — remove it first or use it as-is`,
     );
-    initialCommit = r.commit;
   }
 
-  // 2. Scaffold — copy template files in, skip any that already exist.
-  const files = await listFiles(templateDir);
-  const scaffolded: string[] = [];
-  const skipped: string[] = [];
-  const rewrittenDevDeps: PubInitResult["rewrittenDevDeps"] = [];
-  for (const rel of files) {
-    const srcAbs = resolve(templateDir, rel);
-    const destAbs = resolve(vaultRoot, rel);
-    if (await pathExists(destAbs)) {
-      skipped.push(rel);
-      continue;
-    }
-    await mkdir(dirname(destAbs), { recursive: true });
-    await copyFile(srcAbs, destAbs);
-    scaffolded.push(rel);
+  // Decide whether the branch needs creating, and whether scaffold is
+  // needed once the worktree is laid down.
+  const hasLocal = await branchExists(vaultRoot, branch);
+  let initialCommit: string | null = null;
+  let scaffoldExpected = false;
 
-    // Any package.json copied in (root or nested) might reference
-    // workspace deps that won't resolve outside the monorepo.
-    if (rel === "package.json" || rel.endsWith("/package.json")) {
-      const rewrites = await rewriteWorkspaceDeps(destAbs, templateDir);
-      for (const r of rewrites) {
-        rewrittenDevDeps.push({ file: rel, ...r });
+  if (!hasLocal) {
+    const hasRemote =
+      (await remoteConfigured(vaultRoot, remote)) &&
+      (await remoteBranchExists(vaultRoot, remote, branch));
+    if (hasRemote) {
+      // Branch already lives on origin (someone else ran `oak pub init`
+      // and pushed). Pull it down as a local tracking branch — we want
+      // its contents, not a fresh scaffold.
+      await runGit(vaultRoot, [
+        "branch",
+        "--track",
+        branch,
+        `${remote}/${branch}`,
+      ]);
+    } else {
+      const r = await createOrphanBranch(
+        vaultRoot,
+        branch,
+        `init: oak ${branch} branch`,
+      );
+      initialCommit = r.commit;
+      scaffoldExpected = true;
+    }
+  }
+
+  // Lay down the worktree.
+  await createWorktree(vaultRoot, wt, branch);
+
+  // If the branch already had content (existing local or fetched
+  // remote), don't scaffold over it. Detect by presence of any
+  // tracked file other than `.git`.
+  let scaffolded: string[] = [];
+  const rewrittenDevDeps: PubInitResult["rewrittenDevDeps"] = [];
+  const wtEntries = (await readdir(wt)).filter((e) => e !== ".git");
+  if (scaffoldExpected || wtEntries.length === 0) {
+    const files = await listFiles(templateDir);
+    for (const rel of files) {
+      const srcAbs = resolve(templateDir, rel);
+      const destAbs = resolve(wt, rel);
+      await mkdir(dirname(destAbs), { recursive: true });
+      await copyFile(srcAbs, destAbs);
+      scaffolded.push(rel);
+
+      if (rel === "package.json" || rel.endsWith("/package.json")) {
+        const rewrites = await rewriteWorkspaceDeps(destAbs, templateDir);
+        for (const r of rewrites) {
+          rewrittenDevDeps.push({ file: rel, ...r });
+        }
       }
     }
   }
 
   return {
     branch,
-    branchCreated: !existed,
-    branchAlreadyExisted: existed,
+    worktreePath: wt,
+    branchCreated: !hasLocal && scaffoldExpected,
+    branchAlreadyExisted: hasLocal,
     initialCommit,
     scaffolded,
-    skipped,
     rewrittenDevDeps,
   };
 }
 
 export type PubBuildOptions = {
   vaultRoot: string;
-  source?: string; // default "dist", relative to vaultRoot or absolute
   branch?: string; // default DEFAULT_PUBLISH_BRANCH
   push?: boolean; // default true
   remote?: string; // default "origin"
-  noCheckpoint?: boolean; // skip auto-checkpoint when dirty
-  allowDirty?: boolean; // proceed without checkpoint, embed dirty flag
+  // Which visibilities make it into the snapshot. Defaults to
+  // {public, unlisted}. Private is always excluded.
+  visibilityFilter?: Visibility[];
 };
 
 export type PubBuildResult = {
   branch: string;
+  worktreePath: string;
   publishedCommit: string;
   sourceCommit: string;
   sourceDirty: boolean;
-  checkpointCommit: string | null;
+  syncCopied: number;
+  syncUnchanged: number;
+  syncDeleted: number;
+  committed: boolean; // false if snapshot was already up-to-date
   pushed: boolean;
   pushedRemote: string | null;
 };
+
+const DEFAULT_VISIBILITY: Visibility[] = ["public", "unlisted"];
+
+// Subdir inside the publish worktree that mirrors publishable vault
+// content. The publish-template's astro.config.mjs points at this.
+const VAULT_SNAPSHOT_REL = "vault";
+
+// Collect vault-relative paths that should appear in the publish
+// snapshot: every page whose visibility is in the filter set, plus
+// every asset those pages reference (resolved via oak's standard
+// asset-path conventions) that lives inside the vault. External
+// mounts (`publishable: false`) are skipped by construction.
+export async function collectPublishablePaths(
+  vaultRoot: string,
+  visibilityFilter: Visibility[] = DEFAULT_VISIBILITY,
+): Promise<Set<string>> {
+  const visible = new Set(visibilityFilter);
+  const vault = await parseVault(vaultRoot);
+  const paths = new Set<string>();
+  for (const page of vault.pages.values()) {
+    if (!visible.has(page.visibility)) continue;
+    const rel = relative(vaultRoot, page.filePath);
+    if (rel.startsWith("..") || isAbsolute(rel)) continue;
+    paths.add(rel);
+
+    for (const ref of extractAssetRefs(page.body)) {
+      const sourceAbs = resolveAssetSource(page.filePath, ref.target, vaultRoot);
+      if (!sourceAbs) continue;
+      const assetRel = relative(vaultRoot, sourceAbs);
+      if (assetRel.startsWith("..") || isAbsolute(assetRel)) continue;
+      try {
+        const s = await stat(sourceAbs);
+        if (s.isFile()) paths.add(assetRel);
+      } catch {
+        // Missing asset — leave it out; the loader will flag it later.
+      }
+    }
+  }
+  return paths;
+}
 
 export async function pubBuild(
   options: PubBuildOptions,
@@ -285,74 +426,88 @@ export async function pubBuild(
     );
   }
 
-  const sourceRel = options.source ?? DEFAULT_BUILD_DIR;
-  const sourceAbs = isAbsolute(sourceRel)
-    ? sourceRel
-    : resolve(vaultRoot, sourceRel);
-  if (!(await isDirectory(sourceAbs))) {
+  const wt = worktreePath(vaultRoot);
+  if (!(await isDirectory(wt))) {
     throw new PubError(
-      "source-missing",
-      `build artifact directory \`${sourceRel}\` not found at ${sourceAbs}`,
-    );
-  }
-  const sourceEntries = await readdir(sourceAbs);
-  if (sourceEntries.length === 0) {
-    throw new PubError(
-      "source-empty",
-      `build artifact directory \`${sourceRel}\` is empty`,
+      "worktree-missing",
+      `publish worktree not found at ${wt} — run \`oak pub init\` first`,
     );
   }
 
-  // Checkpoint dance: by default we want the source-side commit message
-  // to refer to a commit whose tree matches what we're publishing. So
-  // if the working tree is dirty and the user hasn't opted out, take a
-  // checkpoint commit before reading HEAD.
+  // Source SHA and dirty flag — used only for the commit message so
+  // operators can correlate publish branch history with the source.
+  const sourceCommit = await headCommit(vaultRoot);
   const status = await gitStatus(vaultRoot);
   const sourceDirty = status.dirty;
-  let checkpointCommit: string | null = null;
-  if (sourceDirty && !options.allowDirty) {
-    if (options.noCheckpoint) {
+
+  // Sync the publishable subset of the vault into <worktree>/vault/.
+  const paths = await collectPublishablePaths(
+    vaultRoot,
+    options.visibilityFilter,
+  );
+  const destDir = resolve(wt, VAULT_SNAPSHOT_REL);
+  const syncResult = await syncPaths(vaultRoot, destDir, paths);
+
+  // Stage everything and check for changes.
+  await runGit(wt, ["add", "-A"]);
+  const diff = await runGit(
+    wt,
+    ["diff", "--cached", "--quiet"],
+    { allowFailure: true },
+  );
+  const hasChanges = diff.code !== 0;
+
+  let publishedCommit: string;
+  let committed = false;
+  if (hasChanges) {
+    const dirtyTag = sourceDirty ? " (dirty)" : "";
+    await runGit(wt, [
+      "commit",
+      "-m",
+      `publish: ${sourceCommit}${dirtyTag}`,
+    ]);
+    committed = true;
+  }
+  const head = await runGit(wt, ["rev-parse", "HEAD"]);
+  publishedCommit = head.stdout.trim();
+
+  let pushed = false;
+  if (push) {
+    const remoteOk = await remoteConfigured(vaultRoot, remote);
+    if (!remoteOk) {
       throw new PubError(
-        "dirty-tree",
-        `working tree is dirty; commit, run with --allow-dirty, or omit --no-checkpoint`,
+        "remote-missing",
+        `remote \`${remote}\` is not configured — add it or pass --no-push`,
       );
     }
-    const cp = await checkpoint(vaultRoot, "before publish");
-    if (cp.committed && cp.hash) {
-      checkpointCommit = cp.hash;
+    const r = await runGit(
+      wt,
+      ["push", "--force", remote, `${branch}:${branch}`],
+      { allowFailure: true },
+    );
+    if (r.code !== 0) {
+      throw new PubError(
+        "push-failed",
+        `git push to ${remote}/${branch} failed: ${r.stderr.trim()}`,
+      );
     }
+    pushed = true;
   }
-
-  const sourceCommit = await headCommit(vaultRoot);
-  const dirtyTag = sourceDirty && options.allowDirty ? " (dirty)" : "";
-  const message = `publish: ${sourceCommit}${dirtyTag}`;
-
-  // Lay the worktree outside the vault so it can't accidentally collide
-  // with vault content or get picked up by tooling.
-  const tmp = await mkdtemp(join(tmpdir(), "oak-pub-"));
-  const worktreePath = join(tmp, "worktree");
-
-  const result = await commitTreeToBranch(vaultRoot, {
-    branch,
-    sourceDir: sourceAbs,
-    worktreePath,
-    message,
-    push,
-    remote,
-  });
 
   return {
     branch,
-    publishedCommit: result.commit,
+    worktreePath: wt,
+    publishedCommit,
     sourceCommit,
     sourceDirty,
-    checkpointCommit,
-    pushed: result.pushed,
-    pushedRemote: result.pushed ? remote : null,
+    syncCopied: syncResult.copied,
+    syncUnchanged: syncResult.unchanged,
+    syncDeleted: syncResult.deleted,
+    committed,
+    pushed,
+    pushedRemote: pushed ? remote : null,
   };
 }
-
-// Helpers exported for the CLI's status display.
 
 export async function pubStatus(
   vaultRoot: string,
@@ -360,10 +515,14 @@ export async function pubStatus(
 ): Promise<{
   branch: string;
   branchExists: boolean;
+  worktreePath: string;
+  worktreeExists: boolean;
 }> {
+  const wt = worktreePath(vaultRoot);
   return {
     branch,
     branchExists: await branchExists(vaultRoot, branch),
+    worktreePath: wt,
+    worktreeExists: await pathExists(wt),
   };
 }
-
