@@ -1,0 +1,21 @@
+{
+  "name": "@oak/pub-template",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Astro boilerplate scaffolded into the publish worktree by `oak pub init`.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@oak/core": "workspace:*",
+    "astro": "^5.0.0",
+    "sharp": "^0.34.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.4.0"
+  }
+}

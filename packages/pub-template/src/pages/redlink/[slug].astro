@@ -1,0 +1,101 @@
+---
+import { getCollection } from "astro:content";
+import type { OakRedlinkData } from "@oak/core/astro";
+import Base from "../../layouts/Base.astro";
+
+export async function getStaticPaths() {
+  const redlinks = await getCollection("redlinks");
+  return redlinks.map((r) => ({
+    params: { slug: r.id },
+    props: { redlink: r.data as OakRedlinkData },
+  }));
+}
+
+type Props = { redlink: OakRedlinkData };
+const { redlink } = Astro.props;
+const title = `[[${redlink.display}]]`;
+---
+<Base title={title}>
+  <main>
+    <article>
+      <p class="redlink-eyebrow">未作成のページ</p>
+      <h1><span class="redlink-marker">[[</span>{redlink.display}<span class="redlink-marker">]]</span></h1>
+      <p class="redlink-lede">
+        このページはまだ存在しませんが、以下のページから参照されています。
+      </p>
+
+      {redlink.bridges.length > 0 && (
+        <section class="bridges">
+          <h2>参照元</h2>
+          <ul>
+            {redlink.bridges.map((b) => (
+              <li>
+                <a href={`/${b.slug}/`}>{b.title}</a>
+                {b.context && <span class="context">{b.context}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </article>
+  </main>
+</Base>
+
+<style>
+  .redlink-eyebrow {
+    color: rgba(0, 0, 0, 0.5);
+    font-size: 0.85rem;
+    margin: 0 0 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .redlink-marker {
+    color: rgba(0, 0, 0, 0.4);
+    font-weight: 400;
+  }
+  .redlink-lede {
+    color: rgba(0, 0, 0, 0.65);
+  }
+  .bridges {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  .bridges h2 {
+    font-size: 1rem;
+    margin: 0 0 0.75rem;
+    color: rgba(0, 0, 0, 0.55);
+    font-weight: 500;
+  }
+  .bridges ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .bridges li {
+    margin: 0.5rem 0;
+    font-size: 0.95rem;
+  }
+  .bridges .context {
+    display: block;
+    font-size: 0.85rem;
+    color: rgba(0, 0, 0, 0.5);
+    margin-top: 0.1rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    .redlink-eyebrow,
+    .redlink-marker {
+      color: rgba(255, 255, 255, 0.4);
+    }
+    .redlink-lede {
+      color: rgba(255, 255, 255, 0.65);
+    }
+    .bridges {
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+    .bridges h2,
+    .bridges .context {
+      color: rgba(255, 255, 255, 0.55);
+    }
+  }
+</style>

@@ -1,0 +1,141 @@
+---
+// Per-page "Related" surface: backlinks + 2-hop, merged and
+// deduplicated into a single card grid. Mirrors the editor's
+// related-card layout so the published site reads the same way.
+import type { OakEntryData } from "@oak/core/astro";
+
+type Props = {
+  inbound: OakEntryData["inbound"];
+  twoHop: OakEntryData["twoHop"];
+};
+
+const { inbound, twoHop } = Astro.props;
+
+type Card = {
+  href: string;
+  title: string;
+  excerpt: string;
+  relation: string;
+};
+
+const cards: Card[] = [];
+const seen = new Set<string>();
+
+for (const b of inbound) {
+  if (seen.has(b.id)) continue;
+  seen.add(b.id);
+  cards.push({
+    href: `/${b.slug}/`,
+    title: b.title,
+    excerpt: b.excerpt,
+    relation: "backlink",
+  });
+}
+
+for (const h of twoHop) {
+  if (seen.has(h.id)) continue;
+  seen.add(h.id);
+  const via = h.via
+    .map((v) =>
+      v.kind === "page" ? v.title : `[[${v.display}]]`,
+    )
+    .join(", ");
+  cards.push({
+    href: `/${h.slug}/`,
+    title: h.title,
+    excerpt: h.excerpt,
+    relation: `2-hop · via ${via}`,
+  });
+}
+---
+
+{cards.length > 0 && (
+  <section class="related">
+    <h2>関連項目</h2>
+    <div class="card-grid">
+      {cards.map((c) => (
+        <a class="card" href={c.href}>
+          <div class="card-title">{c.title}</div>
+          {c.excerpt && <p class="card-excerpt">{c.excerpt}</p>}
+          <div class="card-meta">{c.relation}</div>
+        </a>
+      ))}
+    </div>
+  </section>
+)}
+
+<style>
+  .related {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  .related h2 {
+    font-size: 1rem;
+    margin: 0 0 0.75rem;
+    color: rgba(0, 0, 0, 0.55);
+    font-weight: 500;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.75rem;
+  }
+  .card {
+    display: block;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 6px;
+    color: inherit;
+    text-decoration: none;
+    background: rgba(0, 0, 0, 0.02);
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .card:hover {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+  .card-title {
+    font-weight: 500;
+    font-size: 0.95rem;
+    margin: 0;
+  }
+  .card-excerpt {
+    margin: 0.35rem 0 0;
+    color: rgba(0, 0, 0, 0.6);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: pre-line;
+  }
+  .card-meta {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: rgba(0, 0, 0, 0.5);
+  }
+  @media (prefers-color-scheme: dark) {
+    .related {
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+    .related h2 {
+      color: rgba(255, 255, 255, 0.55);
+    }
+    .card {
+      border-color: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .card:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    .card-excerpt {
+      color: rgba(255, 255, 255, 0.6);
+    }
+    .card-meta {
+      color: rgba(255, 255, 255, 0.5);
+    }
+  }
+</style>

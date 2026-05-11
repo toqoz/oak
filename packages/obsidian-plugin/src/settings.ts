@@ -5,7 +5,6 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import type OakPlugin from "./main.js";
 
 export type OakPluginSettings = {
-  baseUrl: string;
   autoSnapshotIntervalMs: number; // 0 = disabled
   showRedlinksInline: boolean;
   // Internal: id of the leaf currently acting as the refile peek pane.
@@ -21,7 +20,6 @@ export type OakPluginSettings = {
 };
 
 export const DEFAULT_SETTINGS: OakPluginSettings = {
-  baseUrl: "/",
   autoSnapshotIntervalMs: 0,
   showRedlinksInline: true,
   refilePeekLeafId: null,
@@ -36,21 +34,6 @@ export class OakSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "Oak settings" });
-
-    new Setting(containerEl)
-      .setName("Publish base URL")
-      .setDesc(
-        "Used as the URL prefix for `oak publish`. Defaults to `/` (host-relative).",
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("/")
-          .setValue(this.plugin.settings.baseUrl)
-          .onChange(async (v) => {
-            this.plugin.settings.baseUrl = v.trim() || "/";
-            await this.plugin.saveSettings();
-          }),
-      );
 
     new Setting(containerEl)
       .setName("Auto-snapshot interval (ms)")

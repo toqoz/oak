@@ -244,9 +244,6 @@ export class OakHomeView extends ItemView {
           const s = slugify(titleStr);
           if (s.length > 0) f["slug"] = s;
         }
-        if (typeof f["llm"] !== "string") {
-          f["llm"] = "deny";
-        }
       });
       new Notice(`oak: imported ${entry.vaultRelPath}`);
       this.state.scheduleRefresh();

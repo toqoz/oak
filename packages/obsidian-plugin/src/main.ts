@@ -45,7 +45,6 @@ import {
   openScratchHistory,
   runCheckpoint,
   runMount,
-  runPublish,
   runRefileFromEditor,
   runSnapshot,
   runValidate,
@@ -420,11 +419,6 @@ export default class OakPlugin extends Plugin {
       id: "oak-validate",
       name: "Validate vault",
       callback: () => void runValidate(this),
-    });
-    this.addCommand({
-      id: "oak-publish",
-      name: "Publish",
-      callback: () => void runPublish(this),
     });
     this.addCommand({
       id: "oak-snapshot",
@@ -838,7 +832,7 @@ export default class OakPlugin extends Plugin {
 
   // Bump frontmatter `modified` to "now" when the just-applied save
   // changed body content or the title — but not when the change was
-  // pure metadata (visibility, alias, slug, llm flip). The diff is
+  // pure metadata (visibility, alias, slug flip). The diff is
   // computed against the in-memory baseline cached from the previous
   // observation; a missing baseline means this is the first modify we
   // see for the file, so we just prime the cache and skip the bump
