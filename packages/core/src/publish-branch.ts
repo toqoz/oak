@@ -2,10 +2,16 @@
 //
 // Layout the user sees:
 //   - main worktree (the vault repo's normal branch) keeps notes only.
-//   - publish orphan branch `oak/pub` is checked out into a sibling
-//     worktree at `<vault>/.git/oak/pub/`. The Astro app source, its
+//   - publish orphan branch `oak/pub` is checked out into a dedicated
+//     worktree at `<vault>/.oak/pub/`. The Astro app source, its
 //     `package.json`, and a `vault/` mirror of the publishable subset of
 //     the vault all live in that worktree.
+//
+// `.oak/` (not `.git/oak/`) — keeping the worktree out of `.git/`
+// matters because Vite's dev server enforces a `**/.git/**` deny rule
+// that blocks `npm run dev` from serving worktree files. `pub init`
+// adds `.oak` to `.git/info/exclude` so the source branch's
+// `git status` stays clean without modifying the tracked .gitignore.
 //
 // Responsibilities are split:
 //   - init  : create the orphan branch (locally only, or fetch from
@@ -49,12 +55,12 @@ import { spawn } from "node:child_process";
 
 export const DEFAULT_PUBLISH_BRANCH = "oak/pub";
 
-// Worktree path is fixed: under the vault's own `.git/`. This keeps it
-// out of the main worktree's `git status` (git never walks into its
-// own metadata dir for working-tree purposes) and ties its lifetime to
-// the repo. The path mirrors the branch name (`oak/pub`) so the
-// directory and the ref read the same.
-export const PUBLISH_WORKTREE_REL = ".git/oak/pub";
+// Worktree path is fixed at `.oak/pub` under the vault. The path
+// mirrors the branch name (`oak/pub`) so the directory and the ref
+// read the same. `pub init` writes `.oak` into `.git/info/exclude`
+// so it stays out of the source branch's git status without
+// touching the tracked .gitignore.
+export const PUBLISH_WORKTREE_REL = ".oak/pub";
 
 export type PubInitOptions = {
   vaultRoot: string;
@@ -248,6 +254,29 @@ function worktreePath(vaultRoot: string): string {
   return resolve(vaultRoot, PUBLISH_WORKTREE_REL);
 }
 
+// Append a path to `.git/info/exclude` if it's not already there. This
+// is git's per-clone local ignore — invisible to tracked .gitignore
+// (no source-branch modification) but effective immediately on the
+// current clone.
+async function ensureLocalGitIgnore(
+  vaultRoot: string,
+  pattern: string,
+): Promise<void> {
+  const excludePath = resolve(vaultRoot, ".git", "info", "exclude");
+  let current = "";
+  try {
+    current = await readFile(excludePath, "utf8");
+  } catch {
+    // First-time use: ensure the directory exists. `.git/info/` is
+    // present in every clone but defensive mkdir doesn't hurt.
+    await mkdir(dirname(excludePath), { recursive: true });
+  }
+  const lines = current.split(/\r?\n/).map((l) => l.trim());
+  if (lines.includes(pattern)) return;
+  const prefix = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
+  await writeFile(excludePath, `${current}${prefix}${pattern}\n`, "utf8");
+}
+
 export async function pubInit(
   options: PubInitOptions,
 ): Promise<PubInitResult> {
@@ -306,6 +335,10 @@ export async function pubInit(
       scaffoldExpected = true;
     }
   }
+
+  // Ensure `.oak` is locally ignored before the worktree appears, so
+  // the source branch's `git status` never reports it as untracked.
+  await ensureLocalGitIgnore(vaultRoot, ".oak");
 
   // Lay down the worktree.
   await createWorktree(vaultRoot, wt, branch);

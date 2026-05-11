@@ -482,7 +482,7 @@ const PUB_HELP = `oak pub — publish branch tooling
 Usage:
   oak pub                    Show this help
   oak pub init               Create the publish orphan branch and check
-                             out a worktree at <vault>/.git/oak/pub
+                             out a worktree at <vault>/.oak/pub
   oak pub build              Refresh the publishable vault snapshot in
                              the publish worktree and commit (local only)
   oak pub status             Show whether the publish branch and

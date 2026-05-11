@@ -91,7 +91,7 @@ async function writePage(
 }
 
 describe("pubInit", () => {
-  it("creates the orphan branch and lays down a worktree at .git/oak/pub", async () => {
+  it("creates the orphan branch and lays down a worktree at .oak/pub", async () => {
     const vault = await makeVault();
     const template = await makeTemplate();
 
@@ -148,6 +148,29 @@ describe("pubInit", () => {
     expect(tree.stdout.trim().split("\n").sort()).toEqual(
       ["astro.config.mjs", "package.json", "src/pages/index.astro"].sort(),
     );
+  });
+
+  it("writes `.oak` to .git/info/exclude so source-branch status stays clean", async () => {
+    const vault = await makeVault();
+    const template = await makeTemplate();
+    await pubInit({ vaultRoot: vault, templateDir: template });
+    const excludeContent = await readFile(
+      resolve(vault, ".git/info/exclude"),
+      "utf8",
+    );
+    expect(excludeContent).toMatch(/^\.oak$/m);
+
+    // Running again shouldn't duplicate the entry. Simulate by removing
+    // the worktree and re-running init.
+    await rm(resolve(vault, ".oak"), { recursive: true, force: true });
+    await exec("git", ["-C", vault, "worktree", "prune"]);
+    await pubInit({ vaultRoot: vault, templateDir: template });
+    const reread = await readFile(
+      resolve(vault, ".git/info/exclude"),
+      "utf8",
+    );
+    const occurrences = reread.split(/\r?\n/).filter((l) => l === ".oak").length;
+    expect(occurrences).toBe(1);
   });
 
   it("errors if the publish worktree path already exists", async () => {

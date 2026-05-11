@@ -33,9 +33,9 @@ the branch, the worktree, and the visibility filter.
 
 ```bash
 oak pub init                # create the `oak/pub` orphan branch
-                            # + a worktree at .git/oak/pub/
+                            # + a worktree at .oak/pub/
                             # + scaffold the Astro template into it
-cd .git/oak/pub
+cd .oak/pub
 npm install                 # one-time, in the publish worktree
 npm run dev                 # local preview from the snapshot
 
