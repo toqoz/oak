@@ -1,9 +1,9 @@
 {
-  "name": "@oak/publish-template",
+  "name": "@oak/pub-template",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Astro boilerplate consumed by `oak publish` — copied into the user's repo on first run.",
+  "description": "Astro boilerplate scaffolded into the publish worktree by `oak pub init`.",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",

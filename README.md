@@ -13,7 +13,7 @@ packages/
                      remark plugins, Astro Content Layer loader,
                      publish branch tooling
   cli/               `oak` command-line interface
-  publish-template/  Astro boilerplate scaffolded by `oak pub init`
+  pub-template/      Astro boilerplate scaffolded by `oak pub init`
   obsidian-plugin/   Obsidian integration
 ```
 

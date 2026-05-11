@@ -9,7 +9,7 @@
 //                          via a user-supplied resolver, so static
 //                          assets get the published URL.
 //
-// These are the building blocks the publish-template wires into
+// These are the building blocks the pub-template wires into
 // Astro's `markdown.remarkPlugins`. They operate on mdast — no
 // markdown-it, no string slicing — so they compose with shiki,
 // MDX, and other unified plugins out of the box.

@@ -9,7 +9,7 @@ host runs the Astro build. This guide covers the end-to-end flow.
 A vault is plain markdown. `oak pub init` creates an orphan git branch
 called `oak/pub` and lays down a sibling worktree at
 `<vault>/.git/oak-pub`, then scaffolds an Astro project (the
-publish-template) into that worktree. Your notes branch stays clean.
+pub-template) into that worktree. Your notes branch stays clean.
 `oak pub build` syncs the **publishable subset** of your vault (pages
 whose visibility is `public` or `unlisted`, plus the assets they
 reference) into `<worktree>/vault/`, commits the change, and
@@ -75,7 +75,7 @@ let it run `npm run build`.
 Creates the local `oak/pub` orphan branch (or reuses
 `origin/oak/pub` if it already exists upstream) and adds a
 worktree at `<vault>/.git/oak-pub`. If the branch is freshly
-created, scaffolds the publish-template into the worktree.
+created, scaffolds the pub-template into the worktree.
 
 Refuses if `<vault>/.git/oak-pub` already exists — remove it or
 use it as-is.

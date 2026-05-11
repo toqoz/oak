@@ -495,18 +495,18 @@ Options for \`oak pub build\`:
 `;
 
 function resolveTemplateDir(): string {
-  // CLI declares @oak/publish-template as a workspace dep. Resolve via
+  // CLI declares @oak/pub-template as a workspace dep. Resolve via
   // the package.json so we work whether installed flat, hoisted, or
   // running directly out of the monorepo.
   const require = createRequire(import.meta.url);
   try {
-    const pkgPath = require.resolve("@oak/publish-template/package.json");
+    const pkgPath = require.resolve("@oak/pub-template/package.json");
     return dirname(pkgPath);
   } catch {
     // Fallback for monorepo-from-source running before pnpm install:
-    // packages/cli/dist/index.js -> ../../publish-template
+    // packages/cli/dist/index.js -> ../../pub-template
     const here = fileURLToPath(import.meta.url);
-    return resolve(dirname(here), "..", "..", "publish-template");
+    return resolve(dirname(here), "..", "..", "pub-template");
   }
 }
 

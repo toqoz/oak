@@ -14,6 +14,6 @@
   },
   "dependencies": {
     "@oak/core": "workspace:*",
-    "@oak/publish-template": "workspace:*"
+    "@oak/pub-template": "workspace:*"
   }
 }

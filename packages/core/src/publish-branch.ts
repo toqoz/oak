@@ -10,7 +10,7 @@
 // Responsibilities are split:
 //   - init  : create the orphan branch (locally only, or fetch from
 //             origin if it already exists there), add the worktree at
-//             the canonical path, and scaffold the publish-template
+//             the canonical path, and scaffold the pub-template
 //             into the worktree when the branch is freshly created.
 //   - build : refresh `<worktree>/vault/` with a snapshot of every
 //             publishable page plus its referenced assets, commit if
@@ -59,7 +59,7 @@ export const PUBLISH_WORKTREE_REL = ".git/oak-pub";
 
 export type PubInitOptions = {
   vaultRoot: string;
-  templateDir: string; // absolute path to a publish-template package root
+  templateDir: string; // absolute path to a pub-template package root
   branch?: string;
   remote?: string; // default "origin"; used to detect a pre-existing branch
 };
@@ -368,7 +368,7 @@ export type PubBuildResult = {
 const DEFAULT_VISIBILITY: Visibility[] = ["public", "unlisted"];
 
 // Subdir inside the publish worktree that mirrors publishable vault
-// content. The publish-template's astro.config.mjs points at this.
+// content. The pub-template's astro.config.mjs points at this.
 const VAULT_SNAPSHOT_REL = "vault";
 
 // Collect vault-relative paths that should appear in the publish
