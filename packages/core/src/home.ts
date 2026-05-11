@@ -6,6 +6,7 @@
 
 import { stat } from "node:fs/promises";
 
+import { isManagedPage } from "./parse.js";
 import type {
   Backlink,
   Graph,
@@ -33,13 +34,25 @@ export type HomeStats = {
   private: number;
   redLinks: number; // total unresolved wiki links across the vault
   externals: number; // configured external mounts
+  unmanaged: number; // .md files in the vault that lack an `id` frontmatter
+};
+
+// A vault file the indexer found but oak does not yet manage — it has
+// no `id` in its frontmatter, so parse synthesised an `unidentified:…`
+// id. Surfaced separately from `pages` so the home view can offer an
+// explicit "import" action that fills in the missing frontmatter.
+export type UnmanagedEntry = {
+  vaultRelPath: string;
+  basename: string;
+  updatedAt: string | null; // ISO mtime
 };
 
 export type HomeViewModel = {
   generatedAt: string;
   stats: HomeStats;
-  pages: HomeEntry[]; // sorted by title (case-insensitive)
-  recent: HomeEntry[]; // sorted by updatedAt desc, capped to recentLimit
+  pages: HomeEntry[]; // sorted by title (case-insensitive); excludes unmanaged
+  recent: HomeEntry[]; // sorted by updatedAt desc, capped to recentLimit; excludes unmanaged
+  unmanaged: UnmanagedEntry[]; // sorted by vaultRelPath
 };
 
 export type HomeViewOptions = {
@@ -54,13 +67,15 @@ export type HomeViewOptions = {
 const STRIP_WIKI = /!?\[\[([^\]\n]+)\]\]/g;
 const STRIP_FENCED = /```[\s\S]*?```/g;
 const STRIP_INLINE_CODE = /`[^`\n]*`/g;
-const STRIP_HEADING = /^#{1,6}\s+/gm;
-const COLLAPSE_WS = /\s+/g;
+const STRIP_LINE_MARKERS =
+  /^(?:#{1,6}\s+|>\s*|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+\.\s+)+/;
+const COLLAPSE_HSPACE = /[ \t]+/g;
 
 export function excerptFrom(body: string, maxChars = 200): string {
-  // Strip non-prose syntax first, then look at paragraphs. Heading-only
-  // paragraphs (e.g. the page's `# Title` line) are skipped so the
-  // excerpt reads as the first real prose, not the title.
+  // Strip non-prose syntax first, then walk every line so headings and
+  // list items contribute their text to the excerpt. Lines are joined
+  // with "\n" so consumers can render each heading / list item on its
+  // own visual line (via CSS `white-space: pre-line`).
   const cleaned = body
     .replace(STRIP_FENCED, "")
     .replace(STRIP_INLINE_CODE, "")
@@ -70,19 +85,17 @@ export function excerptFrom(body: string, maxChars = 200): string {
       return label.split("#")[0]!.trim();
     })
     .trim();
-  const paragraphs = cleaned.split(/\n\s*\n/);
-  let chosen = "";
-  for (const para of paragraphs) {
-    const trimmed = para.trim();
-    if (trimmed.length === 0) continue;
-    const lines = trimmed.split("\n");
-    const allHeading = lines.every(
-      (l) => l.trim().length === 0 || /^#{1,6}\s+/.test(l.trim()),
-    );
-    if (allHeading) continue;
-    chosen = trimmed.replace(STRIP_HEADING, "").replace(COLLAPSE_WS, " ");
-    break;
+  const parts: string[] = [];
+  for (const rawLine of cleaned.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    const text = line
+      .replace(STRIP_LINE_MARKERS, "")
+      .replace(COLLAPSE_HSPACE, " ")
+      .trim();
+    if (text.length > 0) parts.push(text);
   }
+  const chosen = parts.join("\n");
   if (chosen.length <= maxChars) return chosen;
   return `${chosen.slice(0, maxChars).trimEnd()}…`;
 }
@@ -126,10 +139,24 @@ export async function homeViewModel(
     private: 0,
     redLinks: 0,
     externals: vault.externals.size,
+    unmanaged: 0,
   };
 
   const all: HomeEntry[] = [];
+  const unmanaged: UnmanagedEntry[] = [];
   for (const page of vault.pages.values()) {
+    if (!isManagedPage(page)) {
+      stats.unmanaged++;
+      unmanaged.push({
+        vaultRelPath: page.relPath,
+        basename: page.basename,
+        updatedAt: await fileMtime(page.filePath),
+      });
+      // Skip stats / link counting / pages list — the file is not yet
+      // an oak page in any meaningful sense.
+      continue;
+    }
+
     stats.pages++;
     if (page.visibility === "public") stats.public++;
     else if (page.visibility === "unlisted") stats.unlisted++;
@@ -156,6 +183,8 @@ export async function homeViewModel(
     });
   }
 
+  unmanaged.sort((a, b) => a.vaultRelPath.localeCompare(b.vaultRelPath));
+
   const pages = [...all].sort((a, b) =>
     a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
   );
@@ -169,5 +198,6 @@ export async function homeViewModel(
     stats,
     pages,
     recent,
+    unmanaged,
   };
 }

@@ -60,6 +60,19 @@ function basenameNoExt(filePath: string): string {
   return ext ? base.slice(0, -ext.length) : base;
 }
 
+// True iff the page has the structural prerequisites for oak to manage
+// it — namely, an `id` in its frontmatter. Files that lack one are
+// surfaced via the home view's "Unmanaged" section so the user can
+// import them; until then they're excluded from search, the SQLite
+// index, and link resolution lookup tables (an `unidentified:<path>`
+// id is meaningless as a backlink target).
+export function isManagedPage(page: OakPage): boolean {
+  for (const issue of page.parseIssues) {
+    if (issue.code === "missing-id") return false;
+  }
+  return true;
+}
+
 function coerceAliases(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -442,6 +455,12 @@ export async function parseVault(rootPath: string): Promise<Vault> {
   const basenameConflicts = new Map<string, string[]>();
 
   for (const page of pages.values()) {
+    // Unmanaged pages (no `id` in frontmatter) get a synthesised
+    // `unidentified:<path>` id that is useless as a link target, so
+    // skip the lookup tables entirely. The page stays in `pages` so
+    // the home view can surface it for import.
+    if (!isManagedPage(page)) continue;
+
     const tk = normalizeKey(page.title);
     if (byTitle.has(tk) && byTitle.get(tk) !== page.id) {
       recordConflict(titleConflicts, tk, byTitle.get(tk)!);

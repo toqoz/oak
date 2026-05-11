@@ -13,6 +13,7 @@ export type {
   HomeViewOptions,
   HomeEntry,
   HomeStats,
+  UnmanagedEntry,
 } from "./home.js";
 export { searchVault } from "./search.js";
 export type {
