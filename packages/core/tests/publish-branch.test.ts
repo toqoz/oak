@@ -101,6 +101,8 @@ describe("pubInit", () => {
     expect(r.branchCreated).toBe(true);
     expect(r.worktreePath).toBe(resolve(vault, PUBLISH_WORKTREE_REL));
     expect(r.initialCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(r.scaffoldCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(r.scaffoldCommit).not.toBe(r.initialCommit);
     expect(await branchExists(vault, DEFAULT_PUBLISH_BRANCH)).toBe(true);
     expect(r.scaffolded.sort()).toEqual(
       ["astro.config.mjs", "package.json", "src/pages/index.astro"].sort(),
@@ -113,6 +115,39 @@ describe("pubInit", () => {
     await expect(
       stat(resolve(vault, "astro.config.mjs")),
     ).rejects.toThrow();
+  });
+
+  it("commits the scaffold as a second commit on the orphan branch", async () => {
+    const vault = await makeVault();
+    const template = await makeTemplate();
+
+    const r = await pubInit({ vaultRoot: vault, templateDir: template });
+
+    // Branch should have exactly two commits: init (empty) + scaffold.
+    const log = await exec("git", [
+      "-C",
+      vault,
+      "log",
+      "--format=%H %s",
+      DEFAULT_PUBLISH_BRANCH,
+    ]);
+    const lines = log.stdout.trim().split("\n");
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toContain("scaffold: oak pub-template");
+    expect(lines[1]).toContain("init: oak oak/pub branch");
+
+    // The scaffold commit's tree carries the expected files.
+    const tree = await exec("git", [
+      "-C",
+      vault,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      r.scaffoldCommit!,
+    ]);
+    expect(tree.stdout.trim().split("\n").sort()).toEqual(
+      ["astro.config.mjs", "package.json", "src/pages/index.astro"].sort(),
+    );
   });
 
   it("errors if the publish worktree path already exists", async () => {

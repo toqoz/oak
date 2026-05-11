@@ -68,7 +68,12 @@ export type PubInitResult = {
   worktreePath: string;
   branchCreated: boolean;
   branchAlreadyExisted: boolean;
+  // The empty-tree marker commit at the root of the orphan branch.
+  // Null when the branch already existed (local or fetched).
   initialCommit: string | null;
+  // The follow-up commit that lands the scaffolded template files.
+  // Null when no scaffolding happened (existing branch was reused).
+  scaffoldCommit: string | null;
   scaffolded: string[]; // worktree-relative paths
   // Tracked workspace dep rewrites (workspace:* → file:) applied to
   // package.json files copied from the template. Empty in published
@@ -309,6 +314,7 @@ export async function pubInit(
   // remote), don't scaffold over it. Detect by presence of any
   // tracked file other than `.git`.
   let scaffolded: string[] = [];
+  let scaffoldCommit: string | null = null;
   const rewrittenDevDeps: PubInitResult["rewrittenDevDeps"] = [];
   const wtEntries = (await readdir(wt)).filter((e) => e !== ".git");
   if (scaffoldExpected || wtEntries.length === 0) {
@@ -327,6 +333,15 @@ export async function pubInit(
         }
       }
     }
+
+    // Commit the scaffold so the branch has a real baseline above the
+    // empty-tree init commit. Future template edits diff against this.
+    if (scaffolded.length > 0) {
+      await runGit(wt, ["add", "-A"]);
+      await runGit(wt, ["commit", "-m", "scaffold: oak pub-template"]);
+      const head = await runGit(wt, ["rev-parse", "HEAD"]);
+      scaffoldCommit = head.stdout.trim();
+    }
   }
 
   return {
@@ -335,6 +350,7 @@ export async function pubInit(
     branchCreated: !hasLocal && scaffoldExpected,
     branchAlreadyExisted: hasLocal,
     initialCommit,
+    scaffoldCommit,
     scaffolded,
     rewrittenDevDeps,
   };

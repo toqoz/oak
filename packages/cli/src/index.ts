@@ -577,7 +577,12 @@ async function cmdPubInit(
   }
   process.stdout.write(`Worktree:    ${result.worktreePath}\n`);
   if (result.scaffolded.length > 0) {
-    process.stdout.write(`Scaffolded ${result.scaffolded.length} file(s)\n`);
+    const commitNote = result.scaffoldCommit
+      ? ` (${result.scaffoldCommit.slice(0, 7)})`
+      : "";
+    process.stdout.write(
+      `Scaffolded ${result.scaffolded.length} file(s)${commitNote}\n`,
+    );
     for (const f of result.scaffolded) {
       process.stdout.write(`  + ${f}\n`);
     }
