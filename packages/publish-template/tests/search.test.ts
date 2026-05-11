@@ -98,6 +98,80 @@ describe("searchCorpus", () => {
     const hitsUpper = searchCorpus(corpus, "KNOWLEDGE");
     expect(hitsLower.length).toBe(hitsUpper.length);
   });
+
+  it("ranks heading matches higher than plain body matches", () => {
+    const doc = (id: string, body: string): SearchDoc => ({
+      id,
+      title: id,
+      slug: id,
+      aliases: [],
+      body,
+    });
+    const cor = [
+      doc("heading", "# Target Word\n\nUnrelated body."),
+      doc("body", "intro line\n\nrandom Target Word in plain text"),
+    ];
+    const hits = searchCorpus(cor, "Target");
+    // Both qualify, but heading wins.
+    expect(hits[0]!.doc.id).toBe("heading");
+    expect(hits[0]!.score).toBeGreaterThan(hits[1]!.score);
+  });
+
+  it("respects maxResults", () => {
+    const cor = Array.from({ length: 10 }, (_, i) => ({
+      id: `n${i}`,
+      title: `n${i}`,
+      slug: `n${i}`,
+      aliases: [],
+      body: `match in body ${i}`,
+    }));
+    const hits = searchCorpus(cor, "match", { maxResults: 3 });
+    expect(hits.length).toBe(3);
+  });
+
+  it("populates titleMatches with offset ranges into the title", () => {
+    const cor: SearchDoc[] = [
+      {
+        id: "x",
+        title: "Knowledge Graphs",
+        slug: "x",
+        aliases: [],
+        body: "",
+      },
+    ];
+    const hits = searchCorpus(cor, "graphs");
+    expect(hits.length).toBe(1);
+    const r = hits[0]!.titleMatches[0]!;
+    expect(hits[0]!.doc.title.slice(r.start, r.end).toLowerCase()).toBe(
+      "graphs",
+    );
+  });
+
+  it("merges overlapping multi-term ranges on the same body line", () => {
+    const cor: SearchDoc[] = [
+      {
+        id: "x",
+        title: "x",
+        slug: "x",
+        aliases: [],
+        // Both "abc" and "bcd" hit this line, with overlapping spans.
+        body: "abcd context",
+      },
+    ];
+    const hits = searchCorpus(cor, "abc bcd");
+    expect(hits.length).toBe(1);
+    const ranges = hits[0]!.lines[0]!.ranges;
+    // mergeRanges should collapse [0,3) and [1,4) into a single [0,4).
+    expect(ranges.length).toBe(1);
+    expect(ranges[0]).toEqual({ start: 0, end: 4 });
+  });
+
+  it("does not crash on documents with empty body", () => {
+    const cor: SearchDoc[] = [
+      { id: "z", title: "z", slug: "z", aliases: [], body: "" },
+    ];
+    expect(() => searchCorpus(cor, "anything")).not.toThrow();
+  });
 });
 
 describe("highlight", () => {
