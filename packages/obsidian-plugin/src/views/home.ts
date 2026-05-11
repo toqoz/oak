@@ -6,6 +6,7 @@
 
 import {
   ItemView,
+  Notice,
   TFile,
   WorkspaceLeaf,
   type App,
@@ -16,12 +17,15 @@ import {
   homeViewModel,
   listMountStatus,
   recentCommits,
+  slugify,
   type CommitRecord,
   type GitStatus,
   type HomeEntry,
   type HomeViewModel,
   type MountStatus,
+  type UnmanagedEntry,
 } from "@oak/core";
+import { ulid } from "ulid";
 
 import type { VaultSnapshot, VaultState } from "../state.js";
 import type { OakOpenFile } from "../open-file.js";
@@ -172,9 +176,81 @@ export class OakHomeView extends ItemView {
       this.renderEntryList(sec, list);
     }
 
+    this.renderUnmanagedSection(root, m.unmanaged);
     this.renderGitSection(root);
     this.renderExternalSection(root);
     this.renderExitFooter(root);
+  }
+
+  private renderUnmanagedSection(
+    parent: HTMLElement,
+    entries: UnmanagedEntry[],
+  ): void {
+    if (entries.length === 0) return;
+    const sec = parent.createDiv({ cls: "oak-home-section" });
+    sec.createEl("h2", { text: `Unmanaged files (${entries.length})` });
+    sec.createEl("p", {
+      cls: "oak-home-meta",
+      text: "Markdown files in the vault without an oak `id`. Import to add the standard frontmatter.",
+    });
+    const ul = sec.createEl("ul", { cls: "oak-home-list" });
+    for (const entry of entries) {
+      const li = ul.createEl("li", { cls: "oak-unmanaged-item" });
+      const head = li.createDiv({ cls: "oak-unmanaged-head" });
+      head.createEl("span", {
+        cls: "oak-home-link oak-unmanaged-path",
+        text: entry.vaultRelPath,
+      });
+      const importBtn = head.createEl("button", {
+        cls: "oak-unmanaged-import",
+        text: "Import",
+      });
+      importBtn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        importBtn.disabled = true;
+        void this.importUnmanaged(entry).finally(() => {
+          importBtn.disabled = false;
+        });
+      });
+      const meta: string[] = [];
+      if (entry.updatedAt) meta.push(`updated ${entry.updatedAt.slice(0, 10)}`);
+      if (meta.length > 0) {
+        li.createEl("div", { cls: "oak-home-meta", text: meta.join(" · ") });
+      }
+    }
+  }
+
+  private async importUnmanaged(entry: UnmanagedEntry): Promise<void> {
+    const file = this.app2.vault.getAbstractFileByPath(entry.vaultRelPath);
+    if (!(file instanceof TFile)) {
+      new Notice(`oak: cannot import — file not found: ${entry.vaultRelPath}`);
+      return;
+    }
+    try {
+      await this.app2.fileManager.processFrontMatter(file, (fm) => {
+        const f = fm as Record<string, unknown>;
+        if (typeof f["id"] !== "string" || (f["id"] as string).length === 0) {
+          f["id"] = ulid();
+        }
+        const titleStr =
+          typeof f["title"] === "string" && (f["title"] as string).length > 0
+            ? (f["title"] as string)
+            : file.basename;
+        f["title"] = titleStr;
+        if (typeof f["visibility"] !== "string") {
+          f["visibility"] = "private";
+        }
+        if (typeof f["slug"] !== "string" || (f["slug"] as string).length === 0) {
+          const s = slugify(titleStr);
+          if (s.length > 0) f["slug"] = s;
+        }
+      });
+      new Notice(`oak: imported ${entry.vaultRelPath}`);
+      this.state.scheduleRefresh();
+    } catch (err) {
+      console.error("oak: import failed", err);
+      new Notice(`oak: import failed — ${(err as Error).message}`);
+    }
   }
 
   private renderExitFooter(parent: HTMLElement): void {

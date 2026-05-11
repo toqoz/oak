@@ -44,58 +44,32 @@ async function copyFixture(name: string): Promise<string> {
   return dest;
 }
 
-describe("agentContext (LLM policy)", () => {
-  it("excludes deny pages, summarises summary-only, includes allow", async () => {
+describe("agentContext", () => {
+  it("includes every page with full body and resolved links", async () => {
     const root = resolve(scratch, "vault");
     await cp(fxRoot("basic"), root, { recursive: true });
 
-    // Tweak the fixture: set per-page llm policies.
-    const setLlm = async (file: string, llm: string) => {
-      const p = resolve(root, file);
-      const raw = await readFile(p, "utf8");
-      const updated = raw.replace(
-        /^---\n/,
-        `---\nllm: ${llm}\n`,
-      );
-      await writeFile(p, updated, "utf8");
-    };
-    await setLlm("Local File First.md", "allow");
-    await setLlm("Project Alpha.md", "summary-only");
-    await setLlm("Diary.md", "deny");
-
     const vault = await parseVault(root);
     const graph = buildGraph(vault);
-    const ctx = agentContext(vault, graph, { summaryMaxChars: 40 });
+    const ctx = agentContext(vault, graph);
 
     const titles = ctx.map((e) => e.title).sort();
-    expect(titles).toEqual(["Local File First", "Project Alpha"]);
+    expect(titles).toContain("Local File First");
+    expect(titles).toContain("Project Alpha");
 
     const lff = ctx.find((e) => e.title === "Local File First")!;
-    expect(lff.llm).toBe("allow");
     expect(lff.body).toContain("vault is just a folder");
-
-    const projectAlpha = ctx.find((e) => e.title === "Project Alpha")!;
-    expect(projectAlpha.llm).toBe("summary-only");
-    expect(projectAlpha.body.length).toBeLessThanOrEqual(41); // <= max + ellipsis
   });
 
   it("masks external link targets", async () => {
     const root = await copyFixture("external-leak");
     const vault = await parseVault(root);
     const graph = buildGraph(vault);
-    // Mark the page as llm:allow so it's surfaced.
-    const path = resolve(root, "Public.md");
-    const raw = await readFile(path, "utf8");
-    await writeFile(path, raw.replace(/^---\n/, "---\nllm: allow\n"), "utf8");
-    const v2 = await parseVault(root);
-    const g2 = buildGraph(v2);
-    const ctx = agentContext(v2, g2);
+    const ctx = agentContext(vault, graph);
     const entry = ctx[0]!;
     const externalLinks = entry.links.filter((l) => l.status === "external");
     expect(externalLinks.length).toBeGreaterThan(0);
     expect(externalLinks.every((l) => l.target === "(external)")).toBe(true);
-    void vault;
-    void graph;
   });
 });
 

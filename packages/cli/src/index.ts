@@ -44,6 +44,7 @@ import {
   listMountStatus,
   loadAgendaConfig,
   markDone,
+  migrateTimestamps,
   mountDoctor,
   parseVault,
   partitionIssues,
@@ -65,7 +66,6 @@ import {
   type AgendaItem,
   type AgendaQuery,
   type AgendaView,
-  type LlmPolicy,
   type Visibility,
 } from "@oak/core";
 
@@ -98,7 +98,7 @@ Commands:
   agent diff <task>          Show diff + validation for an agent task
   agent accept <task>        Merge the agent worktree into main, clean up
   agent reject <task>        Discard the agent worktree and branch
-  agent context [--focus ID] LLM-policy-filtered vault snapshot (JSON)
+  agent context [--focus ID] Vault snapshot scoped by focus IDs (JSON)
 
   agenda                     Weekly agenda starting today (default)
   agenda a [--from D] [--days N]  Daily/weekly agenda view
@@ -106,6 +106,9 @@ Commands:
   agenda m <expr>            Match by tags/properties (e.g. work+urgent-someday)
   agenda s <regex>           Search entry titles + bodies
   agenda done <path>:<line>  Mark an entry DONE; advances repeaters
+
+  migrate timestamps         Backfill missing created/modified on oak pages
+                             (use --dry-run to preview)
 
 Common options:
   --vault <path>             Vault root (default: current directory)
@@ -163,6 +166,8 @@ async function main(argv: string[]): Promise<number> {
       return await cmdLog(vaultPath, parsed.flags, json);
     case "agenda":
       return await cmdAgenda(vaultPath, parsed.positional, parsed.flags, json);
+    case "migrate":
+      return await cmdMigrate(vaultPath, parsed.positional, parsed.flags, json);
     default:
       process.stderr.write(`Unknown command: ${parsed.command}\n\n`);
       process.stdout.write(HELP);
@@ -211,14 +216,6 @@ function parseVisibilityFlag(s: string | undefined): Visibility | undefined {
   );
 }
 
-function parseLlmFlag(s: string | undefined): LlmPolicy | undefined {
-  if (s === undefined) return undefined;
-  if (s === "allow" || s === "deny" || s === "summary-only") return s;
-  throw new Error(
-    `--llm must be one of allow, deny, summary-only (got \`${s}\`)`,
-  );
-}
-
 async function cmdNew(
   vaultPath: string,
   positional: string[],
@@ -230,15 +227,13 @@ async function cmdNew(
   const title = positional.join(" ").trim();
   if (!title) {
     process.stderr.write(
-      "Usage: oak new <title> [--visibility V] [--slug S] [--alias A,B] [--llm P] [--at PATH]\n",
+      "Usage: oak new <title> [--visibility V] [--slug S] [--alias A,B] [--at PATH]\n",
     );
     return 1;
   }
   let visibility: Visibility | undefined;
-  let llm: LlmPolicy | undefined;
   try {
     visibility = parseVisibilityFlag(getString(flags, "visibility"));
-    llm = parseLlmFlag(getString(flags, "llm"));
   } catch (err) {
     process.stderr.write(`oak new: ${(err as Error).message}\n`);
     return 1;
@@ -254,7 +249,6 @@ async function cmdNew(
     const result = await createPage(vaultPath, {
       title,
       ...(visibility ? { visibility } : {}),
-      ...(llm ? { llm } : {}),
       ...(slug ? { slug } : {}),
       ...(at ? { at } : {}),
       aliases,
@@ -268,7 +262,6 @@ async function cmdNew(
     process.stdout.write(`  title:      ${result.title}\n`);
     process.stdout.write(`  visibility: ${result.visibility}\n`);
     process.stdout.write(`  slug:       ${result.slug}\n`);
-    process.stdout.write(`  llm:        ${result.llm}\n`);
     if (result.aliases.length > 0) {
       process.stdout.write(`  aliases:    ${result.aliases.join(", ")}\n`);
     }
@@ -446,10 +439,19 @@ async function cmdTwoHop(
       return {
         pageId: h.pageId,
         title: target?.title ?? null,
-        via: h.via.map((id) => ({
-          id,
-          title: vault.pages.get(id)?.title ?? null,
-        })),
+        via: h.via.map((b) =>
+          b.kind === "page"
+            ? {
+                kind: "page" as const,
+                id: b.pageId,
+                title: vault.pages.get(b.pageId)?.title ?? null,
+              }
+            : {
+                kind: "redlink" as const,
+                targetKey: b.targetKey,
+                display: b.display,
+              },
+        ),
         score: h.score,
       };
     });
@@ -465,7 +467,11 @@ async function cmdTwoHop(
     const target = vault.pages.get(h.pageId);
     const title = target?.title ?? h.pageId;
     const via = h.via
-      .map((id) => vault.pages.get(id)?.title ?? id)
+      .map((b) =>
+        b.kind === "page"
+          ? (vault.pages.get(b.pageId)?.title ?? b.pageId)
+          : `[[${b.display}]]`,
+      )
       .join(", ");
     process.stdout.write(`- ${title}  [score=${h.score}]  via: ${via}\n`);
   }
@@ -763,7 +769,6 @@ async function cmdMountAdd(
   }
   const mode = getString(flags, "mode");
   const gitPolicy = getString(flags, "git-policy");
-  const llmPolicy = getString(flags, "llm-policy");
 
   try {
     const entry = await addMount(vaultPath, {
@@ -772,11 +777,6 @@ async function cmdMountAdd(
       ...(mode === "readwrite" || mode === "readonly" ? { mode } : {}),
       ...(gitPolicy === "ignore" || gitPolicy === "status-only"
         ? { gitPolicy }
-        : {}),
-      ...(llmPolicy === "allow" ||
-      llmPolicy === "deny" ||
-      llmPolicy === "summary-only"
-        ? { llmPolicy }
         : {}),
     });
     if (json) {
@@ -813,7 +813,7 @@ async function cmdMountList(
       `- ${s.entry.id}\n` +
         `    link:   ${s.entry.linkPath} [${linkOk}]\n` +
         `    target: ${s.entry.targetPath} [${targetOk}]\n` +
-        `    mode:   ${s.entry.mode}, gitPolicy: ${s.entry.gitPolicy}, llm: ${s.entry.llmPolicy}\n`,
+        `    mode:   ${s.entry.mode}, gitPolicy: ${s.entry.gitPolicy}\n`,
     );
   }
   return 0;
@@ -1166,6 +1166,7 @@ async function cmdAgendaDone(
       config,
       undefined,
       target.relPath,
+      vaultPath,
     );
     if (json) {
       process.stdout.write(
@@ -1193,6 +1194,46 @@ async function cmdAgendaDone(
     }
     throw err;
   }
+}
+
+async function cmdMigrate(
+  vaultPath: string,
+  positional: string[],
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const sub = positional[0];
+  if (sub !== "timestamps") {
+    process.stderr.write("Usage: oak migrate timestamps [--dry-run]\n");
+    return 1;
+  }
+  const dryRun = getBool(flags, "dry-run");
+  const report = await migrateTimestamps({ vaultRoot: vaultPath, dryRun });
+  if (json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    return 0;
+  }
+  if (report.changed === 0) {
+    process.stdout.write(
+      `migrate timestamps: scanned ${report.scanned} page(s); nothing to fill.\n`,
+    );
+    return 0;
+  }
+  const prefix = dryRun ? "[dry-run] would update" : "updated";
+  for (const entry of report.entries) {
+    const parts: string[] = [];
+    if (entry.added.created !== undefined) {
+      parts.push(`created=${entry.added.created}`);
+    }
+    if (entry.added.modified !== undefined) {
+      parts.push(`modified=${entry.added.modified}`);
+    }
+    process.stdout.write(`${prefix} ${entry.relPath}  ${parts.join(" ")}\n`);
+  }
+  process.stdout.write(
+    `\nmigrate timestamps: ${report.changed} changed, ${report.unchanged} unchanged, ${report.scanned} scanned${dryRun ? " (dry-run, no files written)" : ""}.\n`,
+  );
+  return 0;
 }
 
 function serialiseView(view: AgendaView): unknown {

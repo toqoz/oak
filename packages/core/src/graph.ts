@@ -7,11 +7,40 @@ import type {
   RawLink,
   ResolvedLink,
   TwoHop,
+  TwoHopBridge,
   Vault,
 } from "./types.js";
+import { isManagedPage } from "./parse.js";
 import { normalizeKey } from "./slug.js";
 
 const EXTERNAL_PREFIX = "_external/";
+
+// Synthetic node id for an unresolved (red) link target. The graph treats
+// real pages and red-link targets as the same kind of node — both have
+// inbound references — so they share one address space. The `redlink:`
+// prefix never collides with a page id (ULIDs don't contain `:`).
+const REDLINK_PREFIX = "redlink:";
+
+export function redlinkTargetId(key: string): string {
+  return REDLINK_PREFIX + normalizeKey(key);
+}
+
+export function isRedlinkTarget(id: string): boolean {
+  return id.startsWith(REDLINK_PREFIX);
+}
+
+// Return the graph node id this link points at, or null if the link has no
+// addressable target (external/invalid). Resolved links point at a page id;
+// unresolved links point at a red-link node id.
+export function linkTargetId(link: ResolvedLink): string | null {
+  const r = link.resolution;
+  if (r.status === "resolved") return r.targetId;
+  if (r.status === "unresolved") {
+    const key = normalizeKey(r.targetKey);
+    return key.length === 0 ? null : REDLINK_PREFIX + key;
+  }
+  return null;
+}
 
 function resolveOne(vault: Vault, link: RawLink): LinkResolution {
   return resolveTarget(vault, link.target);
@@ -83,16 +112,19 @@ export function buildGraph(vault: Vault): Graph {
   const incoming = new Map<string, Backlink[]>();
 
   for (const page of vault.pages.values()) {
+    if (!isManagedPage(page)) continue;
     const resolved = resolveLinks(vault, page.links);
     outgoing.set(page.id, resolved);
 
     for (const link of resolved) {
-      if (link.resolution.status !== "resolved") continue;
-      const targetId = link.resolution.targetId;
+      const targetId = linkTargetId(link);
+      if (targetId === null) continue;
       const list = incoming.get(targetId) ?? [];
       list.push({
         fromId: page.id,
         context: lineContextOf(page.body, link.line),
+        line: link.line,
+        raw: link.raw,
       });
       incoming.set(targetId, list);
     }
@@ -109,43 +141,90 @@ export function getBacklinks(graph: Graph, pageId: string): Backlink[] {
   return graph.incoming.get(pageId) ?? [];
 }
 
-function neighborSet(graph: Graph, pageId: string): Set<string> {
+// Walk the graph treating both pages and red-link targets uniformly: each
+// has inbound refs (in `incoming`); only pages additionally have outbound
+// links (in `outgoing`).
+function neighborSet(graph: Graph, node: string): Set<string> {
   const set = new Set<string>();
-  for (const link of graph.outgoing.get(pageId) ?? []) {
-    if (link.resolution.status === "resolved") {
-      set.add(link.resolution.targetId);
-    }
+  for (const link of graph.outgoing.get(node) ?? []) {
+    const t = linkTargetId(link);
+    if (t !== null) set.add(t);
   }
-  for (const back of graph.incoming.get(pageId) ?? []) {
+  for (const back of graph.incoming.get(node) ?? []) {
     set.add(back.fromId);
   }
   return set;
 }
 
+// Find the original (case-preserving) target text for a red-link node by
+// scanning any page known to link to it. Both the source and the candidate
+// link to the bridge, so at least one will appear in `incoming`.
+function redlinkDisplay(graph: Graph, node: string): string {
+  const key = node.slice(REDLINK_PREFIX.length);
+  for (const ref of graph.incoming.get(node) ?? []) {
+    for (const link of graph.outgoing.get(ref.fromId) ?? []) {
+      if (
+        link.resolution.status === "unresolved" &&
+        normalizeKey(link.resolution.targetKey) === key
+      ) {
+        return link.resolution.targetKey.trim();
+      }
+    }
+  }
+  return key;
+}
+
+function bridgeFromNode(graph: Graph, node: string): TwoHopBridge {
+  if (isRedlinkTarget(node)) {
+    return {
+      kind: "redlink",
+      targetKey: node.slice(REDLINK_PREFIX.length),
+      display: redlinkDisplay(graph, node),
+    };
+  }
+  return { kind: "page", pageId: node };
+}
+
+function bridgeKey(b: TwoHopBridge): string {
+  return b.kind === "page" ? `p:${b.pageId}` : `r:${b.targetKey}`;
+}
+
 export function getTwoHopLinks(graph: Graph, pageId: string): TwoHop[] {
   const directNeighbors = neighborSet(graph, pageId);
-  const exclude = new Set(directNeighbors);
-  exclude.add(pageId);
 
-  // Collect bridges per two-hop candidate.
-  const bridges = new Map<string, Set<string>>();
+  // Exclude self and any direct page-neighbors as 2-hop candidates. Red-link
+  // targets are never candidates themselves (no page exists there yet); we
+  // only walk *through* them.
+  const exclude = new Set<string>();
+  exclude.add(pageId);
+  for (const n of directNeighbors) {
+    if (!isRedlinkTarget(n)) exclude.add(n);
+  }
+
+  const bridges = new Map<string, TwoHopBridge[]>();
   for (const neighbor of directNeighbors) {
-    const second = neighborSet(graph, neighbor);
-    for (const candidate of second) {
+    const bridge = bridgeFromNode(graph, neighbor);
+    for (const candidate of neighborSet(graph, neighbor)) {
+      if (isRedlinkTarget(candidate)) continue;
       if (exclude.has(candidate)) continue;
-      const set = bridges.get(candidate) ?? new Set<string>();
-      set.add(neighbor);
-      bridges.set(candidate, set);
+      const list = bridges.get(candidate) ?? [];
+      list.push(bridge);
+      bridges.set(candidate, list);
     }
   }
 
   const out: TwoHop[] = [];
-  for (const [candidate, viaSet] of bridges) {
-    out.push({
-      pageId: candidate,
-      via: [...viaSet].sort(),
-      score: viaSet.size,
-    });
+  for (const [candidate, vias] of bridges) {
+    const seen = new Set<string>();
+    const uniq: TwoHopBridge[] = [];
+    for (const v of vias) {
+      const k = bridgeKey(v);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push(v);
+    }
+    uniq.sort((a, b) => bridgeKey(a).localeCompare(bridgeKey(b)));
+    out.push({ pageId: candidate, via: uniq, score: uniq.length });
   }
   out.sort((a, b) => b.score - a.score || a.pageId.localeCompare(b.pageId));
   return out;

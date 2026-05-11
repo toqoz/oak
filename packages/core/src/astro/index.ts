@@ -57,7 +57,6 @@ export type OakEntryData = {
   slug: string;
   visibility: Visibility;
   aliases: string[];
-  llm: OakPage["llm"];
   // Outbound resolved links to other publishable pages.
   outbound: Array<{ id: string; title: string; slug: string }>;
   // Inbound (backlink) summary, with the line of context where the
@@ -169,7 +168,6 @@ export async function loadOakPagesInto(
       slug: page.slug,
       visibility: page.visibility,
       aliases: page.aliases,
-      llm: page.llm,
       outbound: computeOutbound(page, vault, graph, visible),
       inbound: computeInbound(page, vault, graph, visible),
     };

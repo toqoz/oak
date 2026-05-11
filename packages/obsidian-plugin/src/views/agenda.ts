@@ -42,6 +42,8 @@ import {
 
 import { vaultRoot } from "../paths.js";
 import type { OakOpenFile } from "../open-file.js";
+import type OakPlugin from "../main.js";
+import { refileHeading } from "../refile.js";
 import type { VaultSnapshot, VaultState } from "../state.js";
 
 export const VIEW_TYPE_OAK_AGENDA = "oak-agenda";
@@ -119,6 +121,7 @@ export class OakAgendaView extends ItemView {
     private state: VaultState,
     private app2: App,
     private openFile: OakOpenFile,
+    private plugin: OakPlugin,
   ) {
     super(leaf);
   }
@@ -170,6 +173,11 @@ export class OakAgendaView extends ItemView {
     scope.register([], "Enter", ifNotEditing(() => this.openFocused()));
     scope.register([], "d", ifNotEditing(() => void this.markFocusedDone()));
     scope.register([], "r", ifNotEditing(() => void this.state.refresh()));
+    // Capital `R` is org-mode's refile binding. We use Shift-R rather
+    // than `R` directly because Obsidian's Scope normalises to the
+    // physical key — registering "R" without modifiers also matches
+    // lowercase `r`, which would shadow the refresh binding above.
+    scope.register(["Shift"], "r", ifNotEditing(() => void this.refileFocused()));
   }
 
   private setFilter(filter: Filter): void {
@@ -670,6 +678,27 @@ export class OakAgendaView extends ItemView {
     }
   }
 
+  private async refileFocused(): Promise<void> {
+    const target = this.findFocused();
+    if (!target) {
+      new Notice("oak: focus an entry first (j/k or click)");
+      return;
+    }
+    await refileHeading(
+      this.plugin,
+      {
+        filePath: target.entry.filePath,
+        relPath: target.entry.relPath,
+        line: target.entry.line,
+        level: target.entry.level,
+        title: target.entry.title,
+        entryId: target.entry.entryId,
+      },
+      this.plugin.refileConfig,
+      this.config,
+    );
+  }
+
   private async markFocusedDone(): Promise<void> {
     const target = this.findFocused();
     if (!target) {
@@ -683,6 +712,7 @@ export class OakAgendaView extends ItemView {
         this.config,
         undefined,
         target.entry.relPath,
+        vaultRoot(this.app2),
       );
       new Notice(result.repeated ? "Advanced repeater" : "Marked DONE");
       this.state.scheduleRefresh();

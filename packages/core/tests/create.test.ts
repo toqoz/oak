@@ -29,7 +29,6 @@ describe("composePage (pure)", () => {
     expect(composed.vaultRelPath).toBe("My - Awesome- Page.md");
     expect(composed.id).toBe("01HX000000000000000000NEW1");
     expect(composed.visibility).toBe("private");
-    expect(composed.llm).toBe("deny");
     expect(composed.slug).toBe("my-awesome-page");
     expect(composed.text).toContain("id: 01HX000000000000000000NEW1");
     expect(composed.text).toContain("title: 'My / Awesome: Page'");
@@ -43,12 +42,10 @@ describe("composePage (pure)", () => {
       at: "journal/2026/04",
       aliases: [" daily ", "", "Diary"],
       visibility: "public",
-      llm: "summary-only",
     });
     expect(composed.vaultRelPath).toBe("journal/2026/04.md");
     expect(composed.aliases).toEqual(["daily", "Diary"]);
     expect(composed.visibility).toBe("public");
-    expect(composed.llm).toBe("summary-only");
     expect(composed.text).toContain("aliases:\n  - daily\n  - Diary");
   });
 
@@ -57,6 +54,13 @@ describe("composePage (pure)", () => {
     expect(() => composePage({ title: "x", at: "/etc/passwd" })).toThrow(
       /vault-relative/,
     );
+  });
+
+  it("stamps `created` and `modified` to the same instant", () => {
+    const fixed = new Date("2026-05-10T12:34:56Z");
+    const composed = composePage({ title: "ts", now: () => fixed });
+    expect(composed.text).toContain("created: '2026-05-10T12:34:56Z'");
+    expect(composed.text).toContain("modified: '2026-05-10T12:34:56Z'");
   });
 });
 
@@ -80,6 +84,10 @@ describe("createPage (filesystem)", () => {
     expect(page.visibility).toBe("public");
     expect(page.aliases).toEqual(["hello"]);
     expect(page.parseIssues.filter((i) => i.severity === "error")).toEqual([]);
+    // Newly-composed page should round-trip through parseVault with
+    // both timestamps populated to ISO-second UTC strings.
+    expect(page.created).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(page.modified).toBe(page.created);
 
     const graph = buildGraph(vault);
     expect(graph.outgoing.get(page.id) ?? []).toEqual([]);

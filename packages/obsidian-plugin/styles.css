@@ -169,43 +169,47 @@ body.oak-mode-active .oak-agenda-titlerow > .oak-agenda-title {
   display: none;
 }
 
-/* Scratch entry point — `line-squiggle` icon button at the right
-   edge of every view-header. Standard `.clickable-icon` chrome
-   (size, hover, padding, focus ring) is inherited so the button
-   matches the back/forward + home/agenda/search nav cluster on the
-   left; we only add `margin-left: auto` to push it past the
-   natural-width left chrome and the accent tint when a scratch
-   leaf is open elsewhere in the workspace. */
-body.oak-mode-active .view-header > .oak-scratch-link {
+/* Per-pane oak action menu — `ellipsis-vertical` button at the
+   right edge of every view-header that opens a dropdown with the
+   pane's oak actions (open scratch, new page, and — on a markdown
+   leaf — delete file…). Standard `.clickable-icon` chrome (size,
+   hover, padding, focus ring) is inherited so the button matches
+   the back/forward + home/agenda/search nav cluster on the left;
+   we only add `margin-left: auto` to push it past the natural-
+   width left chrome and accent-tint it while a scratch leaf is
+   open elsewhere in the workspace (the menu is the only entry
+   point for closing scratch, so the tint preserves the at-a-
+   glance "scratch is up" cue the standalone link used to give). */
+body.oak-mode-active .view-header > .oak-actions-menu {
   margin-left: auto;
 }
-body.oak-mode-active .view-header > .oak-scratch-link.is-active {
+body.oak-mode-active .view-header > .oak-actions-menu.is-active {
   color: var(--text-accent);
 }
 
 /* Scratch leaf — hide both the per-pane tab strip and the view
-   header (back/forward + nav buttons + scratch link) so the bottom
+   header (back/forward + nav buttons + actions menu) so the bottom
    split reads as a flush "scratch buffer" surface rather than a
    tabbed editor. The `*scratch*` heading injected into the title
-   row + the `*scratch*` link in every other pane's header are
-   enough identity; the chrome on the scratch pane itself is just
-   noise. Closing scratch happens via the link in another pane's
-   header (toggle) or the "Toggle scratch" command. `:has()` selects
-   the workspace tab group that contains the scratch leaf. */
+   row + the actions menu in every other pane's header are enough
+   identity; the chrome on the scratch pane itself is just noise.
+   Closing scratch happens via the menu in another pane's header
+   (toggle) or the "Toggle scratch" command. `:has()` selects the
+   workspace tab group that contains the scratch leaf. */
 body.oak-mode-active
   .workspace-tabs:has(.oak-leaf-scratch)
   > .workspace-tab-header-container {
   display: none !important;
 }
 /* Suppress the standard view-header chrome on the scratch pane
-   (back/forward, title, actions, the right-edge `Scratch` link)
+   (back/forward, title, actions, the right-edge actions menu)
    so the bar is left empty for the custom scratch row injected
    into it. The view-header itself stays visible — the row needs
    somewhere to land. */
 body.oak-mode-active .oak-leaf-scratch .view-header > .view-header-left,
 body.oak-mode-active .oak-leaf-scratch .view-header > .view-header-title-container,
 body.oak-mode-active .oak-leaf-scratch .view-header > .view-actions,
-body.oak-mode-active .oak-leaf-scratch .view-header > .oak-scratch-link {
+body.oak-mode-active .oak-leaf-scratch .view-header > .oak-actions-menu {
   display: none !important;
 }
 /* Center the scratch chrome within the view-header height.
@@ -394,6 +398,162 @@ body.oak-mode-active .oak-leaf-scratch .cm-scroller {
   padding-block-start: 0 !important;
 }
 
+/* Refile peek pane — same chrome strategy as scratch. The pane is a
+   transient peek of the destination after a refile so the standard
+   tab + view-header navigation is noise; we collapse the chrome down
+   to a single × close button on the trailing edge. */
+body.oak-mode-active
+  .workspace-tabs:has(.oak-leaf-refile-peek)
+  > .workspace-tab-header-container {
+  display: none !important;
+}
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-header-left,
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-header-title-container,
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .view-actions,
+body.oak-mode-active .oak-leaf-refile-peek .view-header > .oak-actions-menu {
+  display: none !important;
+}
+body.oak-mode-active .oak-leaf-refile-peek .view-header {
+  align-items: center !important;
+}
+body.oak-mode-active .oak-page-title-row.oak-row-refile-peek {
+  position: static;
+  flex: 1 1 auto;
+  background: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+/* The peek pane keeps the regular oak `.oak-page-title-row` (editable
+   title + visibility) absolutely-positioned above the body. The
+   default `.cm-scroller` padding-block-start (`var(--file-margins)`)
+   reserves the room that title needs — don't zero it out the way we
+   do for scratch, or the title overlaps the first body line. */
+
+/* While the peek pane is the active main-pane leaf, fade the rest of
+   the main pane so the peek reads as the focused surface. Sidebar
+   panes are intentionally left at full opacity — they remain
+   navigable while the peek is up. The `:not(:has(...))` filter pins
+   the dim to leaves outside the peek. The transition applies to all
+   main-pane leaves so the source fades in/out smoothly when peek
+   focus toggles. */
+body.oak-mode-active .workspace-split.mod-root .workspace-leaf {
+  transition: opacity 0.12s ease;
+}
+body.oak-mode-active.oak-refile-peek-active
+  .workspace-split.mod-root
+  .workspace-leaf:not(:has(.oak-leaf-refile-peek)) {
+  opacity: 0.5;
+}
+
+/* Refile target picker — 2-column ItemView rendered inside the peek
+   leaf. The leaf reuses `oak-leaf-refile-peek` so the chrome rules
+   above hide the tab strip and default view-header chrome; the rest
+   of the picker UI (filter input, file list, preview, hint footer) is
+   self-contained inside `.oak-refile-picker`. */
+.oak-refile-picker {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--background-primary);
+}
+.oak-refile-picker-header {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.oak-refile-picker-filter {
+  width: 100%;
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+.oak-refile-picker-filter:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+.oak-refile-picker-main {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+.oak-refile-picker-list {
+  flex: 0 0 38%;
+  min-width: 220px;
+  max-width: 480px;
+  overflow-y: auto;
+  border-right: 1px solid var(--background-modifier-border);
+  padding: 4px 0;
+}
+.oak-refile-picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 12px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.oak-refile-picker-row:hover {
+  background: var(--background-modifier-hover);
+}
+.oak-refile-picker-row.is-selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.oak-refile-picker-row-path {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oak-refile-picker-row-count {
+  flex: 0 0 auto;
+  font-size: 0.8em;
+  opacity: 0.7;
+}
+.oak-refile-picker-row-section {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.oak-refile-picker-row-level {
+  flex: 0 0 auto;
+  font-size: 0.7em;
+  opacity: 0.6;
+}
+.oak-refile-picker-empty {
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+.oak-refile-picker-preview {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+.oak-refile-picker-preview-content {
+  /* Inherit Obsidian's default markdown rendering. */
+}
+.oak-refile-picker-preview-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.oak-refile-picker-hint {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 0.8em;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 /* "Related" footer — sits *inside* the scroll container (alongside
    `.cm-content` for source / live-preview, alongside
    `.markdown-preview-section` for reading mode), so the cards
@@ -477,6 +637,7 @@ body.oak-mode-active .oak-page-links-empty {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.5;
+  white-space: pre-line;
   display: -webkit-box;
   -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
@@ -491,7 +652,7 @@ body.oak-mode-active .oak-page-links-empty {
 }
 
 /* Per-page meta block sitting after the related cards. id, slug,
-   llm, status — the small print of the page. Rendered as a
+   status — the small print of the page. Rendered as a
    compact label-value grid. */
 .oak-page-meta {
   display: none;
@@ -527,8 +688,7 @@ body.oak-mode-active .oak-page-meta-readonly {
 body.oak-mode-active .oak-page-meta-error {
   color: var(--text-error);
 }
-body.oak-mode-active .oak-page-meta-input,
-body.oak-mode-active .oak-page-meta-select {
+body.oak-mode-active .oak-page-meta-input {
   background: transparent;
   border: 1px solid var(--background-modifier-border);
   border-radius: 4px;
@@ -538,8 +698,7 @@ body.oak-mode-active .oak-page-meta-select {
   width: auto;
   min-width: 0;
 }
-body.oak-mode-active .oak-page-meta-input:focus,
-body.oak-mode-active .oak-page-meta-select:focus {
+body.oak-mode-active .oak-page-meta-input:focus {
   outline: 1px solid var(--text-accent);
   outline-offset: 0;
 }
@@ -653,8 +812,8 @@ body.oak-mode-active .mod-right-split {
 
 /* Obsidian's built-in Properties view (.metadata-container) is
    replaced by oak's structured form in the sidebar (id read-only,
-   visibility / llm validated by select). Hiding the default avoids
-   two competing editors over the same frontmatter. */
+   slug as text input). Hiding the default avoids two competing
+   editors over the same frontmatter. */
 body.oak-mode-active .metadata-container,
 body.oak-mode-active .metadata-properties {
   display: none !important;
@@ -1367,6 +1526,42 @@ body.oak-mode-active .cm-formatting-header {
   margin: 0.3em 0 0;
   font-size: 0.95em;
   opacity: 0.85;
+  white-space: pre-line;
+}
+
+.oak-unmanaged-item {
+  margin-bottom: 0.6em;
+}
+
+.oak-unmanaged-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
+}
+
+.oak-unmanaged-path {
+  font-family: var(--font-monospace);
+  font-size: 0.95em;
+  word-break: break-all;
+}
+
+.oak-unmanaged-import {
+  flex-shrink: 0;
+  padding: 0.2em 0.8em;
+  font-size: 0.85em;
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border-radius: 4px;
+}
+.oak-unmanaged-import:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+.oak-unmanaged-import:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .oak-home-exit {
@@ -2041,4 +2236,12 @@ button.oak-agenda-tooltip-cal-day.is-today {
   padding-top: 6px;
   font-size: 0.85em;
   color: var(--text-faint);
+}
+
+/* Custom command palette: visually demote the "open system palette"
+   escape-hatch row so the curated oak commands read as the primary
+   surface and the fallback as secondary. */
+.oak-command-palette .suggestion-item.oak-command-palette-system {
+  color: var(--text-muted);
+  font-style: italic;
 }

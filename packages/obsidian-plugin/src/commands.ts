@@ -17,12 +17,15 @@ import {
   buildGraph,
   checkpoint,
   composePage,
+  findEnclosingHeading,
+  frontmatterLineCount,
   parseVault,
   partitionIssues,
   snapshot,
   validateVault,
   type Visibility,
 } from "@oak/core";
+import { findHeadingsInEditorSelection } from "./refile-selection.js";
 
 import type OakPlugin from "./main.js";
 import {
@@ -32,6 +35,7 @@ import {
 } from "./paths.js";
 import { findWikiTargetInLine } from "./wiki-cursor.js";
 import { extractFromSelection } from "./extract-selection.js";
+import { refileHeading, refileHeadings } from "./refile.js";
 
 const VISIBILITIES: Visibility[] = ["private", "unlisted", "public"];
 
@@ -205,6 +209,72 @@ function findWikiTargetAtCursor(
   pos: EditorPosition,
 ): string | null {
   return findWikiTargetInLine(editor.getLine(pos.line), pos.ch);
+}
+
+// Confirm-then-trash dialog. Routed through `fileManager.trashFile`
+// so the user's "Deleted files" preference (system trash / vault
+// `.trash` / permanent) is honored — same behavior as Obsidian's
+// own delete affordance.
+class ConfirmDeleteModal extends Modal {
+  constructor(
+    app: App,
+    private file: TFile,
+    private resolve: (confirmed: boolean) => void,
+  ) {
+    super(app);
+  }
+  override onOpen(): void {
+    this.contentEl.createEl("h2", { text: "Delete file?" });
+    this.contentEl.createEl("p", {
+      text: `"${this.file.basename}" will be moved to the trash.`,
+    });
+    new Setting(this.contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Delete")
+          .setWarning()
+          .onClick(() => this.finish(true)),
+      )
+      .addButton((b) =>
+        b.setButtonText("Cancel").onClick(() => this.finish(false)),
+      );
+  }
+  private finish(confirmed: boolean): void {
+    this.resolve(confirmed);
+    this.resolve = () => undefined;
+    this.close();
+  }
+  override onClose(): void {
+    this.contentEl.empty();
+    this.resolve(false);
+    this.resolve = () => undefined;
+  }
+}
+
+export async function deleteFile(
+  plugin: OakPlugin,
+  file: TFile,
+): Promise<void> {
+  const ok = await new Promise<boolean>((resolve) => {
+    new ConfirmDeleteModal(plugin.app, file, resolve).open();
+  });
+  if (!ok) return;
+  try {
+    await plugin.app.fileManager.trashFile(file);
+  } catch (err) {
+    new Notice(`oak: delete failed — ${(err as Error).message}`);
+    return;
+  }
+  plugin.state.scheduleRefresh();
+}
+
+export async function deleteCurrentFile(plugin: OakPlugin): Promise<void> {
+  const file = plugin.app.workspace.getActiveFile();
+  if (!file || file.extension !== "md") {
+    new Notice("oak: open a markdown file first");
+    return;
+  }
+  await deleteFile(plugin, file);
 }
 
 class NewPageModal extends Modal {
@@ -711,6 +781,88 @@ class ScratchHistoryModal extends Modal {
 
 export async function openScratchHistory(plugin: OakPlugin): Promise<void> {
   new ScratchHistoryModal(plugin).open();
+}
+
+// Editor entrypoint for `oak-refile`. Resolves the cursor position to
+// the immediately enclosing heading (any heading — TODO state, planning
+// line, and active timestamp are NOT required, mirroring emacs
+// `org-refile` which works on any heading). Returns null when the
+// cursor sits in frontmatter or above the first heading.
+export function findHeadingAtCursor(
+  raw: string,
+  cursorFileLine: number,
+): { line: number; level: number; title: string } | null {
+  const fmLines = frontmatterLineCount(raw);
+  const cursorBodyLine = cursorFileLine - fmLines + 1;
+  if (cursorBodyLine < 1) return null;
+  const body = raw.split("\n").slice(fmLines).join("\n");
+  return findEnclosingHeading(body, cursorBodyLine);
+}
+
+export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
+  const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
+  if (!view || !view.file) {
+    new Notice("oak: open a markdown file first");
+    return;
+  }
+  const editor = view.editor;
+  // Capture the source-is-peek flag synchronously, BEFORE any await.
+  // A transient closeRefilePeek (auto-close on focus shift, Esc) can
+  // null the plugin's `refilePeekLeaf` mid-flow; this snapshot
+  // preserves the truth as seen at command-start time so the peek
+  // promotion logic still fires.
+  const sourceLeaf = view.leaf;
+  const isPeekSource = sourceLeaf === plugin.peekLeaf();
+  const raw = await plugin.app.vault.cachedRead(view.file);
+  const filePath = `${vaultRoot(plugin.app)}/${view.file.path}`;
+  const relPath = view.file.path;
+
+  // Multi-section path: when the user has a non-empty selection that
+  // spans two or more headings' subtrees, refile all of them to one
+  // user-picked destination. A 0- or 1-heading selection falls back
+  // to the cursor-based single-heading flow so a casual selection of
+  // a body line still does the obvious thing.
+  if (editor.somethingSelected()) {
+    const from = editor.getCursor("from");
+    const to = editor.getCursor("to");
+    const headings = findHeadingsInEditorSelection(raw, from, to);
+    if (headings.length >= 2) {
+      await refileHeadings(
+        plugin,
+        headings.map((h) => ({
+          filePath,
+          relPath,
+          line: h.line,
+          level: h.level,
+          title: h.title,
+        })),
+        plugin.refileConfig,
+        plugin.agendaConfig,
+        { sourceLeaf, isPeekSource },
+      );
+      return;
+    }
+  }
+
+  const cursor = editor.getCursor();
+  const heading = findHeadingAtCursor(raw, cursor.line);
+  if (!heading) {
+    new Notice("oak: place the cursor inside a heading to refile");
+    return;
+  }
+  await refileHeading(
+    plugin,
+    {
+      filePath,
+      relPath,
+      line: heading.line,
+      level: heading.level,
+      title: heading.title,
+    },
+    plugin.refileConfig,
+    plugin.agendaConfig,
+    { sourceLeaf, isPeekSource },
+  );
 }
 
 export async function runMount(plugin: OakPlugin): Promise<void> {

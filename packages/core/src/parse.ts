@@ -14,10 +14,10 @@ import type {
   PageFrontmatter,
   Vault,
   Visibility,
-  LlmPolicy,
 } from "./types.js";
 import { extractLinks } from "./links.js";
 import { normalizeKey, slugify } from "./slug.js";
+import { coerceTimestamp } from "./timestamps.js";
 
 const SYSTEM_DIRS = new Set([
   "_assets",
@@ -43,12 +43,6 @@ const VALID_VISIBILITIES: ReadonlySet<Visibility> = new Set([
   "public",
 ]);
 
-const VALID_LLM_POLICIES: ReadonlySet<LlmPolicy> = new Set([
-  "allow",
-  "deny",
-  "summary-only",
-]);
-
 function toPosix(p: string): string {
   return p.split(sep).join(posix.sep);
 }
@@ -57,6 +51,19 @@ function basenameNoExt(filePath: string): string {
   const base = filePath.split(sep).pop()!;
   const ext = extname(base);
   return ext ? base.slice(0, -ext.length) : base;
+}
+
+// True iff the page has the structural prerequisites for oak to manage
+// it — namely, an `id` in its frontmatter. Files that lack one are
+// surfaced via the home view's "Unmanaged" section so the user can
+// import them; until then they're excluded from search, the SQLite
+// index, and link resolution lookup tables (an `unidentified:<path>`
+// id is meaningless as a backlink target).
+export function isManagedPage(page: OakPage): boolean {
+  for (const issue of page.parseIssues) {
+    if (issue.code === "missing-id") return false;
+  }
+  return true;
 }
 
 function coerceAliases(value: unknown): string[] {
@@ -132,21 +139,6 @@ export async function parsePage(
     });
   }
 
-  // LLM policy (default deny per directive)
-  let llm: LlmPolicy = "deny";
-  if (typeof fm.llm === "string") {
-    if (VALID_LLM_POLICIES.has(fm.llm as LlmPolicy)) {
-      llm = fm.llm as LlmPolicy;
-    } else {
-      issues.push({
-        severity: "warning",
-        code: "invalid-llm-policy",
-        message: `Invalid llm policy: ${JSON.stringify(fm.llm)} (using deny)`,
-        filePath,
-      });
-    }
-  }
-
   const aliases = coerceAliases(fm.aliases);
 
   let slug: string;
@@ -158,6 +150,11 @@ export async function parsePage(
 
   const links = extractLinks(body);
 
+  const created = coerceTimestamp((fm as Record<string, unknown>)["created"]);
+  const modified = coerceTimestamp(
+    (fm as Record<string, unknown>)["modified"],
+  );
+
   return {
     type: "page",
     id,
@@ -165,12 +162,13 @@ export async function parsePage(
     aliases,
     visibility,
     slug,
-    llm,
     filePath,
     relPath: relPathPosix,
     basename,
     body,
     rawFrontmatter: fm,
+    created,
+    modified,
     links,
     parseIssues: issues,
   };
@@ -256,13 +254,6 @@ async function loadMounts(rootPath: string): Promise<LoadedMounts> {
     const mode = v["mode"] === "readwrite" ? "readwrite" : "readonly";
     const gitPolicy =
       v["gitPolicy"] === "ignore" ? "ignore" : "status-only";
-    let llmPolicy: LlmPolicy = "deny";
-    if (
-      typeof v["llmPolicy"] === "string" &&
-      VALID_LLM_POLICIES.has(v["llmPolicy"] as LlmPolicy)
-    ) {
-      llmPolicy = v["llmPolicy"] as LlmPolicy;
-    }
 
     if (!targetPath) {
       issues.push({
@@ -290,7 +281,6 @@ async function loadMounts(rootPath: string): Promise<LoadedMounts> {
       mode,
       publishable: false,
       gitPolicy,
-      llmPolicy,
       exists,
     });
 
@@ -434,6 +424,12 @@ export async function parseVault(rootPath: string): Promise<Vault> {
   const basenameConflicts = new Map<string, string[]>();
 
   for (const page of pages.values()) {
+    // Unmanaged pages (no `id` in frontmatter) get a synthesised
+    // `unidentified:<path>` id that is useless as a link target, so
+    // skip the lookup tables entirely. The page stays in `pages` so
+    // the home view can surface it for import.
+    if (!isManagedPage(page)) continue;
+
     const tk = normalizeKey(page.title);
     if (byTitle.has(tk) && byTitle.get(tk) !== page.id) {
       recordConflict(titleConflicts, tk, byTitle.get(tk)!);

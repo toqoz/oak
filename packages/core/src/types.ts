@@ -5,7 +5,6 @@
 //   - File paths in `OakPage.filePath` are absolute; `relPath` is vault-relative.
 
 export type Visibility = "private" | "unlisted" | "public";
-export type LlmPolicy = "allow" | "deny" | "summary-only";
 
 export type PageFrontmatter = {
   id?: string;
@@ -13,7 +12,15 @@ export type PageFrontmatter = {
   aliases?: string[];
   visibility?: Visibility;
   slug?: string;
-  llm?: LlmPolicy;
+  // ISO 8601 UTC instants ("YYYY-MM-DDTHH:MM:SSZ"). Both are written by
+  // oak — `created` once on page composition, `modified` whenever a
+  // save changes the body or the title. Pure frontmatter edits that
+  // leave the title alone (visibility flip, alias add, …) intentionally
+  // skip the bump so a casual metadata tweak doesn't masquerade as a
+  // content edit in agendas/feeds. Older files without these fields
+  // round-trip untouched.
+  created?: string;
+  modified?: string;
 };
 
 export type LinkSyntax = "wiki" | "markdown";
@@ -45,12 +52,15 @@ export type OakPage = {
   aliases: string[];
   visibility: Visibility;
   slug: string;
-  llm: LlmPolicy;
   filePath: string;
   relPath: string;
   basename: string;
   body: string;
   rawFrontmatter: PageFrontmatter;
+  // null for files that pre-date the timestamp feature or that were
+  // authored outside oak's write paths.
+  created: string | null;
+  modified: string | null;
   links: RawLink[];
   // Issues encountered during parsing (e.g. invalid frontmatter values).
   parseIssues: Issue[];
@@ -76,7 +86,6 @@ export type Mount = {
   mode: MountMode;
   publishable: false;
   gitPolicy: GitPolicy;
-  llmPolicy: LlmPolicy;
   // Resolved status: whether the symlink/path exists at parse time.
   exists: boolean;
 };
@@ -92,11 +101,22 @@ export type Issue = {
 export type Backlink = {
   fromId: string;
   context: string;
+  // Line number (1-based) and the original raw link text inside the source
+  // page. Useful for "jump to reference" / `line N · [[Foo]]` listings.
+  line: number;
+  raw: string;
 };
+
+// A 2-hop bridge is either a real page or a shared red-link target. The
+// latter lets two pages mention the same not-yet-written concept and find
+// each other through it.
+export type TwoHopBridge =
+  | { kind: "page"; pageId: string }
+  | { kind: "redlink"; targetKey: string; display: string };
 
 export type TwoHop = {
   pageId: string;
-  via: string[];
+  via: TwoHopBridge[];
   score: number;
 };
 
@@ -123,5 +143,9 @@ export type Vault = {
 
 export type Graph = {
   outgoing: Map<string, ResolvedLink[]>;
+  // Incoming references, keyed by `linkTargetId(link)`. For resolved links
+  // the key is the target page id; for unresolved (red) links it is a
+  // synthetic `redlink:<normalized>` token. This way every link feeds the
+  // same backlink index regardless of whether its target exists yet.
   incoming: Map<string, Backlink[]>;
 };

@@ -10,6 +10,7 @@ import {
   getBacklinks,
   getOutboundLinks,
   getTwoHopLinks,
+  redlinkTargetId,
 } from "../src/graph.js";
 import { partitionIssues, validateVault } from "../src/validate.js";
 
@@ -116,6 +117,45 @@ describe("aliases fixture", () => {
   });
 });
 
+describe("twohop-redlinks fixture", () => {
+  it("bridges pages that share an unresolved wiki target", async () => {
+    const vault = await parseVault(fx("twohop-redlinks"));
+    const graph = buildGraph(vault);
+
+    const alpha = findPageId(vault, "Alpha");
+    const beta = findPageId(vault, "Beta");
+    const delta = findPageId(vault, "Delta");
+    const gamma = findPageId(vault, "Gamma");
+
+    // Both casings ("Shared Topic" / "shared topic") fold to the same
+    // synthetic target id and feed the unified `incoming` index.
+    const refs = getBacklinks(graph, redlinkTargetId("Shared Topic"));
+    expect(refs.map((r) => r.fromId).sort()).toEqual(
+      [alpha, beta, delta].sort(),
+    );
+
+    // From Alpha, both Beta and Delta should surface as 2-hop neighbours
+    // via the shared red link, and the bridge should be reported as a
+    // redlink (not a page).
+    const fromAlpha = getTwoHopLinks(graph, alpha);
+    const ids = fromAlpha.map((t) => t.pageId).sort();
+    expect(ids).toEqual([beta, delta].sort());
+    for (const entry of fromAlpha) {
+      expect(entry.via).toHaveLength(1);
+      const v = entry.via[0]!;
+      expect(v.kind).toBe("redlink");
+      if (v.kind === "redlink") expect(v.targetKey).toBe("shared topic");
+    }
+
+    // From Beta, Gamma is a direct neighbour and must not appear; Alpha and
+    // Delta should appear via the red link bridge.
+    const fromBeta = getTwoHopLinks(graph, beta);
+    const betaIds = fromBeta.map((t) => t.pageId);
+    expect(betaIds).not.toContain(gamma);
+    expect(betaIds.sort()).toEqual([alpha, delta].sort());
+  });
+});
+
 describe("system root files", () => {
   let scratchDir: string;
   beforeEach(async () => {
@@ -123,6 +163,38 @@ describe("system root files", () => {
   });
   afterEach(async () => {
     await rm(scratchDir, { recursive: true, force: true });
+  });
+
+  it("keeps unmanaged files (no `id`) out of lookup tables and the graph", async () => {
+    await writeFile(
+      resolve(scratchDir, "Real.md"),
+      "---\nid: 01HX0000000000000000REAL01\ntitle: Real\nvisibility: private\n---\n[[Orphan]]\n",
+      "utf8",
+    );
+    // No frontmatter at all — the kind of file an external sync tool
+    // might drop in. Note the basename matches the wikilink above.
+    await writeFile(
+      resolve(scratchDir, "Orphan.md"),
+      "# An orphan\n\njust prose\n",
+      "utf8",
+    );
+    const vault = await parseVault(scratchDir);
+    // The unmanaged file is still discoverable via vault.pages so the
+    // home view can offer to import it…
+    expect(vault.pages.size).toBe(2);
+    // …but it must not occupy any link-resolution slot. byBasename in
+    // particular would otherwise let `[[Orphan]]` resolve to a
+    // synthesised `unidentified:Orphan.md` id.
+    expect(vault.byBasename.has("orphan")).toBe(false);
+    expect(vault.byTitle.has("an orphan")).toBe(false);
+
+    const graph = buildGraph(vault);
+    const realId = findPageId(vault, "Real");
+    const outgoing = getOutboundLinks(graph, realId);
+    expect(outgoing).toHaveLength(1);
+    expect(outgoing[0]!.resolution.status).toBe("unresolved");
+    // No outgoing entry exists for the unmanaged file at all.
+    expect(graph.outgoing.has("unidentified:Orphan.md")).toBe(false);
   });
 
   it("excludes vault-root scratch.md from the indexed surface", async () => {
@@ -159,7 +231,11 @@ describe("twohop fixture", () => {
     const twohop = getTwoHopLinks(graph, a);
     const cEntry = twohop.find((t) => t.pageId === c);
     expect(cEntry).toBeDefined();
-    expect(cEntry!.via.sort()).toEqual([b, d].sort());
+    const viaPageIds = cEntry!.via
+      .map((v) => (v.kind === "page" ? v.pageId : null))
+      .filter((x): x is string => x !== null)
+      .sort();
+    expect(viaPageIds).toEqual([b, d].sort());
     expect(cEntry!.score).toBe(2);
 
     // Direct neighbours of A (B, D, E) must NOT appear in 2-hop.
