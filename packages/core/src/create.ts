@@ -10,7 +10,7 @@ import { ulid } from "ulid";
 
 import { slugify } from "./slug.js";
 import { nowIsoSecond } from "./timestamps.js";
-import type { LlmPolicy, Visibility } from "./types.js";
+import type { Visibility } from "./types.js";
 
 const ILLEGAL_FS = /[\\/:*?"<>|]/g;
 const VISIBILITIES: ReadonlySet<Visibility> = new Set([
@@ -18,18 +18,12 @@ const VISIBILITIES: ReadonlySet<Visibility> = new Set([
   "unlisted",
   "public",
 ]);
-const LLM_POLICIES: ReadonlySet<LlmPolicy> = new Set([
-  "allow",
-  "deny",
-  "summary-only",
-]);
 
 export type CreatePageOptions = {
   title: string;
   visibility?: Visibility;
   slug?: string;
   aliases?: string[];
-  llm?: LlmPolicy;
   body?: string;
   // Vault-relative path (e.g. "notes/2026/04.md"). If omitted, derived
   // from the title at the vault root.
@@ -49,7 +43,6 @@ export type CreatePageResult = {
   title: string;
   slug: string;
   visibility: Visibility;
-  llm: LlmPolicy;
   aliases: string[];
   filePath: string;
   vaultRelPath: string;
@@ -63,7 +56,6 @@ export type ComposedPage = {
   title: string;
   slug: string;
   visibility: Visibility;
-  llm: LlmPolicy;
   aliases: string[];
   vaultRelPath: string; // posix
   text: string; // full file content (frontmatter + body)
@@ -111,10 +103,6 @@ export function composePage(options: CreatePageOptions): ComposedPage {
   if (!VISIBILITIES.has(visibility)) {
     throw new Error(`composePage: invalid visibility \`${visibility}\``);
   }
-  const llm = options.llm ?? "deny";
-  if (!LLM_POLICIES.has(llm)) {
-    throw new Error(`composePage: invalid llm policy \`${llm}\``);
-  }
   const aliases = (options.aliases ?? [])
     .map((a) => a.trim())
     .filter((a) => a.length > 0);
@@ -141,13 +129,12 @@ export function composePage(options: CreatePageOptions): ComposedPage {
   const slug = options.slug?.trim() || slugify(title);
 
   // Build frontmatter explicitly so the YAML is self-documenting:
-  // every page on disk shows visibility/llm even when they're at
-  // their defaults.
+  // every page on disk shows visibility even when it's at the
+  // default.
   const fm: Record<string, unknown> = { id, title };
   if (aliases.length > 0) fm["aliases"] = aliases;
   fm["visibility"] = visibility;
   fm["slug"] = slug;
-  fm["llm"] = llm;
   // `created` / `modified` start equal — the file is brand new, so
   // creation and last-modification are the same instant. Subsequent
   // writes go through `withTimestampUpdate()` which only bumps
@@ -169,7 +156,6 @@ export function composePage(options: CreatePageOptions): ComposedPage {
     title,
     slug,
     visibility,
-    llm,
     aliases,
     vaultRelPath: toPosix(relPath),
     text,
@@ -198,7 +184,6 @@ export async function createPage(
     title: composed.title,
     slug: composed.slug,
     visibility: composed.visibility,
-    llm: composed.llm,
     aliases: composed.aliases,
     filePath: absPath,
     vaultRelPath: composed.vaultRelPath,

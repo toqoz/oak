@@ -1392,7 +1392,7 @@ export default class OakPlugin extends Plugin {
     }
   }
 
-  // Per-page metadata (id / slug / llm / status), rendered as a
+  // Per-page metadata (id / slug / status), rendered as a
   // compact row of label-value pairs after the Related cards.
   private applyPageMeta(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
@@ -1451,14 +1451,6 @@ export default class OakPlugin extends Plugin {
     const file = view.file;
     this.metaRowReadonly(container, "ID", page.id);
     this.metaRowText(container, "Slug", "slug", page.slug, file);
-    this.metaRowSelect(
-      container,
-      "LLM",
-      "llm",
-      page.llm,
-      ["deny", "allow", "summary-only"],
-      file,
-    );
 
     const issues = snap.issues.filter((i) => i.pageId === page.id);
     const errCount = issues.filter((i) => i.severity === "error").length;
@@ -1525,38 +1517,6 @@ export default class OakPlugin extends Plugin {
         ev.preventDefault();
         input.blur();
       }
-    });
-  }
-
-  private metaRowSelect(
-    parent: HTMLElement,
-    label: string,
-    key: string,
-    value: string,
-    options: string[],
-    file: TFile,
-  ): void {
-    parent.createEl("span", {
-      cls: "oak-page-meta-label",
-      text: label,
-    });
-    const select = parent.createEl("select", {
-      cls: "oak-page-meta-select",
-    });
-    for (const opt of options) {
-      const o = select.createEl("option", { text: opt });
-      o.value = opt;
-      if (opt === value) o.selected = true;
-    }
-    select.addEventListener("change", () => {
-      const next = select.value;
-      void this.app.fileManager
-        .processFrontMatter(file, (fm) => {
-          (fm as Record<string, unknown>)[key] = next;
-        })
-        .catch((err) =>
-          new Notice(`oak: failed to update ${key} — ${(err as Error).message}`),
-        );
     });
   }
 

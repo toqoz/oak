@@ -29,7 +29,6 @@ function makePage(filePath: string, body: string, relPath?: string): OakPage {
     aliases: [],
     visibility: "private",
     slug: "",
-    llm: "deny",
     filePath,
     relPath: relPath ?? filePath,
     basename: filePath.split(/[\\/]/).pop() ?? filePath,

@@ -23,7 +23,6 @@ function makePage(init: PageInit): OakPage {
     aliases: init.aliases ?? [],
     visibility: init.visibility ?? "private",
     slug: init.id,
-    llm: "deny",
     filePath: `/vault/${init.id}.md`,
     relPath: `${init.id}.md`,
     basename: init.id,

@@ -40,7 +40,6 @@ export type PageSummary = {
   title: string;
   visibility: string;
   slug: string;
-  llm: string;
   publishable: boolean;
   parseErrors: number;
 };
@@ -53,7 +52,6 @@ export function summarizePage(page: OakPage): PageSummary {
     title: page.title,
     visibility: page.visibility,
     slug: page.slug,
-    llm: page.llm,
     publishable: PUBLISHABLE.has(page.visibility),
     parseErrors: page.parseIssues.filter((i) => i.severity === "error").length,
   };

@@ -29,7 +29,6 @@ describe("composePage (pure)", () => {
     expect(composed.vaultRelPath).toBe("My - Awesome- Page.md");
     expect(composed.id).toBe("01HX000000000000000000NEW1");
     expect(composed.visibility).toBe("private");
-    expect(composed.llm).toBe("deny");
     expect(composed.slug).toBe("my-awesome-page");
     expect(composed.text).toContain("id: 01HX000000000000000000NEW1");
     expect(composed.text).toContain("title: 'My / Awesome: Page'");
@@ -43,12 +42,10 @@ describe("composePage (pure)", () => {
       at: "journal/2026/04",
       aliases: [" daily ", "", "Diary"],
       visibility: "public",
-      llm: "summary-only",
     });
     expect(composed.vaultRelPath).toBe("journal/2026/04.md");
     expect(composed.aliases).toEqual(["daily", "Diary"]);
     expect(composed.visibility).toBe("public");
-    expect(composed.llm).toBe("summary-only");
     expect(composed.text).toContain("aliases:\n  - daily\n  - Diary");
   });
 

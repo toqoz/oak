@@ -6,23 +6,17 @@
 // directories are mounts — never owned content — so we:
 //   - keep the symlink absolute so it survives vault moves
 //   - never modify files inside the target
-//   - default policies to readonly / git-status-only / llm-deny
+//   - default policies to readonly / git-status-only
 
 import { mkdir, readFile, stat, lstat, readlink, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import yaml from "js-yaml";
 
-import type { GitPolicy, Issue, LlmPolicy, MountMode } from "./types.js";
+import type { GitPolicy, Issue, MountMode } from "./types.js";
 
 const DEFAULT_MOUNT_MODE: MountMode = "readonly";
 const DEFAULT_GIT_POLICY: GitPolicy = "status-only";
-const DEFAULT_LLM_POLICY: LlmPolicy = "deny";
 
-const VALID_LLM_POLICIES: ReadonlySet<LlmPolicy> = new Set([
-  "allow",
-  "deny",
-  "summary-only",
-]);
 const ID_RE = /^[a-z0-9][a-z0-9_-]*$/i;
 
 export type MountConfigEntry = {
@@ -32,7 +26,6 @@ export type MountConfigEntry = {
   mode: MountMode;
   publishable: false;
   gitPolicy: GitPolicy;
-  llmPolicy: LlmPolicy;
 };
 
 export type MountConfig = {
@@ -84,13 +77,6 @@ export async function loadMountConfig(vaultRoot: string): Promise<MountConfig> {
       v["mode"] === "readwrite" ? "readwrite" : "readonly";
     const gitPolicy: GitPolicy =
       v["gitPolicy"] === "ignore" ? "ignore" : "status-only";
-    let llmPolicy: LlmPolicy = "deny";
-    if (
-      typeof v["llmPolicy"] === "string" &&
-      VALID_LLM_POLICIES.has(v["llmPolicy"] as LlmPolicy)
-    ) {
-      llmPolicy = v["llmPolicy"] as LlmPolicy;
-    }
     out.push({
       id,
       targetPath,
@@ -98,7 +84,6 @@ export async function loadMountConfig(vaultRoot: string): Promise<MountConfig> {
       mode,
       publishable: false,
       gitPolicy,
-      llmPolicy,
     });
   }
   return { mounts: out };
@@ -118,7 +103,6 @@ export async function saveMountConfig(
       mode: m.mode,
       publishable: m.publishable,
       gitPolicy: m.gitPolicy,
-      llmPolicy: m.llmPolicy,
     };
   }
   const yamlText = yaml.dump({ mounts: obj }, { sortKeys: false, lineWidth: 120 });
@@ -130,7 +114,6 @@ export type AddMountOptions = {
   target: string;
   mode?: MountMode;
   gitPolicy?: GitPolicy;
-  llmPolicy?: LlmPolicy;
   baseDir?: string; // for resolving relative `target`; defaults to process.cwd()
 };
 
@@ -194,7 +177,6 @@ export async function addMount(
     mode: opts.mode ?? DEFAULT_MOUNT_MODE,
     publishable: false,
     gitPolicy: opts.gitPolicy ?? DEFAULT_GIT_POLICY,
-    llmPolicy: opts.llmPolicy ?? DEFAULT_LLM_POLICY,
   };
   config.mounts.push(entry);
   await saveMountConfig(vaultRoot, config);

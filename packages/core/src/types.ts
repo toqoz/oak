@@ -5,7 +5,6 @@
 //   - File paths in `OakPage.filePath` are absolute; `relPath` is vault-relative.
 
 export type Visibility = "private" | "unlisted" | "public";
-export type LlmPolicy = "allow" | "deny" | "summary-only";
 
 export type PageFrontmatter = {
   id?: string;
@@ -13,7 +12,6 @@ export type PageFrontmatter = {
   aliases?: string[];
   visibility?: Visibility;
   slug?: string;
-  llm?: LlmPolicy;
   // ISO 8601 UTC instants ("YYYY-MM-DDTHH:MM:SSZ"). Both are written by
   // oak — `created` once on page composition, `modified` whenever a
   // save changes the body or the title. Pure frontmatter edits that
@@ -54,7 +52,6 @@ export type OakPage = {
   aliases: string[];
   visibility: Visibility;
   slug: string;
-  llm: LlmPolicy;
   filePath: string;
   relPath: string;
   basename: string;
@@ -89,7 +86,6 @@ export type Mount = {
   mode: MountMode;
   publishable: false;
   gitPolicy: GitPolicy;
-  llmPolicy: LlmPolicy;
   // Resolved status: whether the symlink/path exists at parse time.
   exists: boolean;
 };

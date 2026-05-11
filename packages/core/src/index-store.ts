@@ -53,7 +53,6 @@ CREATE TABLE pages (
   title TEXT NOT NULL,
   slug TEXT NOT NULL,
   visibility TEXT NOT NULL,
-  llm TEXT NOT NULL,
   file_path TEXT NOT NULL,
   rel_path TEXT NOT NULL,
   basename TEXT NOT NULL,
@@ -98,7 +97,6 @@ CREATE TABLE mounts (
   mode TEXT NOT NULL,
   publishable INTEGER NOT NULL,
   git_policy TEXT NOT NULL,
-  llm_policy TEXT NOT NULL,
   exists_flag INTEGER NOT NULL
 );
 
@@ -168,8 +166,8 @@ export async function writeIndex(
     );
     const insertPage = db.prepare(
       `INSERT INTO pages
-       (id, title, slug, visibility, llm, file_path, rel_path, basename, body_chars, link_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, title, slug, visibility, file_path, rel_path, basename, body_chars, link_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertAlias = db.prepare(
       "INSERT INTO aliases (page_id, alias) VALUES (?, ?)",
@@ -181,8 +179,8 @@ export async function writeIndex(
     );
     const insertMount = db.prepare(
       `INSERT INTO mounts
-       (id, target_path, link_path, mode, publishable, git_policy, llm_policy, exists_flag)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, target_path, link_path, mode, publishable, git_policy, exists_flag)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertExternal = db.prepare(
       `INSERT INTO externals
@@ -218,7 +216,6 @@ export async function writeIndex(
           page.title,
           page.slug,
           page.visibility,
-          page.llm,
           page.filePath,
           page.relPath,
           page.basename,
@@ -276,7 +273,6 @@ export async function writeIndex(
           mount.mode,
           mount.publishable ? 1 : 0,
           mount.gitPolicy,
-          mount.llmPolicy,
           mount.exists ? 1 : 0,
         );
       }

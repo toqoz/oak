@@ -167,7 +167,7 @@ export class OakGhostView extends ItemView {
     });
     actions.createEl("p", {
       cls: "oak-ghost-actions-hint",
-      text: "ID is auto-generated. Visibility defaults to private; LLM defaults to deny.",
+      text: "ID is auto-generated. Visibility defaults to private.",
     });
   }
 
