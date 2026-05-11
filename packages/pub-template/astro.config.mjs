@@ -35,4 +35,17 @@ export default defineConfig({
       }),
     ],
   },
+  vite: {
+    server: {
+      fs: {
+        // The publish worktree lives inside `<vault>/.git/oak/pub/`.
+        // Vite's `searchForWorkspaceRoot` trips over the surrounding
+        // `.git/` directory and computes an allow list that clips this
+        // worktree out, so `npm run dev` can't serve its own src/.
+        // Disable strict mode for the dev server — production builds
+        // (which is what the deploy host runs) don't use this server.
+        strict: false,
+      },
+    },
+  },
 });
