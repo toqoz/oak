@@ -213,6 +213,72 @@ function findWikiTargetAtCursor(
   return findWikiTargetInLine(editor.getLine(pos.line), pos.ch);
 }
 
+// Confirm-then-trash dialog. Routed through `fileManager.trashFile`
+// so the user's "Deleted files" preference (system trash / vault
+// `.trash` / permanent) is honored — same behavior as Obsidian's
+// own delete affordance.
+class ConfirmDeleteModal extends Modal {
+  constructor(
+    app: App,
+    private file: TFile,
+    private resolve: (confirmed: boolean) => void,
+  ) {
+    super(app);
+  }
+  override onOpen(): void {
+    this.contentEl.createEl("h2", { text: "Delete file?" });
+    this.contentEl.createEl("p", {
+      text: `"${this.file.basename}" will be moved to the trash.`,
+    });
+    new Setting(this.contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Delete")
+          .setWarning()
+          .onClick(() => this.finish(true)),
+      )
+      .addButton((b) =>
+        b.setButtonText("Cancel").onClick(() => this.finish(false)),
+      );
+  }
+  private finish(confirmed: boolean): void {
+    this.resolve(confirmed);
+    this.resolve = () => undefined;
+    this.close();
+  }
+  override onClose(): void {
+    this.contentEl.empty();
+    this.resolve(false);
+    this.resolve = () => undefined;
+  }
+}
+
+export async function deleteFile(
+  plugin: OakPlugin,
+  file: TFile,
+): Promise<void> {
+  const ok = await new Promise<boolean>((resolve) => {
+    new ConfirmDeleteModal(plugin.app, file, resolve).open();
+  });
+  if (!ok) return;
+  try {
+    await plugin.app.fileManager.trashFile(file);
+  } catch (err) {
+    new Notice(`oak: delete failed — ${(err as Error).message}`);
+    return;
+  }
+  plugin.state.scheduleRefresh();
+}
+
+export async function deleteCurrentFile(plugin: OakPlugin): Promise<void> {
+  const file = plugin.app.workspace.getActiveFile();
+  if (!file || file.extension !== "md") {
+    new Notice("oak: open a markdown file first");
+    return;
+  }
+  await deleteFile(plugin, file);
+}
+
 class NewPageModal extends Modal {
   private titleValue: string;
   private visibilityValue: Visibility = "private";

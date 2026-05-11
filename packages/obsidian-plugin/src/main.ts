@@ -37,6 +37,8 @@ import {
   clearScratch,
   createNewPage,
   createPageFromRedlink,
+  deleteCurrentFile,
+  deleteFile,
   ensureScratchFile,
   extractSelectionToPage,
   openScratch,
@@ -232,7 +234,7 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
-        this.applyScratchButton();
+        this.applyActionsMenu();
         this.applyCenteredViewTitle();
       }),
     );
@@ -244,7 +246,7 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
-        this.applyScratchButton();
+        this.applyActionsMenu();
         this.applyCenteredViewTitle();
       }),
     );
@@ -372,6 +374,17 @@ export default class OakPlugin extends Plugin {
       openOakCommandPalette(this.app);
       return false;
     });
+    // Same hijack pattern for Mod+N: Obsidian's "Create new note" runs
+    // off the same dispatcher chain, so a scope-level binding wins
+    // over it while oak mode is active. The oak version routes through
+    // `createNewPage` (frontmatter + slug + visibility-aware) instead
+    // of dropping a blank `Untitled.md` in the vault root.
+    oakKeyScope.register(["Mod"], "n", (ev) => {
+      if (!document.body.classList.contains("oak-mode-active")) return;
+      ev.preventDefault();
+      void createNewPage(this);
+      return false;
+    });
     this.app.keymap.pushScope(oakKeyScope);
     this.register(() => this.app.keymap.popScope(oakKeyScope));
     this.addCommand({
@@ -417,12 +430,18 @@ export default class OakPlugin extends Plugin {
     this.addCommand({
       id: "oak-open-scratch",
       name: "Toggle scratch",
+      hotkeys: [{ modifiers: ["Alt"], key: "s" }],
       callback: () => void openScratch(this),
     });
     this.addCommand({
       id: "oak-clear-scratch",
       name: "Clear scratch",
       callback: () => void clearScratch(this),
+    });
+    this.addCommand({
+      id: "oak-delete-file",
+      name: "Delete current file…",
+      callback: () => void deleteCurrentFile(this),
     });
 
     // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.
@@ -476,7 +495,7 @@ export default class OakPlugin extends Plugin {
       this.applyHomeButton();
       this.applyAgendaButton();
       this.applySearchButton();
-      this.applyScratchButton();
+      this.applyActionsMenu();
       this.applyCenteredViewTitle();
     });
   }
@@ -499,7 +518,7 @@ export default class OakPlugin extends Plugin {
     this.applyHomeButton();
     this.applyAgendaButton();
     this.applySearchButton();
-    this.applyScratchButton();
+    this.applyActionsMenu();
     this.applyCenteredViewTitle();
   }
 
@@ -1695,62 +1714,96 @@ export default class OakPlugin extends Plugin {
     await this.navigateLeafToSearch(leaf);
   }
 
-  // Scratch lives at the right edge of every view-header as a
-  // `line-squiggle` icon button — same `clickable-icon` chrome as
-  // the back/forward + home/agenda/search nav buttons elsewhere in
-  // the bar, so it visually fits the header row. Clicking is a
-  // toggle: when scratch is closed it opens as a horizontal split
-  // below the trigger leaf (the "bottom pane" affordance) so the
-  // user keeps their main editing context visible; when scratch is
-  // already open it detaches the leaf (autosave keeps the buffer
-  // contents on disk so closing is non-destructive). The icon is
-  // accent-tinted while a scratch leaf is open anywhere in the
-  // workspace.
+  // Single dropdown affordance at the right edge of every view-header.
+  // Consolidates the per-pane oak actions (toggle scratch, new page,
+  // and — on a markdown leaf — delete-file…) behind one `…` button so
+  // the chrome stays terse regardless of which view the leaf shows.
+  // Same `clickable-icon` chrome as the back/forward + home/agenda/
+  // search cluster on the left, so the icon row reads as one bar.
+  // Accent-tinted while a scratch leaf is open elsewhere in the
+  // workspace — the menu is the only entry point for closing it, so
+  // the tint preserves the at-a-glance "scratch is up" cue the
+  // standalone link used to provide.
   //
-  // We also tag the scratch leaf's container with
-  // `oak-leaf-scratch` so the stylesheet can hide the per-pane tab
-  // strip — the scratch row inside the leaf's own view-header
-  // carries enough identity that the tab is redundant.
-  private applyScratchButton(): void {
+  // We also tag the scratch leaf's container with `oak-leaf-scratch`
+  // so the stylesheet can hide the per-pane tab strip — the scratch
+  // row inside the leaf's own view-header carries enough identity
+  // that the tab is redundant.
+  private applyActionsMenu(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
-    const isOpen = this.findScratchLeaf() !== null;
+    const isScratchOpen = this.findScratchLeaf() !== null;
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view as { containerEl?: HTMLElement };
       const root = view.containerEl;
       if (!root) return;
       const header = root.querySelector<HTMLElement>(".view-header");
-      if (header) this.applyScratchLinkForHeader(header, leaf, oakMode, isOpen);
+      if (header)
+        this.applyActionsMenuForHeader(header, leaf, oakMode, isScratchOpen);
       this.applyScratchLeafClass(leaf);
     });
   }
 
-  private applyScratchLinkForHeader(
+  private applyActionsMenuForHeader(
     header: HTMLElement,
     leaf: WorkspaceLeaf,
     oakMode: boolean,
-    isOpen: boolean,
+    isScratchOpen: boolean,
   ): void {
     const existing = header.querySelector<HTMLButtonElement>(
-      ".oak-scratch-link",
+      ".oak-actions-menu",
     );
     if (!oakMode) {
       existing?.remove();
       return;
     }
-    let link = existing;
-    if (!link) {
-      link = document.createElement("button");
-      link.classList.add("clickable-icon", "oak-scratch-link");
-      link.setAttribute("type", "button");
-      link.setAttribute("aria-label", "Oak Scratch");
-      setIcon(link, "line-squiggle");
-      link.addEventListener("click", (ev) => {
+    let btn = existing;
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.classList.add("clickable-icon", "oak-actions-menu");
+      btn.setAttribute("type", "button");
+      btn.setAttribute("aria-label", "Oak actions");
+      setIcon(btn, "ellipsis-vertical");
+      btn.addEventListener("click", (ev) => {
         ev.preventDefault();
-        void this.toggleScratch(leaf);
+        this.showActionsMenuForLeaf(leaf, ev);
       });
-      header.appendChild(link);
+      header.appendChild(btn);
     }
-    link.classList.toggle("is-active", isOpen);
+    btn.classList.toggle("is-active", isScratchOpen);
+  }
+
+  private showActionsMenuForLeaf(leaf: WorkspaceLeaf, ev: MouseEvent): void {
+    const menu = new Menu();
+    const isScratchOpen = this.findScratchLeaf() !== null;
+    menu.addItem((item) => {
+      item
+        .setTitle(isScratchOpen ? "Close scratch" : "Open scratch")
+        .setIcon("line-squiggle")
+        .onClick(() => void this.toggleScratch(leaf));
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle("New page")
+        .setIcon("file-plus")
+        .onClick(() => void createNewPage(this));
+    });
+    // File-pane extras: only when the leaf shows a real markdown
+    // file (skip oak-home / agenda / search / ghost / scratch).
+    const view = leaf.view;
+    if (view instanceof MarkdownView && view.file) {
+      const file = view.file;
+      const isScratchFile = file.path === SCRATCH_VAULT_REL_PATH;
+      if (!isScratchFile) {
+        menu.addSeparator();
+        menu.addItem((item) => {
+          item
+            .setTitle("Delete file…")
+            .setIcon("trash-2")
+            .onClick(() => void deleteFile(this, file));
+        });
+      }
+    }
+    menu.showAtMouseEvent(ev);
   }
 
   // Inject a static, centered title into each oak view's
