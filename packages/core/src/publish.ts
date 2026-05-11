@@ -538,7 +538,7 @@ ${home.pages.map((e) => renderHomeEntryLi(e, pageUrlById)).join("\n")}
   .oak-list a { font-weight: 500; text-decoration: none; color: #1a4f8a; }
   .oak-list a:hover { text-decoration: underline; }
   .oak-meta { font-size: 0.8em; color: #888; margin-top: 0.1em; }
-  .oak-excerpt { margin: 0.2em 0 0; color: #444; font-size: 0.95em; }
+  .oak-excerpt { margin: 0.2em 0 0; color: #444; font-size: 0.95em; white-space: pre-line; }
   footer { margin-top: 3em; font-size: 0.8em; color: #999; }
   footer a { color: inherit; }
 </style>

@@ -56,11 +56,13 @@ const STRIP_FENCED = /```[\s\S]*?```/g;
 const STRIP_INLINE_CODE = /`[^`\n]*`/g;
 const STRIP_LINE_MARKERS =
   /^(?:#{1,6}\s+|>\s*|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+\.\s+)+/;
-const COLLAPSE_WS = /\s+/g;
+const COLLAPSE_HSPACE = /[ \t]+/g;
 
 export function excerptFrom(body: string, maxChars = 200): string {
   // Strip non-prose syntax first, then walk every line so headings and
-  // list items contribute their text to the excerpt.
+  // list items contribute their text to the excerpt. Lines are joined
+  // with "\n" so consumers can render each heading / list item on its
+  // own visual line (via CSS `white-space: pre-line`).
   const cleaned = body
     .replace(STRIP_FENCED, "")
     .replace(STRIP_INLINE_CODE, "")
@@ -74,10 +76,13 @@ export function excerptFrom(body: string, maxChars = 200): string {
   for (const rawLine of cleaned.split("\n")) {
     const line = rawLine.trim();
     if (line.length === 0) continue;
-    const text = line.replace(STRIP_LINE_MARKERS, "").trim();
+    const text = line
+      .replace(STRIP_LINE_MARKERS, "")
+      .replace(COLLAPSE_HSPACE, " ")
+      .trim();
     if (text.length > 0) parts.push(text);
   }
-  const chosen = parts.join(" ").replace(COLLAPSE_WS, " ").trim();
+  const chosen = parts.join("\n");
   if (chosen.length <= maxChars) return chosen;
   return `${chosen.slice(0, maxChars).trimEnd()}…`;
 }

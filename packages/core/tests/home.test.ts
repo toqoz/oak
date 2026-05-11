@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 describe("excerptFrom", () => {
-  it("strips wiki syntax and code; concatenates prose across paragraphs", () => {
+  it("strips wiki syntax and code; preserves line breaks between paragraphs", () => {
     const body = [
       "Intro paragraph.",
       "",
@@ -43,12 +43,16 @@ describe("excerptFrom", () => {
       "Second paragraph.",
     ].join("\n");
     expect(excerptFrom(body, 200)).toBe(
-      "Intro paragraph. First paragraph with alias and reference. Second paragraph.",
+      [
+        "Intro paragraph.",
+        "First paragraph with alias and reference.",
+        "Second paragraph.",
+      ].join("\n"),
     );
     expect(excerptFrom("a".repeat(300), 100)).toMatch(/^a+…$/);
   });
 
-  it("includes heading and list text with markers stripped", () => {
+  it("includes heading and list text on separate lines with markers stripped", () => {
     const body = [
       "# Top heading",
       "",
@@ -63,7 +67,15 @@ describe("excerptFrom", () => {
       "Body prose.",
     ].join("\n");
     expect(excerptFrom(body, 200)).toBe(
-      "Top heading Section A item one item two ordered quoted line Body prose.",
+      [
+        "Top heading",
+        "Section A",
+        "item one",
+        "item two",
+        "ordered",
+        "quoted line",
+        "Body prose.",
+      ].join("\n"),
     );
   });
 });
