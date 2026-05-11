@@ -90,7 +90,7 @@ async function runOak(cwd: string, args: string[]): Promise<CliResult> {
 }
 
 const BRANCH = "oak/pub";
-const WORKTREE_REL = ".git/oak-pub";
+const WORKTREE_REL = ".git/oak/pub";
 
 describe("oak pub", () => {
   it("prints help with no subcommand", async () => {

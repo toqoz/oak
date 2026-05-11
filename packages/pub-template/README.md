@@ -46,11 +46,11 @@ There is no theme system, no plugin API, no config DSL. Just code.
 
 ## Build
 
-The publish worktree lives at `<vault>/.git/oak-pub` after
+The publish worktree lives at `<vault>/.git/oak/pub` after
 `oak pub init`. Run development and build commands from inside it:
 
 ```bash
-cd <vault>/.git/oak-pub
+cd <vault>/.git/oak/pub
 npm install      # or pnpm / yarn
 npm run dev      # local preview at http://localhost:4321
 npm run build    # produces dist/

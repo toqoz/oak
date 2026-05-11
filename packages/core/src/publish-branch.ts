@@ -3,7 +3,7 @@
 // Layout the user sees:
 //   - main worktree (the vault repo's normal branch) keeps notes only.
 //   - publish orphan branch `oak/pub` is checked out into a sibling
-//     worktree at `<vault>/.git/oak-pub/`. The Astro app source, its
+//     worktree at `<vault>/.git/oak/pub/`. The Astro app source, its
 //     `package.json`, and a `vault/` mirror of the publishable subset of
 //     the vault all live in that worktree.
 //
@@ -52,10 +52,9 @@ export const DEFAULT_PUBLISH_BRANCH = "oak/pub";
 // Worktree path is fixed: under the vault's own `.git/`. This keeps it
 // out of the main worktree's `git status` (git never walks into its
 // own metadata dir for working-tree purposes) and ties its lifetime to
-// the repo. The trailing segment is deliberately non-canonical
-// (`oak-pub`, not `oak/pub`) to avoid colliding with the
-// branch's own metadata directory under `.git/worktrees/`.
-export const PUBLISH_WORKTREE_REL = ".git/oak-pub";
+// the repo. The path mirrors the branch name (`oak/pub`) so the
+// directory and the ref read the same.
+export const PUBLISH_WORKTREE_REL = ".git/oak/pub";
 
 export type PubInitOptions = {
   vaultRoot: string;

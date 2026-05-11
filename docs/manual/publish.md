@@ -8,7 +8,7 @@ host runs the Astro build. This guide covers the end-to-end flow.
 
 A vault is plain markdown. `oak pub init` creates an orphan git branch
 called `oak/pub` and lays down a sibling worktree at
-`<vault>/.git/oak-pub`, then scaffolds an Astro project (the
+`<vault>/.git/oak/pub`, then scaffolds an Astro project (the
 pub-template) into that worktree. Your notes branch stays clean.
 `oak pub build` syncs the **publishable subset** of your vault (pages
 whose visibility is `public` or `unlisted`, plus the assets they
@@ -22,7 +22,7 @@ vault repo
 ├── main (notes only — your normal worktree)
 │   └── content/, _assets/, …
 └── oak/pub (orphan, force-pushed)
-    └── checked out at .git/oak-pub/
+    └── checked out at .git/oak/pub/
         ├── src/                     Astro app
         ├── astro.config.mjs
         ├── package.json
@@ -57,7 +57,7 @@ Keeping the Astro project off the notes branch buys two things:
 
 ```bash
 oak pub init                              # create branch + worktree + scaffold
-cd .git/oak-pub
+cd .git/oak/pub
 npm install                               # install Astro deps
 npm run dev                               # local preview at http://localhost:4321
 # Then, whenever you want to publish:
@@ -74,10 +74,10 @@ let it run `npm run build`.
 
 Creates the local `oak/pub` orphan branch (or reuses
 `origin/oak/pub` if it already exists upstream) and adds a
-worktree at `<vault>/.git/oak-pub`. If the branch is freshly
+worktree at `<vault>/.git/oak/pub`. If the branch is freshly
 created, scaffolds the pub-template into the worktree.
 
-Refuses if `<vault>/.git/oak-pub` already exists — remove it or
+Refuses if `<vault>/.git/oak/pub` already exists — remove it or
 use it as-is.
 
 In a development install (oak from source rather than from npm), the
@@ -134,7 +134,7 @@ flag for this is not exposed yet.
 After `oak pub init`, the publish worktree contains:
 
 ```
-.git/oak-pub/
+.git/oak/pub/
 ├── astro.config.mjs               wires remarkOakLinks + the vault path
 ├── package.json
 ├── tsconfig.json
@@ -271,7 +271,7 @@ deploy host runs whatever Astro is configured to run.
 Run `oak pub init` first. It creates the branch locally only; the
 first `oak pub build` pushes it.
 
-### `publish worktree not found at .git/oak-pub`
+### `publish worktree not found at .git/oak/pub`
 
 The worktree was removed but the branch still exists. Re-run
 `oak pub init` to recreate it (the branch and any prior publish
@@ -279,9 +279,9 @@ history are preserved).
 
 ### `publish worktree already exists`
 
-The directory `<vault>/.git/oak-pub` is already there. If it's a
+The directory `<vault>/.git/oak/pub` is already there. If it's a
 valid worktree, just `cd` into it and keep working. If it's stale,
-remove it with `git worktree remove --force .git/oak-pub` and
+remove it with `git worktree remove --force .git/oak/pub` and
 re-run init.
 
 ### A page I expected isn't on the site
@@ -301,7 +301,7 @@ optimization entirely, set `optimizeImages: false` in
 
 ### Edits to my vault don't show up in `npm run dev`
 
-Dev mode reads from `.git/oak-pub/vault/`, which is only refreshed
+Dev mode reads from `.git/oak/pub/vault/`, which is only refreshed
 by `oak pub build`. Re-run `oak pub build` (or just the sync portion
 via a script) to refresh local dev. This is a known trade-off:
 keeping vault and publish branches separate means no live link from
