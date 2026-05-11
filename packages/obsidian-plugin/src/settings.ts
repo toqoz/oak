@@ -58,9 +58,9 @@ export class OakSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Auto-snapshot interval (ms)")
+      .setName("Auto-snapshot quiet period (ms)")
       .setDesc(
-        "Snapshot the vault automatically when the editor goes quiet. Set to 0 to disable.",
+        "Snapshot the vault automatically once edits stop for this many ms. Each edit pushes the timer forward; the snapshot only fires while you're idle. Set to 0 to disable.",
       )
       .addText((t) =>
         t

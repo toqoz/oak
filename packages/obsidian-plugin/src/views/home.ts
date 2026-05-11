@@ -310,7 +310,7 @@ export class OakHomeView extends ItemView {
     const row = parent.createDiv({ cls: "oak-home-meta" });
     row.createSpan({
       text: enabled
-        ? `Auto-snapshot: every ${Math.round(ms / 60000)} min · `
+        ? `Auto-snapshot: after ${Math.round(ms / 60000)} min idle · `
         : "Auto-snapshot: off · ",
     });
     const btn = row.createEl("button", {

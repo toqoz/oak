@@ -85,7 +85,12 @@ export default class OakPlugin extends Plugin {
   settings: OakPluginSettings = DEFAULT_SETTINGS;
   state!: VaultState;
 
-  private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
+  // Pending debounced snapshot. Set by `bumpAutoSnapshot` on each
+  // vault edit, fired once the editor has been quiet for
+  // `autoSnapshotIntervalMs`. While the user is actively typing,
+  // the timer keeps getting pushed forward so we never snapshot
+  // mid-edit.
+  private autoSnapshotHandle: ReturnType<typeof setTimeout> | null = null;
   private sidebarRef: OakSidebarView | null = null;
   private linksUnsubscribe: (() => void) | null = null;
   // Live copy of `.oak/agenda.yml`. Used by editor extensions (e.g. the
@@ -249,6 +254,21 @@ export default class OakPlugin extends Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", () => this.state.scheduleRefresh()),
+    );
+    // Auto-snapshot is debounced on vault activity: each edit pushes
+    // the snapshot timer forward so it only fires once the editor
+    // has been quiet for `autoSnapshotIntervalMs`.
+    this.registerEvent(
+      this.app.vault.on("modify", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("create", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", () => this.bumpAutoSnapshot()),
     );
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", (newLeaf) => {
@@ -537,7 +557,7 @@ export default class OakPlugin extends Plugin {
   }
 
   override onunload(): void {
-    if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
     this.linksUnsubscribe?.();
     this.linksUnsubscribe = null;
@@ -568,12 +588,25 @@ export default class OakPlugin extends Plugin {
     this.applyAutoSnapshot();
   }
 
+  // Cancel any pending debounced snapshot. The next vault edit will
+  // re-arm it (if auto-snapshot is still enabled). Called when the
+  // user toggles the feature or changes the interval — we don't run
+  // a snapshot eagerly here because the point of the debounce is to
+  // wait until the user goes idle.
   applyAutoSnapshot(): void {
-    if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
+  }
+
+  // Called from every vault edit (modify / create / delete / rename).
+  // Resets the debounce window so the snapshot only fires once the
+  // editor has been quiet for the configured interval.
+  bumpAutoSnapshot(): void {
     const ms = this.settings.autoSnapshotIntervalMs;
     if (!ms || ms <= 0) return;
-    this.autoSnapshotHandle = setInterval(() => {
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
+    this.autoSnapshotHandle = setTimeout(() => {
+      this.autoSnapshotHandle = null;
       void snapshot(vaultRoot(this.app)).catch((err) =>
         console.warn("oak auto-snapshot failed:", err),
       );
