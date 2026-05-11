@@ -34,18 +34,49 @@ afterEach(async () => {
 });
 
 describe("excerptFrom", () => {
-  it("strips wiki syntax, code, and headings; truncates", () => {
+  it("strips wiki syntax and code; preserves line breaks between paragraphs", () => {
     const body = [
-      "# Title",
+      "Intro paragraph.",
       "",
       "First paragraph with [[Wiki|alias]] and `code` reference.",
       "",
       "Second paragraph.",
     ].join("\n");
     expect(excerptFrom(body, 200)).toBe(
-      "First paragraph with alias and reference.",
+      [
+        "Intro paragraph.",
+        "First paragraph with alias and reference.",
+        "Second paragraph.",
+      ].join("\n"),
     );
     expect(excerptFrom("a".repeat(300), 100)).toMatch(/^a+…$/);
+  });
+
+  it("includes heading and list text on separate lines with markers stripped", () => {
+    const body = [
+      "# Top heading",
+      "",
+      "## Section A",
+      "",
+      "- item one",
+      "- [x] item two",
+      "1. ordered",
+      "",
+      "> quoted line",
+      "",
+      "Body prose.",
+    ].join("\n");
+    expect(excerptFrom(body, 200)).toBe(
+      [
+        "Top heading",
+        "Section A",
+        "item one",
+        "item two",
+        "ordered",
+        "quoted line",
+        "Body prose.",
+      ].join("\n"),
+    );
   });
 });
 
