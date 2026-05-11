@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -195,8 +195,51 @@ describe("recoverCreatedTimestamp", () => {
     await writeFile(fp, "x");
     const recovered = await recoverCreatedTimestamp(scratch, fp);
     // Format check is enough; we only assert the cascade reached the
-    // mtime branch (the format is identical to nowIsoSecond's).
+    // birthtime/mtime branch (the format is identical to nowIsoSecond's).
     expect(recovered).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  // birthtime is the right answer for "created" but only on FS that
+  // record it. Force a divergence (mtime far in the future) and
+  // confirm the cascade picked birthtime, not mtime. Skip when the
+  // host FS doesn't track birthtime — running the assertion against
+  // a fabricated value would prove nothing.
+  it("prefers birthtime over mtime when both are available and birthtime <= mtime", async () => {
+    const fp = resolve(scratch, "note.md");
+    await writeFile(fp, "x");
+    const initial = await stat(fp);
+    if (initial.birthtimeMs <= 0 || initial.birthtimeMs > initial.mtimeMs) {
+      // Host FS doesn't carry a real birthtime — bail rather than
+      // assert against meaningless data.
+      return;
+    }
+    const future = new Date(initial.mtimeMs + 5 * 365 * 24 * 60 * 60 * 1000);
+    await utimes(fp, future, future);
+    const recovered = await recoverCreatedTimestamp(null, fp);
+    const recoveredMs = new Date(recovered).getTime();
+    // Picked birthtime → recoveredMs ≈ initial.birthtimeMs.
+    // Picked mtime → recoveredMs ≈ future.getTime() (5y in the future).
+    // The gap is years, so a generous threshold is safe.
+    expect(recoveredMs).toBeLessThan(future.getTime() - 86_400_000);
+    expect(Math.abs(recoveredMs - initial.birthtimeMs)).toBeLessThan(2_000);
+  });
+
+  // When the FS reports a bogus birthtime that's *after* mtime
+  // (happens on copy/restore), the cascade must reject it and use
+  // mtime as the older, more honest bound.
+  it("falls back to mtime when birthtime is later than mtime", async () => {
+    const fp = resolve(scratch, "note.md");
+    await writeFile(fp, "x");
+    const initial = await stat(fp);
+    if (initial.birthtimeMs <= 0) return;
+    // Push mtime to a value before birthtime — simulates a restore
+    // where contents are older than the inode.
+    const past = new Date(initial.birthtimeMs - 5 * 365 * 24 * 60 * 60 * 1000);
+    await utimes(fp, past, past);
+    const recovered = await recoverCreatedTimestamp(null, fp);
+    const recoveredMs = new Date(recovered).getTime();
+    // Should land on mtime (≈ past), not birthtime.
+    expect(Math.abs(recoveredMs - past.getTime())).toBeLessThan(2_000);
   });
 
   it("falls back to `now` when the file does not exist", async () => {

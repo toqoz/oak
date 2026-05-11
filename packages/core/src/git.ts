@@ -548,3 +548,25 @@ export async function gitFirstAddedTime(
   return lines[lines.length - 1]!.trim();
 }
 
+// Author-date of the most recent commit that touched `relPath`.
+// Follows renames so the value still tracks the same logical file
+// after moves. Returns null under the same conditions as
+// gitFirstAddedTime — callers fall back to mtime.
+//
+// Used by the migration path to backfill a missing `modified` from
+// the most reliable evidence of "when did the contents last change".
+export async function gitLastModifiedTime(
+  vaultRoot: string,
+  relPath: string,
+): Promise<string | null> {
+  if (!(await isGitRepo(vaultRoot))) return null;
+  const r = await runGit(
+    vaultRoot,
+    ["log", "-1", "--follow", "--format=%aI", "--", relPath],
+    { allowFailure: true },
+  );
+  if (r.code !== 0) return null;
+  const out = r.stdout.trim();
+  return out.length > 0 ? out : null;
+}
+

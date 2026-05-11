@@ -18,19 +18,21 @@
 // The fill order respects user intent:
 //   - present `created` is never overwritten
 //   - present `modified` is never overwritten (a hand-edit is sacred)
-//   - missing `modified` is anchored to `created` rather than `now`,
-//     so the migration cannot lie about the file having been recently
-//     touched. If `created` itself was just recovered, we use the
-//     recovered value for both fields.
+//   - missing `created` and `modified` each run their own recovery
+//     cascade (git/birthtime/mtime). Since the cascades draw from
+//     different evidence — first-add commit vs. last-touch commit,
+//     birthtime vs. mtime — they normally produce different values
+//     for files that have actually been edited. They only coincide
+//     for a file that was created and never touched again.
 
 import { readFile, writeFile } from "node:fs/promises";
 
 import { parseVault } from "./parse.js";
 import {
-  coerceTimestamp,
   isOakManaged,
   nowIsoSecond,
   recoverCreatedTimestamp,
+  recoverModifiedTimestamp,
   setCreatedIfMissing,
   setModifiedIfMissing,
 } from "./timestamps.js";
@@ -100,28 +102,36 @@ export async function migrateTimestamps(
 
     let out = raw;
     const added: { created?: string; modified?: string } = {};
-    // Recovered `created` value — computed lazily because the cascade
-    // shells out to git and we want to avoid the cost on pages that
-    // already have `created` (only `modified` missing).
-    let recovered: string | null = null;
+    // The created cascade runs only when `created` is missing — both
+    // because we don't want to overwrite a present value, and because
+    // shelling out to git is the expensive part of the loop.
+    let createdValue: string | null = null;
 
     if (!hasCreated) {
-      recovered = await recoverCreatedTimestamp(
+      createdValue = await recoverCreatedTimestamp(
         opts.vaultRoot,
         page.filePath,
         nowIso,
       );
       const before = out;
-      out = setCreatedIfMissing(out, recovered);
-      if (out !== before) added.created = recovered;
+      out = setCreatedIfMissing(out, createdValue);
+      if (out !== before) added.created = createdValue;
+    } else {
+      // Read the existing value so we can pass it to the modified
+      // cascade as a lower bound.
+      createdValue = extractCreated(out);
     }
 
     if (!hasModified) {
-      // Anchor modified to created so we never claim a recent edit.
-      // Re-read from `out` (not the original frontmatter) so this
-      // picks up a just-recovered created value.
-      const modValue =
-        coerceTimestamp(extractCreated(out)) ?? recovered ?? nowIso;
+      // The modified cascade runs git-last-commit / mtime / created,
+      // so a file that was created and then edited gets a `modified`
+      // value reflecting the edit, not a copy of `created`.
+      const modValue = await recoverModifiedTimestamp(
+        opts.vaultRoot,
+        page.filePath,
+        createdValue,
+        nowIso,
+      );
       const before = out;
       out = setModifiedIfMissing(out, modValue);
       if (out !== before) added.modified = modValue;

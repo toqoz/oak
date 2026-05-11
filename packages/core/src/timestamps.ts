@@ -20,7 +20,7 @@ import yaml from "js-yaml";
 import { stat } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 
-import { gitFirstAddedTime } from "./git.js";
+import { gitFirstAddedTime, gitLastModifiedTime } from "./git.js";
 import type { PageFrontmatter } from "./types.js";
 
 function pad2(n: number): string {
@@ -198,48 +198,73 @@ function frontmatterHasCreated(raw: string): boolean {
 }
 
 // Best-effort `created` value for a file that's missing the field.
-// Cascade:
-//   1. git: author-date of the oldest commit that added this path
-//      (follows renames). The closest thing we have to "when did this
-//      note start to exist?" once frontmatter has been lost.
-//   2. filesystem mtime — survives most edits but is reset by clones,
-//      checkouts, and rsync, so it sits below git in the cascade.
-//   3. `nowIso` — last resort. Always returns *something* so callers
-//      have a value to write.
 //
-// `filePath` should be absolute; `vaultRoot` is the path passed to
-// parseVault, or null when the caller can't provide it (the cascade
-// then skips straight to mtime). Errors at any layer fall through
-// silently to the next source — we never let recovery noise block a
-// save.
+// We collect every signal that bounds creation from below, then pick
+// the *earliest* one. Each candidate proves "the file existed at this
+// time", so creation must have happened at or before the minimum:
+//
+//   - git first-add: author-date of the oldest commit that introduced
+//     the path (follows renames).
+//   - birthtime: when the inode was created on this FS. Only
+//     reliable on filesystems that record it (APFS, HFS+, ext4 with
+//     statx, NTFS); unsupported FS report 0 or echo mtime, so we
+//     gate on `> 0` and `<= mtime` (a birthtime *after* mtime
+//     usually means a copy/restore landed an older file on a fresh
+//     inode, making birthtime meaningless for "creation").
+//   - mtime: last content change. A weak bound (gets bumped by every
+//     edit), but still proves the file existed at that moment.
+//
+// Why `min` rather than a cascade? A cascade picks the first source
+// that returns *anything*, which is wrong for creation when an
+// otherwise-old file was recently added to git. If a vault was
+// bootstrapped into git in one big commit, git first-add equals the
+// bootstrap date — newer than birthtime, which still records the
+// actual creation on disk. Taking the minimum captures the older
+// value automatically.
+//
+// `nowIso` is the last-resort fallback used only when every other
+// source failed (no git, stat error). It always returns *something*
+// so callers have a value to write.
+//
+// `filePath` should be absolute; `vaultRoot` may be null. Errors at
+// any layer are swallowed silently — recovery noise must not block
+// a save.
 export async function recoverCreatedTimestamp(
   vaultRoot: string | null,
   filePath: string,
   nowIso: string = nowIsoSecond(),
 ): Promise<string> {
   const absFile = resolve(filePath);
+  const candidatesMs: number[] = [];
+
   if (vaultRoot !== null) {
     const absRoot = resolve(vaultRoot);
     const rel = relative(absRoot, absFile);
-    // Skip git when the file lives outside the vault root (a defensive
-    // guard for symlinked mounts / unusual setups). gitFirstAddedTime
-    // would otherwise pass an escaping path to git and either fail or
-    // walk the wrong repo's history.
     if (!rel.startsWith("..") && !rel.startsWith("/") && rel.length > 0) {
       try {
         const fromGit = await gitFirstAddedTime(absRoot, rel);
-        if (fromGit !== null) return normalizeIso(fromGit);
+        if (fromGit !== null) {
+          const ms = Date.parse(fromGit);
+          if (!Number.isNaN(ms)) candidatesMs.push(ms);
+        }
       } catch {
         // fall through
       }
     }
   }
+
   try {
     const st = await stat(absFile);
-    return nowIsoSecond(new Date(st.mtimeMs));
+    if (st.mtimeMs > 0) candidatesMs.push(st.mtimeMs);
+    if (st.birthtimeMs > 0 && st.birthtimeMs <= st.mtimeMs) {
+      candidatesMs.push(st.birthtimeMs);
+    }
   } catch {
-    return nowIso;
+    // fall through
   }
+
+  if (candidatesMs.length === 0) return nowIso;
+  return nowIsoSecond(new Date(Math.min(...candidatesMs)));
 }
 
 // Normalise a git-emitted ISO timestamp ("2026-05-10T12:34:56+09:00")
@@ -250,6 +275,55 @@ function normalizeIso(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return nowIsoSecond(d);
+}
+
+// Best-effort `modified` value for a file that's missing the field.
+// Cascade:
+//   1. git: author-date of the *most recent* commit that touched
+//      this path (follows renames). Highest-fidelity record of
+//      "when did the contents last change".
+//   2. filesystem mtime — exactly what `modified` semantically
+//      means. Reset by clones/checkouts/rsync, hence below git.
+//   3. `createdIso` — when nothing else is known we at least know
+//      the file existed at `created`, so anchor `modified` there.
+//      Avoids fabricating a more recent edit than the evidence
+//      supports.
+//   4. `nowIso` — last resort.
+//
+// This is symmetric with `recoverCreatedTimestamp` but does NOT
+// consult birthtime: birthtime is creation, not modification.
+//
+// `filePath` should be absolute; `vaultRoot` may be null. Errors at
+// any layer fall through silently to the next source.
+export async function recoverModifiedTimestamp(
+  vaultRoot: string | null,
+  filePath: string,
+  createdIso: string | null = null,
+  nowIso: string = nowIsoSecond(),
+): Promise<string> {
+  const absFile = resolve(filePath);
+  if (vaultRoot !== null) {
+    const absRoot = resolve(vaultRoot);
+    const rel = relative(absRoot, absFile);
+    if (!rel.startsWith("..") && !rel.startsWith("/") && rel.length > 0) {
+      try {
+        const fromGit = await gitLastModifiedTime(absRoot, rel);
+        if (fromGit !== null) return normalizeIso(fromGit);
+      } catch {
+        // fall through
+      }
+    }
+  }
+  try {
+    const st = await stat(absFile);
+    if (st.mtimeMs > 0) {
+      return nowIsoSecond(new Date(st.mtimeMs));
+    }
+  } catch {
+    // fall through
+  }
+  if (createdIso !== null) return createdIso;
+  return nowIso;
 }
 
 // Async variant of `withTimestampUpdate` that *also* backfills a
