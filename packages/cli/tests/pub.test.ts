@@ -89,8 +89,8 @@ async function runOak(cwd: string, args: string[]): Promise<CliResult> {
   }
 }
 
-const BRANCH = "oak/publish";
-const WORKTREE_REL = ".git/oak-publish";
+const BRANCH = "oak/pub";
+const WORKTREE_REL = ".git/oak-pub";
 
 describe("oak pub", () => {
   it("prints help with no subcommand", async () => {
@@ -115,7 +115,7 @@ describe("oak pub init", () => {
     const vault = await makeVault();
     const r = await runOak(vault, ["pub", "init", "--vault", vault]);
     expect(r.code).toBe(0);
-    expect(r.stdout).toMatch(/Created publish branch `oak\/publish`/);
+    expect(r.stdout).toMatch(/Created publish branch `oak\/pub`/);
     expect(r.stdout).toMatch(/Worktree:/);
     expect(r.stdout).toMatch(/Scaffolded \d+ file/);
 
@@ -205,7 +205,7 @@ describe("oak pub build", () => {
       "--no-push",
     ]);
     expect(r.code).toBe(0);
-    expect(r.stdout).toMatch(/Published [0-9a-f]{7} to `oak\/publish`/);
+    expect(r.stdout).toMatch(/Published [0-9a-f]{7} to `oak\/pub`/);
     expect(r.stdout).toMatch(/sync: +\+\d+ =\d+ -\d+/);
     expect(r.stdout).toMatch(/pushed: +no/);
 

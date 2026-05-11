@@ -2,8 +2,8 @@
 //
 // Layout the user sees:
 //   - main worktree (the vault repo's normal branch) keeps notes only.
-//   - publish orphan branch `oak/publish` is checked out into a sibling
-//     worktree at `<vault>/.git/oak-publish/`. The Astro app source, its
+//   - publish orphan branch `oak/pub` is checked out into a sibling
+//     worktree at `<vault>/.git/oak-pub/`. The Astro app source, its
 //     `package.json`, and a `vault/` mirror of the publishable subset of
 //     the vault all live in that worktree.
 //
@@ -47,15 +47,15 @@ import type { Visibility } from "./types.js";
 import { syncPaths } from "./sync-tree.js";
 import { spawn } from "node:child_process";
 
-export const DEFAULT_PUBLISH_BRANCH = "oak/publish";
+export const DEFAULT_PUBLISH_BRANCH = "oak/pub";
 
 // Worktree path is fixed: under the vault's own `.git/`. This keeps it
 // out of the main worktree's `git status` (git never walks into its
 // own metadata dir for working-tree purposes) and ties its lifetime to
 // the repo. The trailing segment is deliberately non-canonical
-// (`oak-publish`, not `oak/publish`) to avoid colliding with the
+// (`oak-pub`, not `oak/pub`) to avoid colliding with the
 // branch's own metadata directory under `.git/worktrees/`.
-export const PUBLISH_WORKTREE_REL = ".git/oak-publish";
+export const PUBLISH_WORKTREE_REL = ".git/oak-pub";
 
 export type PubInitOptions = {
   vaultRoot: string;

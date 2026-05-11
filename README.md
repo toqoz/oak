@@ -32,10 +32,10 @@ branch stays clean. The Astro app you own builds the site; oak owns
 the branch, the worktree, and the visibility filter.
 
 ```bash
-oak pub init                # create the `oak/publish` orphan branch
-                            # + a worktree at .git/oak-publish/
+oak pub init                # create the `oak/pub` orphan branch
+                            # + a worktree at .git/oak-pub/
                             # + scaffold the Astro template into it
-cd .git/oak-publish
+cd .git/oak-pub
 npm install                 # one-time, in the publish worktree
 npm run dev                 # local preview from the snapshot
 
@@ -51,7 +51,7 @@ content never reaches the publish branch — defense in depth on top of
 the loader's visibility filter.
 
 The deploy host (Cloudflare Pages, Vercel, Netlify, …) clones
-`oak/publish` and runs `npm run build` itself.
+`oak/pub` and runs `npm run build` itself.
 
 ## Documentation
 

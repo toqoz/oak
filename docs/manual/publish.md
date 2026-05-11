@@ -7,13 +7,13 @@ host runs the Astro build. This guide covers the end-to-end flow.
 ## Architecture in one paragraph
 
 A vault is plain markdown. `oak pub init` creates an orphan git branch
-called `oak/publish` and lays down a sibling worktree at
-`<vault>/.git/oak-publish`, then scaffolds an Astro project (the
+called `oak/pub` and lays down a sibling worktree at
+`<vault>/.git/oak-pub`, then scaffolds an Astro project (the
 publish-template) into that worktree. Your notes branch stays clean.
 `oak pub build` syncs the **publishable subset** of your vault (pages
 whose visibility is `public` or `unlisted`, plus the assets they
 reference) into `<worktree>/vault/`, commits the change, and
-force-pushes the `oak/publish` branch. The deploy host (Cloudflare
+force-pushes the `oak/pub` branch. The deploy host (Cloudflare
 Pages, Vercel, Netlify, …) clones the branch and runs the Astro
 build itself.
 
@@ -21,8 +21,8 @@ build itself.
 vault repo
 ├── main (notes only — your normal worktree)
 │   └── content/, _assets/, …
-└── oak/publish (orphan, force-pushed)
-    └── checked out at .git/oak-publish/
+└── oak/pub (orphan, force-pushed)
+    └── checked out at .git/oak-pub/
         ├── src/                     Astro app
         ├── astro.config.mjs
         ├── package.json
@@ -33,7 +33,7 @@ vault repo
                            │
                            │ git push --force
                            ▼
-                       origin/oak/publish ──► deploy host
+                       origin/oak/pub ──► deploy host
                                               │ npm install
                                               │ npm run build
                                               ▼
@@ -57,7 +57,7 @@ Keeping the Astro project off the notes branch buys two things:
 
 ```bash
 oak pub init                              # create branch + worktree + scaffold
-cd .git/oak-publish
+cd .git/oak-pub
 npm install                               # install Astro deps
 npm run dev                               # local preview at http://localhost:4321
 # Then, whenever you want to publish:
@@ -65,19 +65,19 @@ cd <vault>
 oak pub build                             # refresh vault/ snapshot, commit, push
 ```
 
-After the first push, point your host at the `oak/publish` branch and
+After the first push, point your host at the `oak/pub` branch and
 let it run `npm run build`.
 
 ## CLI reference
 
 ### `oak pub init`
 
-Creates the local `oak/publish` orphan branch (or reuses
-`origin/oak/publish` if it already exists upstream) and adds a
-worktree at `<vault>/.git/oak-publish`. If the branch is freshly
+Creates the local `oak/pub` orphan branch (or reuses
+`origin/oak/pub` if it already exists upstream) and adds a
+worktree at `<vault>/.git/oak-pub`. If the branch is freshly
 created, scaffolds the publish-template into the worktree.
 
-Refuses if `<vault>/.git/oak-publish` already exists — remove it or
+Refuses if `<vault>/.git/oak-pub` already exists — remove it or
 use it as-is.
 
 In a development install (oak from source rather than from npm), the
@@ -94,13 +94,13 @@ Syncs the publishable subset of the vault into the publish worktree's
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--branch <name>` | `oak/publish` | Publish branch name |
+| `--branch <name>` | `oak/pub` | Publish branch name |
 | `--remote <name>` | `origin` | Remote to push to |
 | `--no-push` | (off) | Commit locally without pushing |
 
 If the source vault's working tree is dirty, the commit subject is
 tagged `publish: <source-sha> (dirty)` so the mismatch is visible in
-`git log oak/publish`. The CLI does not refuse — there is no
+`git log oak/pub`. The CLI does not refuse — there is no
 checkpoint dance. If you want strict guarantees, commit before
 publishing.
 
@@ -134,7 +134,7 @@ flag for this is not exposed yet.
 After `oak pub init`, the publish worktree contains:
 
 ```
-.git/oak-publish/
+.git/oak-pub/
 ├── astro.config.mjs               wires remarkOakLinks + the vault path
 ├── package.json
 ├── tsconfig.json
@@ -232,7 +232,7 @@ expected flow:
 ### Cloudflare Pages
 
 1. Connect your repo.
-2. Set the production branch to `oak/publish`.
+2. Set the production branch to `oak/pub`.
 3. Framework preset: Astro.
 4. Build command: `npm run build`.
 5. Build output directory: `dist`.
@@ -240,13 +240,13 @@ expected flow:
 ### Vercel
 
 1. Connect your repo.
-2. Set the production branch to `oak/publish`.
+2. Set the production branch to `oak/pub`.
 3. Vercel auto-detects Astro and runs `npm run build` → `dist/`.
 
 ### Netlify
 
 1. Connect your repo.
-2. Set the publish branch to `oak/publish`.
+2. Set the publish branch to `oak/pub`.
 3. Build command: `npm run build`.
 4. Publish directory: `dist`.
 
@@ -254,7 +254,7 @@ expected flow:
 
 GitHub Pages doesn't run arbitrary builds for free private repos. For
 public repos, use a GitHub Actions workflow that watches the
-`oak/publish` branch and runs `npm run build` + uploads `dist/` to
+`oak/pub` branch and runs `npm run build` + uploads `dist/` to
 `gh-pages`. Add the workflow yourself; oak doesn't ship one.
 
 ### SSR / dynamic rendering
@@ -266,12 +266,12 @@ deploy host runs whatever Astro is configured to run.
 
 ## Troubleshooting
 
-### `publish branch oak/publish does not exist`
+### `publish branch oak/pub does not exist`
 
 Run `oak pub init` first. It creates the branch locally only; the
 first `oak pub build` pushes it.
 
-### `publish worktree not found at .git/oak-publish`
+### `publish worktree not found at .git/oak-pub`
 
 The worktree was removed but the branch still exists. Re-run
 `oak pub init` to recreate it (the branch and any prior publish
@@ -279,9 +279,9 @@ history are preserved).
 
 ### `publish worktree already exists`
 
-The directory `<vault>/.git/oak-publish` is already there. If it's a
+The directory `<vault>/.git/oak-pub` is already there. If it's a
 valid worktree, just `cd` into it and keep working. If it's stale,
-remove it with `git worktree remove --force .git/oak-publish` and
+remove it with `git worktree remove --force .git/oak-pub` and
 re-run init.
 
 ### A page I expected isn't on the site
@@ -301,7 +301,7 @@ optimization entirely, set `optimizeImages: false` in
 
 ### Edits to my vault don't show up in `npm run dev`
 
-Dev mode reads from `.git/oak-publish/vault/`, which is only refreshed
+Dev mode reads from `.git/oak-pub/vault/`, which is only refreshed
 by `oak pub build`. Re-run `oak pub build` (or just the sync portion
 via a script) to refresh local dev. This is a known trade-off:
 keeping vault and publish branches separate means no live link from

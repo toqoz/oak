@@ -91,7 +91,7 @@ async function writePage(
 }
 
 describe("pubInit", () => {
-  it("creates the orphan branch and lays down a worktree at .git/oak-publish", async () => {
+  it("creates the orphan branch and lays down a worktree at .git/oak-pub", async () => {
     const vault = await makeVault();
     const template = await makeTemplate();
 

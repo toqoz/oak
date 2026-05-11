@@ -1,7 +1,7 @@
-# @oak/publish-template
+# @oak/pub-template
 
 Astro boilerplate scaffolded into the publish worktree by
-`oak pub init`. Once scaffolded, this code lives on the `oak/publish`
+`oak pub init`. Once scaffolded, this code lives on the `oak/pub`
 orphan branch of **your** vault repo — edit it freely. There is no
 upstream contract to honor; oak treats it as your own.
 
@@ -46,11 +46,11 @@ There is no theme system, no plugin API, no config DSL. Just code.
 
 ## Build
 
-The publish worktree lives at `<vault>/.git/oak-publish` after
+The publish worktree lives at `<vault>/.git/oak-pub` after
 `oak pub init`. Run development and build commands from inside it:
 
 ```bash
-cd <vault>/.git/oak-publish
+cd <vault>/.git/oak-pub
 npm install      # or pnpm / yarn
 npm run dev      # local preview at http://localhost:4321
 npm run build    # produces dist/
@@ -58,7 +58,7 @@ npm run build    # produces dist/
 
 After committing template/source changes, run `oak pub build` from
 the vault root to refresh the `vault/` snapshot and push the
-`oak/publish` branch. The deploy host (Cloudflare Pages, Vercel,
+`oak/pub` branch. The deploy host (Cloudflare Pages, Vercel,
 Netlify, …) then clones the branch and runs `npm run build`.
 
 ## The `vault/` snapshot
