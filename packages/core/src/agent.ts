@@ -368,7 +368,7 @@ export function agentContext(
 
     out.push({
       id: page.id,
-      title: page.title,
+      title: page.titlePlain,
       visibility: page.visibility,
       llm: page.llm,
       body,

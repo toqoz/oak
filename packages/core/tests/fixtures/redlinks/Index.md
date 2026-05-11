@@ -1,8 +1,9 @@
 ---
 id: 01HX000000000000000000RDL1
-title: Index
 visibility: public
 ---
+
+# Index
 
 This page has an unresolved link: [[Future Idea]].
 

@@ -239,7 +239,7 @@ export async function publish(
           {
             severity: "error",
             code: "missing-asset",
-            message: `Asset not found: ${ref.target} referenced from ${page.title} (line ${ref.line})`,
+            message: `Asset not found: ${ref.target} referenced from ${page.titlePlain} (line ${ref.line})`,
             pageId: page.id,
             filePath: page.filePath,
           },
@@ -315,7 +315,7 @@ export async function publish(
     newManifest.pages[r.page.id] = {
       slug: r.page.slug,
       outputPath: r.outputPath,
-      title: r.page.title,
+      title: r.page.titlePlain,
       contentHash: r.contentHash,
     };
   }
@@ -353,7 +353,7 @@ export async function publish(
       baseUrl,
       pages: rendered.map((r) => ({
         pageId: r.page.id,
-        title: r.page.title,
+        title: r.page.titlePlain,
         slug: r.page.slug,
         outputPath: r.outputPath,
       })),
@@ -390,7 +390,7 @@ export async function publish(
   const graphJson = {
     nodes: rendered.map((r) => ({
       id: r.page.id,
-      title: r.page.title,
+      title: r.page.titlePlain,
       slug: r.page.slug,
       url: pageUrlById.get(r.page.id),
     })),
@@ -419,7 +419,7 @@ export async function publish(
   // Generate search-index.json (page metadata + plain body text).
   const searchIndex = rendered.map((r) => ({
     id: r.page.id,
-    title: r.page.title,
+    title: r.page.titlePlain,
     slug: r.page.slug,
     url: pageUrlById.get(r.page.id),
     body: stripWikiSyntax(r.page.body),
@@ -454,7 +454,7 @@ export async function publish(
     baseUrl,
     pages: rendered.map((r) => ({
       pageId: r.page.id,
-      title: r.page.title,
+      title: r.page.titlePlain,
       slug: r.page.slug,
       outputPath: r.outputPath,
     })),

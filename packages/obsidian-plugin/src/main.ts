@@ -879,11 +879,17 @@ export default class OakPlugin extends Plugin {
     void file; // accessed via metadataCache below; kept for callers
     const cache = this.app.metadataCache.getFileCache(view.file!);
     const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-    const fmTitleRaw = fm?.["title"];
-    const fmTitle =
-      typeof fmTitleRaw === "string" && fmTitleRaw.trim().length > 0
-        ? fmTitleRaw.trim()
+    const fmId = fm?.["id"];
+    const isOakPage = typeof fmId === "string" && fmId.trim().length > 0;
+    // Title source: first h1 in the body. Obsidian's metadata cache
+    // exposes headings already parsed; pick the first level-1 entry.
+    const firstH1 =
+      cache?.headings?.find((h) => h.level === 1)?.heading ?? null;
+    const fmTitleRaw =
+      typeof firstH1 === "string" && firstH1.trim().length > 0
+        ? firstH1.trim()
         : null;
+    const fmTitle = isOakPage ? fmTitleRaw ?? "" : null;
 
     let existingRow = view.contentEl.querySelector<HTMLElement>(
       ".oak-page-title-row",
@@ -1048,7 +1054,7 @@ export default class OakPlugin extends Plugin {
     // header so it doesn't outlive the file transition.
     if (headerScratchRow) headerScratchRow.remove();
 
-    if (oakMode && fmTitle) {
+    if (oakMode && isOakPage) {
       // Inject the title row *inside* the scroll container so the
       // scrollbar runs the full pane height and so the title
       // scrolls with the content. The row holds the title input on
@@ -1092,11 +1098,12 @@ export default class OakPlugin extends Plugin {
       }
       const input = row.querySelector<HTMLInputElement>(".oak-page-title");
       const select = row.querySelector<HTMLSelectElement>(".oak-page-visibility");
+      const displayTitle = fmTitleRaw ?? "";
       if (input) {
         // Don't clobber what the user is typing. We only push the
         // canonical value when the input isn't focused.
-        if (input.value !== fmTitle && document.activeElement !== input) {
-          input.value = fmTitle;
+        if (input.value !== displayTitle && document.activeElement !== input) {
+          input.value = displayTitle;
         }
       }
       if (select && select.value !== fmVisibility) {
@@ -1104,8 +1111,13 @@ export default class OakPlugin extends Plugin {
       }
 
       if (tabTitleEl) {
-        tabTitleEl.dataset["oakTitle"] = fmTitle;
-        tabTitleEl.classList.add("oak-tab-title-override");
+        if (fmTitleRaw) {
+          tabTitleEl.dataset["oakTitle"] = fmTitleRaw;
+          tabTitleEl.classList.add("oak-tab-title-override");
+        } else {
+          delete tabTitleEl.dataset["oakTitle"];
+          tabTitleEl.classList.remove("oak-tab-title-override");
+        }
       }
     } else {
       if (existingRow) existingRow.remove();
@@ -2185,9 +2197,9 @@ export default class OakPlugin extends Plugin {
       const newTitle = input.value.trim();
       const cache = this.app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-      const oldTitleRaw = fm?.["title"];
-      const oldTitle =
-        typeof oldTitleRaw === "string" ? oldTitleRaw.trim() : "";
+      const oldH1 =
+        cache?.headings?.find((h) => h.level === 1)?.heading ?? "";
+      const oldTitle = oldH1.trim();
       if (newTitle.length === 0 || newTitle === oldTitle) {
         input.value = oldTitle;
         return;
@@ -2201,7 +2213,7 @@ export default class OakPlugin extends Plugin {
         { title: oldTitle, slug: oldSlug, basename: file.basename },
         newTitle,
       );
-      if (result.status === "frontmatter-failed") {
+      if (result.status === "heading-failed") {
         new Notice(`oak: failed to update title — ${result.error}`);
       } else if (result.status === "rename-skipped") {
         new Notice(`oak: rename skipped — ${result.reason}`);
@@ -2220,9 +2232,8 @@ export default class OakPlugin extends Plugin {
         const cache = view.file
           ? this.app.metadataCache.getFileCache(view.file)
           : null;
-        const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-        const t = fm?.["title"];
-        if (typeof t === "string") input.value = t;
+        const t = cache?.headings?.find((h) => h.level === 1)?.heading;
+        if (typeof t === "string") input.value = t.trim();
         input.blur();
       }
     });

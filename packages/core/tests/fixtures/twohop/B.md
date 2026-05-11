@@ -1,7 +1,8 @@
 ---
 id: 01HX000000000000000000THP2
-title: B
 visibility: public
 ---
+
+# B
 
 Links to [[C]].

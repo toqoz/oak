@@ -207,7 +207,7 @@ export async function writeIndex(
       for (const page of vault.pages.values()) {
         insertPage.run(
           page.id,
-          page.title,
+          page.titlePlain,
           page.slug,
           page.visibility,
           page.llm,

@@ -86,6 +86,8 @@ export function searchVault(
     return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
   });
 
+
+
   return hits.slice(0, limit);
 }
 
@@ -99,15 +101,16 @@ function scorePage(
   const snippets: SearchSnippet[] = [];
   let score = 0;
 
-  // Title
-  const titleLower = page.title.toLowerCase();
+  // Title — match against the plain-text form so decorations and
+  // wikilink syntax don't pollute search queries or snippet display.
+  const titleLower = page.titlePlain.toLowerCase();
   const titleIdx = titleLower.indexOf(qLower);
   if (titleIdx !== -1) {
     score += titleIdx === 0 ? SCORE_TITLE_PREFIX : SCORE_TITLE_CONTAINS;
     snippets.push({
       kind: "title",
       line: 0,
-      text: page.title,
+      text: page.titlePlain,
       start: titleIdx,
       end: titleIdx + query.length,
     });
@@ -167,7 +170,7 @@ function scorePage(
 
   return {
     pageId: page.id,
-    title: page.title,
+    title: page.titlePlain,
     aliases: [...page.aliases],
     visibility: page.visibility,
     vaultRelPath: page.relPath,

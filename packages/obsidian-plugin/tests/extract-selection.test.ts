@@ -3,14 +3,20 @@ import { composePage } from "@oak/core";
 
 import { extractFromSelection } from "../src/extract-selection.js";
 
-// Slice the body region out of a composed oak page. Frontmatter is
-// `---\n...\n---\n\n`; everything after that closing `---\n\n` is the
-// body. Returning it raw lets tests assert "what the user actually
-// sees in the new page".
+// Slice the user-body region out of a composed oak page. The file
+// shape is `---\n...\n---\n\n# Title\n[\n{body}]`. Everything after
+// the title-heading line is the user body; returning it raw lets
+// tests assert "what the user actually sees below the title".
 function bodyOf(text: string): string {
   const m = text.match(/^---\n[\s\S]*?\n---\n\n/);
   if (!m) throw new Error(`no frontmatter in:\n${text}`);
-  return text.slice(m[0].length);
+  const afterFm = text.slice(m[0].length);
+  const titleMatch = afterFm.match(/^#\s[^\n]*\n/);
+  if (!titleMatch) throw new Error(`no title heading in:\n${text}`);
+  // Strip the title line *and* the single blank line that separates it
+  // from the body, if present. Tests assert that the remaining body
+  // never begins with a blank line.
+  return afterFm.slice(titleMatch[0].length).replace(/^\n/, "");
 }
 
 describe("extractFromSelection — title", () => {

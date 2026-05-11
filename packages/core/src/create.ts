@@ -8,7 +8,7 @@ import { dirname, extname, isAbsolute, posix, resolve, sep } from "node:path";
 import yaml from "js-yaml";
 import { ulid } from "ulid";
 
-import { slugify } from "./slug.js";
+import { plainTextTitle, slugify } from "./slug.js";
 import type { LlmPolicy, Visibility } from "./types.js";
 
 const ILLEGAL_FS = /[\\/:*?"<>|]/g;
@@ -135,12 +135,13 @@ export function composePage(options: CreatePageOptions): ComposedPage {
   }
 
   const id = options.generateId ? options.generateId() : ulid();
-  const slug = options.slug?.trim() || slugify(title);
+  const slug = options.slug?.trim() || slugify(plainTextTitle(title));
 
   // Build frontmatter explicitly so the YAML is self-documenting:
   // every page on disk shows visibility/llm even when they're at
-  // their defaults.
-  const fm: Record<string, unknown> = { id, title };
+  // their defaults. Title lives in the body as a `# ...` heading, not
+  // here in the frontmatter.
+  const fm: Record<string, unknown> = { id };
   if (aliases.length > 0) fm["aliases"] = aliases;
   fm["visibility"] = visibility;
   fm["slug"] = slug;
@@ -151,8 +152,12 @@ export function composePage(options: CreatePageOptions): ComposedPage {
     lineWidth: 120,
     noRefs: true,
   });
-  const body = options.body ?? "";
-  const text = `---\n${yamlText}---\n\n${body}${body.endsWith("\n") || body.length === 0 ? "" : "\n"}`;
+  const userBody = options.body ?? "";
+  const bodyHasTrailingNewline =
+    userBody.endsWith("\n") || userBody.length === 0;
+  const bodySection =
+    userBody.length === 0 ? "" : `\n${userBody}${bodyHasTrailingNewline ? "" : "\n"}`;
+  const text = `---\n${yamlText}---\n\n# ${title}\n${bodySection}`;
 
   return {
     id,

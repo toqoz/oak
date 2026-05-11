@@ -1,7 +1,8 @@
 ---
 id: 01HX000000000000000000THP5
-title: E
 visibility: public
 ---
+
+# E
 
 Inbound only: links to [[A]].

@@ -17,7 +17,12 @@ import type {
   LlmPolicy,
 } from "./types.js";
 import { extractLinks } from "./links.js";
-import { normalizeKey, slugify } from "./slug.js";
+import {
+  extractFirstH1,
+  normalizeKey,
+  plainTextTitle,
+  slugify,
+} from "./slug.js";
 
 const SYSTEM_DIRS = new Set([
   "_assets",
@@ -80,19 +85,23 @@ export async function parsePage(
   const relPathPosix = toPosix(relative(rootPath, filePath));
   const basename = basenameNoExt(filePath);
 
-  // Title
+  // Title — sourced from the first ATX `# ...` heading in the body.
+  // Falls back to the filename basename so the rest of the pipeline can
+  // still run; the missing heading is surfaced as an error.
   let title: string;
-  if (typeof fm.title === "string" && fm.title.trim().length > 0) {
-    title = fm.title.trim();
+  const h1 = extractFirstH1(body);
+  if (h1) {
+    title = h1.raw;
   } else {
     title = basename;
     issues.push({
       severity: "error",
       code: "missing-title",
-      message: `Page is missing required \`title\` frontmatter`,
+      message: `Page is missing a top-level \`# Title\` heading`,
       filePath,
     });
   }
+  const titlePlain = plainTextTitle(title);
 
   // ID
   let id: string;
@@ -153,7 +162,7 @@ export async function parsePage(
   if (typeof fm.slug === "string" && fm.slug.trim().length > 0) {
     slug = fm.slug.trim();
   } else {
-    slug = slugify(title);
+    slug = slugify(titlePlain);
   }
 
   const links = extractLinks(body);
@@ -162,6 +171,7 @@ export async function parsePage(
     type: "page",
     id,
     title,
+    titlePlain,
     aliases,
     visibility,
     slug,
@@ -434,7 +444,7 @@ export async function parseVault(rootPath: string): Promise<Vault> {
   const basenameConflicts = new Map<string, string[]>();
 
   for (const page of pages.values()) {
-    const tk = normalizeKey(page.title);
+    const tk = normalizeKey(page.titlePlain);
     if (byTitle.has(tk) && byTitle.get(tk) !== page.id) {
       recordConflict(titleConflicts, tk, byTitle.get(tk)!);
       recordConflict(titleConflicts, tk, page.id);

@@ -107,7 +107,7 @@ function wikiLinkReplacement(
     const target = vault.get(r.targetId);
     if (target) {
       const url = ctx.pageUrl(target.id);
-      const label = link.label ?? target.title;
+      const label = link.label ?? target.titlePlain;
       const heading = link.heading ? `#${link.heading}` : "";
       return `[${escapeLinkLabel(label)}](${escapeLinkUrl(url + heading)}){.oak-embed}`;
     }
@@ -117,7 +117,7 @@ function wikiLinkReplacement(
     const target = vault.get(r.targetId);
     if (target) {
       const url = ctx.pageUrl(target.id);
-      const label = link.label ?? target.title;
+      const label = link.label ?? target.titlePlain;
       const heading = link.heading ? `#${link.heading}` : "";
       return `[${escapeLinkLabel(label)}](${escapeLinkUrl(url + heading)})`;
     }
@@ -195,6 +195,10 @@ export function renderPage(
 }
 
 // Convenience: shape a complete HTML document around the rendered body.
+// The body already carries the `# Title` heading from the source file,
+// so the `<article>` wrapper does not re-emit an `<h1>`. The `<title>`
+// tag uses the plain-text form so decorations and wikilink syntax don't
+// leak into the browser chrome.
 export function renderPageDocument(
   page: OakPage,
   vault: Map<string, OakPage>,
@@ -203,7 +207,7 @@ export function renderPageDocument(
   options: { lang?: string; title?: string } = {},
 ): string {
   const body = renderPage(page, vault, graph, ctx);
-  const title = options.title ?? page.title;
+  const title = options.title ?? page.titlePlain;
   const lang = options.lang ?? "en";
   return `<!DOCTYPE html>
 <html lang="${escapeHtml(lang)}">
@@ -214,7 +218,6 @@ export function renderPageDocument(
 </head>
 <body>
 <article>
-<h1>${escapeHtml(title)}</h1>
 ${body}
 </article>
 </body>

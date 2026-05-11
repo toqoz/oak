@@ -1,9 +1,10 @@
 ---
 id: 01HX000000000000000000PUB2
-title: About
 visibility: public
 slug: about
 ---
+
+# About
 
 About this vault. Back to [[Hello]].
 

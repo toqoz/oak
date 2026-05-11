@@ -32,7 +32,12 @@ export {
   redlinkTargetId,
 } from "./graph.js";
 export { validateVault, partitionIssues } from "./validate.js";
-export { slugify, normalizeKey } from "./slug.js";
+export {
+  slugify,
+  normalizeKey,
+  plainTextTitle,
+  extractFirstH1,
+} from "./slug.js";
 export {
   writeIndex,
   readIndexMeta,

@@ -20,6 +20,7 @@ function makePage(init: PageInit): OakPage {
     type: "page",
     id: init.id,
     title: init.title,
+    titlePlain: init.title,
     aliases: init.aliases ?? [],
     visibility: init.visibility ?? "private",
     slug: init.id,

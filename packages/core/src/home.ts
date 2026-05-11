@@ -145,7 +145,7 @@ export async function homeViewModel(
     const updatedAt = await fileMtime(page.filePath);
     all.push({
       id: page.id,
-      title: page.title,
+      title: page.titlePlain,
       slug: page.slug,
       visibility: page.visibility,
       vaultRelPath: page.relPath,
