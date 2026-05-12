@@ -36,7 +36,8 @@ Default mode is **file mode**:
 
 - Type to filter the file list by vault-relative path.
 - `↓` / `↑` (or `Ctrl-n` / `Ctrl-p`) move the selection.
-- `Enter` refiles under the selected file's root (top of file).
+- `Enter` refiles under the selected file's page title (its first
+  heading — typically the `# Title` h1).
 - `Shift-Enter` drills into the selected file's headings — the left
   pane flips to **section mode**.
 - `Esc` cancels the picker and closes the peek pane.
@@ -47,6 +48,9 @@ In section mode:
 - `Enter` refiles under the highlighted heading.
 - `Esc` returns to file mode.
 
+Files with no headings are omitted from the picker — refile always
+lands under some heading.
+
 ## Heading levels at the destination
 
 The picked target receives the source heading as a direct child:
@@ -54,11 +58,6 @@ heading levels in the moved subtree shift so the source heading lands
 at `target.level + 1`. A refile that would push any sub-heading past
 level 6 is refused; so is refiling a heading onto itself or into its
 own subtree.
-
-For "(top of file)" — where there is no parent heading to nest under
-— the resulting level comes from `topOfFileLevel` (see Configuration
-below), which defaults to `2` so the moved heading lands at oak's
-own root level (`##`).
 
 ## Atomicity
 
@@ -104,19 +103,3 @@ originally split from, and the peek pane becomes the picker for the
 new destination. The file that previously occupied the main slot is
 dropped from view but preserved in that leaf's tab history (← walks
 back to it).
-
-## Configuration — `.oak/refile.yml`
-
-All keys are optional. Defaults shown.
-
-```yaml
-topOfFileLevel: 2   # heading level for top-of-file refile (1..6)
-```
-
-`topOfFileLevel` is the heading level the source heading becomes when
-refiled to "(top of file)". Defaults to `2` because oak's body
-convention starts at `##`; users on the emacs `org-refile`
-clamp-to-level-1 convention can set it to `1`.
-
-Edits to this file are picked up on the next vault refresh (`r` in
-the agenda view, or anything else that triggers a vault re-scan).
