@@ -60,6 +60,7 @@ import {
   loadAgendaConfig,
   loadRefileConfig,
   nowIsoSecond,
+  pullRebase,
   recoverCreatedTimestamp,
   setCreatedIfMissing,
   setModified,
@@ -582,14 +583,16 @@ export default class OakPlugin extends Plugin {
     this.applyAutoSnapshot();
   }
 
-  // Cancel any pending debounced snapshot. The next vault edit will
-  // re-arm it (if auto-snapshot is still enabled). Called when the
-  // user toggles the feature or changes the interval — we don't run
-  // a snapshot eagerly here because the point of the debounce is to
-  // wait until the user goes idle.
+  // Reset the debounced snapshot timer to match the current settings.
+  // Called on plugin load and whenever settings change. When enabled,
+  // arm the timer immediately so a snapshot fires after the configured
+  // idle period even without a subsequent vault edit — otherwise a
+  // user who toggles auto-snapshot on (e.g. from the home view) and
+  // then stays idle would never see a commit.
   applyAutoSnapshot(): void {
     if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
+    this.bumpAutoSnapshot();
   }
 
   // Called from every vault edit (modify / create / delete / rename).
@@ -601,10 +604,41 @@ export default class OakPlugin extends Plugin {
     if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = setTimeout(() => {
       this.autoSnapshotHandle = null;
-      void snapshot(vaultRoot(this.app)).catch((err) =>
-        console.warn("oak auto-snapshot failed:", err),
-      );
+      void this.runAutoSnapshot();
     }, ms);
+  }
+
+  // Auto-snapshot fire: commit any pending local edits, pull remote
+  // changes on top, then refresh any open home views so their Git
+  // inspector reflects the new HEAD. Pull runs unconditionally — even
+  // when nothing was committed — so a vault synced across machines
+  // picks up external commits during the same idle window.
+  private async runAutoSnapshot(): Promise<void> {
+    const root = vaultRoot(this.app);
+    try {
+      await snapshot(root);
+    } catch (err) {
+      console.warn("oak auto-snapshot failed:", err);
+    }
+    try {
+      const r = await pullRebase(root);
+      if (r.attempted && !r.ok) {
+        console.warn("oak auto-snapshot pull --rebase failed:", r.details);
+      }
+    } catch (err) {
+      console.warn("oak auto-snapshot pull --rebase failed:", err);
+    }
+    this.refreshHomeViews();
+  }
+
+  private refreshHomeViews(): void {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof OakHomeView) {
+        void view.refreshGit();
+      }
+    }
   }
 
   private async refreshAgendaConfig(): Promise<void> {
