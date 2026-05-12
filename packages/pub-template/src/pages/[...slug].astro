@@ -14,7 +14,6 @@ const { Content } = await render(doc);
 <Base title={doc.data.title}>
   <main>
     <article>
-      <h1>{doc.data.title}</h1>
       <Content />
     </article>
     <Related inbound={doc.data.inbound} twoHop={doc.data.twoHop} />
