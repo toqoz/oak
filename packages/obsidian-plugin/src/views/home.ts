@@ -115,6 +115,15 @@ export class OakHomeView extends ItemView {
     }
   }
 
+  // Re-fetch git status / recent commits / mounts and re-render.
+  // Called from the plugin when an external event (auto-snapshot,
+  // manual snapshot/checkpoint) changes git state without touching
+  // any vault file — `state.subscribe` wouldn't fire on its own.
+  async refreshGit(): Promise<void> {
+    await this.refreshGitAndMounts();
+    this.render();
+  }
+
   private async refreshGitAndMounts(): Promise<void> {
     try {
       const root = vaultRoot(this.app2);
