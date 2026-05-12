@@ -1,0 +1,116 @@
+/* Minimal global styles. Edit freely — this is your code now.
+ *
+ * Goals:
+ *   - readable typography on any device
+ *   - sensible defaults, no theme contracts
+ *   - light + dark via prefers-color-scheme
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #1a1a1a;
+  background: #fdfdfc;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+a {
+  color: #1a4f8a;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  margin: 1.5em 0 0.5em;
+}
+
+h1 {
+  font-size: 1.875rem;
+}
+h2 {
+  font-size: 1.375rem;
+}
+h3 {
+  font-size: 1.125rem;
+}
+
+p {
+  margin: 0 0 1em;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+
+pre {
+  overflow-x: auto;
+  padding: 0.9em 1em;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+}
+
+/* Unresolved wiki links emitted by remarkOakLinks. */
+.oak-redlink {
+  color: #b04a3a;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+/* Page-embed style links (`![[Page]]`). */
+.oak-embed {
+  border-bottom: 1px dashed currentColor;
+}
+
+@media (prefers-color-scheme: dark) {
+  html {
+    color: #e6e6e3;
+    background: #1a1a1a;
+  }
+  a {
+    color: #7eb6ff;
+  }
+  code,
+  pre {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .oak-redlink {
+    color: #e08070;
+  }
+}

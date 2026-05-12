@@ -512,6 +512,49 @@ export async function recentCommits(
   return out;
 }
 
+// True iff the given branch ref exists locally.
+export async function branchExists(
+  vaultRoot: string,
+  branch: string,
+): Promise<boolean> {
+  const r = await runGit(
+    vaultRoot,
+    ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+    { allowFailure: true },
+  );
+  return r.code === 0;
+}
+
+// Git's well-known empty tree object. Every git repository "knows"
+// this hash even when no empty tree object is stored in its odb, and
+// commit-tree accepts it directly — sidestepping `mktree`, which reads
+// from stdin.
+const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+// Create a new branch pointing at a fresh empty-tree commit, without
+// touching the current worktree, index, or HEAD. Used to bootstrap
+// orphan branches like the publish branch.
+export async function createOrphanBranch(
+  vaultRoot: string,
+  branch: string,
+  message = `init: ${branch}`,
+): Promise<{ commit: string }> {
+  await ensureCommitterIdentity(vaultRoot);
+  const commit = await runGit(vaultRoot, [
+    "commit-tree",
+    EMPTY_TREE_SHA,
+    "-m",
+    message,
+  ]);
+  const commitHash = commit.stdout.trim();
+  await runGit(vaultRoot, [
+    "update-ref",
+    `refs/heads/${branch}`,
+    commitHash,
+  ]);
+  return { commit: commitHash };
+}
+
 // Author-date of the oldest commit that introduced `relPath`. Follows
 // renames so a file's git-history "creation" survives moves. Returns
 // null when the vault isn't a git repo, the file has no commits yet

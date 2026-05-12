@@ -1,0 +1,14 @@
+---
+import { getCollection } from "astro:content";
+import Base from "../layouts/Base.astro";
+import PageList from "../components/PageList.astro";
+
+const docs = await getCollection("docs");
+---
+<Base title="Index">
+  <main>
+    <h1>Index</h1>
+    <p>{docs.length} page{docs.length === 1 ? "" : "s"}.</p>
+    <PageList entries={docs} />
+  </main>
+</Base>

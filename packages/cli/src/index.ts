@@ -21,8 +21,10 @@
   };
 }
 
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { mkdir, writeFile, access } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import {
   acceptAgentTask,
   addMount,
@@ -31,6 +33,7 @@ import {
   buildGraph,
   checkpoint,
   createPage,
+  DEFAULT_PUBLISH_BRANCH,
   ensureGitRepo,
   extractVaultAgendaEntries,
   getBacklinks,
@@ -44,8 +47,10 @@ import {
   mountDoctor,
   parseVault,
   partitionIssues,
-  publish,
-  PublishError,
+  pubBuild,
+  PubError,
+  pubInit,
+  pubStatus,
   recentCommits,
   rejectAgentTask,
   reviewAgentTask,
@@ -79,7 +84,7 @@ Commands:
   status                     Show pending vault changes (stub in v1)
   backlinks <page>           List incoming links for a page
   twohop <page>              List two-hop neighbours for a page
-  publish [--base-url U]     Render public/unlisted pages to public-site/
+  pub                        Publish branch tooling (init / build)
   snapshot [--message M]     Stage tracked files and commit a snapshot
   checkpoint <message>       Create a named commit (e.g. before publish)
   log [--n N]                Show recent oak commits
@@ -150,8 +155,8 @@ async function main(argv: string[]): Promise<number> {
       return await cmdMount(vaultPath, parsed.positional, parsed.flags, json);
     case "agent":
       return await cmdAgent(vaultPath, parsed.positional, parsed.flags, json);
-    case "publish":
-      return await cmdPublish(vaultPath, parsed.flags, json);
+    case "pub":
+      return await cmdPub(vaultPath, parsed.positional, parsed.flags, json);
     case "snapshot":
       return await cmdSnapshot(vaultPath, parsed.flags, json);
     case "checkpoint":
@@ -472,80 +477,196 @@ async function cmdTwoHop(
   return 0;
 }
 
-async function cmdPublish(
+const PUB_HELP = `oak pub — publish branch tooling
+
+Usage:
+  oak pub                    Show this help
+  oak pub init               Create the publish orphan branch and check
+                             out a worktree at <vault>/.oak/pub
+  oak pub build              Refresh the publishable vault snapshot in
+                             the publish worktree and commit (local only)
+  oak pub status             Show whether the publish branch and
+                             worktree exist
+
+Options for \`oak pub build\`:
+  --branch <name>            Publish branch name (default: ${DEFAULT_PUBLISH_BRANCH})
+  --remote <name>            Git remote (default: origin)
+  --push                     Push to <remote>/<branch> after committing
+`;
+
+function resolveTemplateDir(): string {
+  // CLI declares @oak/pub-template as a workspace dep. Resolve via
+  // the package.json so we work whether installed flat, hoisted, or
+  // running directly out of the monorepo.
+  const require = createRequire(import.meta.url);
+  try {
+    const pkgPath = require.resolve("@oak/pub-template/package.json");
+    return dirname(pkgPath);
+  } catch {
+    // Fallback for monorepo-from-source running before pnpm install:
+    // packages/cli/dist/index.js -> ../../pub-template
+    const here = fileURLToPath(import.meta.url);
+    return resolve(dirname(here), "..", "..", "pub-template");
+  }
+}
+
+async function cmdPub(
   vaultPath: string,
+  positional: string[],
   flags: Record<string, string | boolean>,
   json: boolean,
 ): Promise<number> {
-  const vault = await parseVault(vaultPath);
-  const graph = buildGraph(vault);
-  const issues = validateVault(vault, graph);
-
-  const baseUrl = getString(flags, "base-url");
-  const outputDir = getString(flags, "output");
-  const dryRun = getBool(flags, "dry-run");
-  const noCheckpoint = getBool(flags, "no-checkpoint");
-
-  // Per directive §8: `checkpoint: before publish`. We commit the
-  // current state of the vault so a publish is always reversible.
-  let checkpointResult: Awaited<ReturnType<typeof checkpoint>> | null = null;
-  if (!dryRun && !noCheckpoint) {
-    checkpointResult = await checkpoint(vaultPath, "before publish");
-  }
-
-  try {
-    const stats = await publish(vault, graph, issues, {
-      ...(baseUrl !== undefined ? { baseUrl } : {}),
-      ...(outputDir !== undefined ? { outputDir } : {}),
-      dryRun,
-    });
-    if (json) {
-      process.stdout.write(
-        JSON.stringify(
-          { ...stats, checkpoint: checkpointResult },
-          null,
-          2,
-        ) + "\n",
-      );
-      return 0;
-    }
-    process.stdout.write(
-      `${dryRun ? "(dry-run) " : ""}Published to ${stats.outputDir}\n`,
-    );
-    process.stdout.write(`  baseUrl:        ${stats.baseUrl}\n`);
-    process.stdout.write(`  pages:          ${stats.pages.length}\n`);
-    process.stdout.write(`  assets:         ${stats.assets.length}\n`);
-    process.stdout.write(`  removed pages:  ${stats.removedPages.length}\n`);
-    process.stdout.write(`  removed assets: ${stats.removedAssets.length}\n`);
-    process.stdout.write(`  manifest:       ${stats.manifestPath}\n`);
-    if (checkpointResult?.committed) {
-      process.stdout.write(
-        `  checkpoint:     ${checkpointResult.hash?.slice(0, 7)} ${checkpointResult.message}\n`,
-      );
-    } else if (noCheckpoint) {
-      process.stdout.write(`  checkpoint:     skipped (--no-checkpoint)\n`);
-    } else if (checkpointResult && !checkpointResult.committed) {
-      process.stdout.write(`  checkpoint:     no changes since last commit\n`);
-    }
+  const sub = positional[0];
+  if (!sub) {
+    process.stdout.write(PUB_HELP);
     return 0;
+  }
+  try {
+    switch (sub) {
+      case "init":
+        return await cmdPubInit(vaultPath, flags, json);
+      case "build":
+        return await cmdPubBuild(vaultPath, flags, json);
+      case "status":
+        return await cmdPubStatus(vaultPath, flags, json);
+      default:
+        process.stderr.write(
+          `Unknown pub subcommand: ${sub}. Try \`oak pub\` for help.\n`,
+        );
+        return 1;
+    }
   } catch (err) {
-    if (err instanceof PublishError) {
+    if (err instanceof PubError) {
       if (json) {
         process.stdout.write(
-          JSON.stringify({ blocked: true, errors: err.issues }, null, 2) +
+          JSON.stringify({ error: err.code, message: err.message }, null, 2) +
             "\n",
         );
       } else {
-        process.stderr.write(`publish blocked:\n`);
-        for (const i of err.issues) {
-          const where = i.filePath ? ` (${i.filePath})` : "";
-          process.stderr.write(`  [${i.code}] ${i.message}${where}\n`);
-        }
+        process.stderr.write(`oak pub: ${err.message}\n`);
       }
       return 1;
     }
     throw err;
   }
+}
+
+async function cmdPubInit(
+  vaultPath: string,
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const branch = getString(flags, "branch") ?? DEFAULT_PUBLISH_BRANCH;
+  const result = await pubInit({
+    vaultRoot: vaultPath,
+    templateDir: resolveTemplateDir(),
+    branch,
+  });
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
+  if (result.branchCreated) {
+    process.stdout.write(
+      `Created publish branch \`${result.branch}\` (${result.initialCommit?.slice(0, 7)})\n`,
+    );
+  } else {
+    process.stdout.write(
+      `Reused publish branch \`${result.branch}\`\n`,
+    );
+  }
+  process.stdout.write(`Worktree:    ${result.worktreePath}\n`);
+  if (result.scaffolded.length > 0) {
+    const commitNote = result.scaffoldCommit
+      ? ` (${result.scaffoldCommit.slice(0, 7)})`
+      : "";
+    process.stdout.write(
+      `Scaffolded ${result.scaffolded.length} file(s)${commitNote}\n`,
+    );
+    for (const f of result.scaffolded) {
+      process.stdout.write(`  + ${f}\n`);
+    }
+  } else {
+    process.stdout.write(`Scaffold skipped (branch already populated)\n`);
+  }
+  if (result.rewrittenDevDeps.length > 0) {
+    process.stdout.write(
+      `\nDevelopment install detected: rewrote ${result.rewrittenDevDeps.length} workspace ref(s) to local file: paths.\n`,
+    );
+    for (const r of result.rewrittenDevDeps) {
+      process.stdout.write(`  ${r.file}: ${r.name} -> file:${r.resolvedTo}\n`);
+    }
+    process.stdout.write(
+      `Note: file: refs are machine-specific. Re-run \`oak pub init\` after publishing oak to npm, or edit package.json by hand.\n`,
+    );
+  }
+  return 0;
+}
+
+async function cmdPubBuild(
+  vaultPath: string,
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const branch = getString(flags, "branch") ?? DEFAULT_PUBLISH_BRANCH;
+  const remote = getString(flags, "remote") ?? "origin";
+  // Default: commit locally, don't push. Pushing the publish branch
+  // triggers a deploy on most CD hosts — make it a deliberate action.
+  const push = getBool(flags, "push");
+
+  const result = await pubBuild({
+    vaultRoot: vaultPath,
+    branch,
+    remote,
+    push,
+  });
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return 0;
+  }
+  if (result.committed) {
+    process.stdout.write(
+      `Published ${result.publishedCommit.slice(0, 7)} to \`${result.branch}\`\n`,
+    );
+  } else {
+    process.stdout.write(
+      `No changes since last publish — \`${result.branch}\` already at ${result.publishedCommit.slice(0, 7)}\n`,
+    );
+  }
+  process.stdout.write(
+    `  source HEAD:  ${result.sourceCommit.slice(0, 7)}`,
+  );
+  if (result.sourceDirty) process.stdout.write(" (dirty)");
+  process.stdout.write("\n");
+  process.stdout.write(
+    `  sync:         +${result.syncCopied} =${result.syncUnchanged} -${result.syncDeleted}\n`,
+  );
+  process.stdout.write(
+    `  pushed:       ${result.pushed ? `${result.pushedRemote}/${result.branch}` : "no"}\n`,
+  );
+  return 0;
+}
+
+async function cmdPubStatus(
+  vaultPath: string,
+  flags: Record<string, string | boolean>,
+  json: boolean,
+): Promise<number> {
+  const branch = getString(flags, "branch") ?? DEFAULT_PUBLISH_BRANCH;
+  const status = await pubStatus(vaultPath, branch);
+  if (json) {
+    process.stdout.write(JSON.stringify(status, null, 2) + "\n");
+    return 0;
+  }
+  process.stdout.write(`branch:    ${status.branch}\n`);
+  process.stdout.write(
+    `exists:    ${status.branchExists ? "yes" : "no — run `oak pub init`"}\n`,
+  );
+  process.stdout.write(`worktree:  ${status.worktreePath}\n`);
+  process.stdout.write(
+    `           ${status.worktreeExists ? "present" : "missing — run `oak pub init`"}\n`,
+  );
+  return 0;
 }
 
 async function cmdSnapshot(
