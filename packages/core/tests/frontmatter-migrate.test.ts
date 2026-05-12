@@ -321,9 +321,9 @@ describe("migrateFrontmatter", () => {
     );
   });
 
-  it("walks a legacy v1 file end-to-end: title lifted + timestamps backfilled", async () => {
+  it("walks a legacy v1 file end-to-end: title lifted + timestamps backfilled + id rewritten", async () => {
     // A pre-version-era file: no `version:`, no timestamps, title in
-    // the frontmatter, no h1 in the body. The whole 1→3 cascade
+    // the frontmatter, no h1 in the body. The whole 1→4 cascade
     // should run in a single migration pass.
     const fp = resolve(scratch, "a.md");
     await writeFile(fp, oakPage("01HX0000000000000000000099", "body\n"));
@@ -334,10 +334,42 @@ describe("migrateFrontmatter", () => {
     expect(report.entries[0]!.added.created).toBeDefined();
     expect(report.entries[0]!.added.modified).toBeDefined();
     expect(report.entries[0]!.added.titleMoved).toBe("T-99");
+    expect(report.entries[0]!.added.idRewritten?.from).toBe(
+      "01HX0000000000000000000099",
+    );
+    expect(report.entries[0]!.added.idRewritten?.to).toMatch(
+      /^[0-9A-HJKMNP-TV-Z]{12}$/,
+    );
     const raw = await readFile(fp, "utf8");
     expect(raw).not.toMatch(/^title:/m);
     expect(raw).toContain("# T-99\n");
     expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
+    expect(raw).not.toContain("01HX0000000000000000000099");
+    expect(raw).toContain(`id: ${report.entries[0]!.added.idRewritten?.to}`);
+  });
+
+  it("rewrites a v3 page's id into 12-char Base32 and stamps version 4", async () => {
+    const fp = resolve(scratch, "a.md");
+    const before =
+      `---\nversion: 3\nid: 01HX0000000000000000000042\n` +
+      `visibility: private\nslug: t-42\n` +
+      `created: '2020-01-01T00:00:00Z'\nmodified: '2020-01-02T00:00:00Z'\n---\n\n` +
+      `# T-42\n\nbody line\n`;
+    await writeFile(fp, before);
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
+    expect(report.changed).toBe(1);
+    expect(report.entries[0]!.fromVersion).toBe(3);
+    expect(report.entries[0]!.toVersion).toBe(LATEST_FRONTMATTER_VERSION);
+    expect(report.entries[0]!.added.titleMoved).toBeUndefined();
+    const rewritten = report.entries[0]!.added.idRewritten;
+    expect(rewritten?.from).toBe("01HX0000000000000000000042");
+    expect(rewritten?.to).toMatch(/^[0-9A-HJKMNP-TV-Z]{12}$/);
+    const raw = await readFile(fp, "utf8");
+    expect(raw).not.toContain("01HX0000000000000000000042");
+    expect(raw).toContain(`id: ${rewritten?.to}`);
+    expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
+    // Body preserved across the rewrite.
+    expect(raw).toContain("# T-42\n\nbody line\n");
   });
 
   it("walks nested directories", async () => {

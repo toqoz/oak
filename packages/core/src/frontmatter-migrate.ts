@@ -17,6 +17,12 @@
 //        top-level `# ...` heading. The 2→3 step strips the `title:`
 //        field and, if the body lacks an h1, inserts `# <old title>`
 //        immediately after the frontmatter fence.
+//   v4 — page ids switch from ULID (26-char Crockford Base32 with a
+//        time prefix) to a 12-char Crockford Base32 random id with
+//        the visually ambiguous I/L/O/U excluded. The 3→4 step rewrites
+//        the `id:` value in place. Wikilinks resolve by slug/title and
+//        the SQLite index is rebuilt from frontmatter, so no other
+//        files need updating.
 //
 // Files without a `version:` field are treated as v1, which keeps
 // every page in the wild (written before this feature landed)
@@ -27,6 +33,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import matter from "gray-matter";
 import yaml from "js-yaml";
 
+import { newId } from "./id.js";
 import { parseVault } from "./parse.js";
 import { extractFirstH1 } from "./slug.js";
 import {
@@ -39,7 +46,7 @@ import {
   setModifiedIfMissing,
 } from "./timestamps.js";
 
-export const LATEST_FRONTMATTER_VERSION = 3;
+export const LATEST_FRONTMATTER_VERSION = 4;
 
 export type MigrationContext = {
   raw: string;
@@ -59,6 +66,10 @@ export type AddedFields = {
   // already had an h1 (so the fm field was just dropped) or when the
   // file had no `title:` field to begin with.
   titleMoved?: string;
+  // The page id rewritten by the 3→4 step: the old ULID and the new
+  // Base32 id that replaced it. Absent when the file had no `id:`
+  // field for the step to rewrite.
+  idRewritten?: { from: string; to: string };
 };
 
 export type MigrationStep = {
@@ -172,7 +183,43 @@ const MIGRATION_STEPS: MigrationStep[] = [
       return { text: result.text, added };
     },
   },
+  {
+    from: 3,
+    to: 4,
+    // The 3→4 step replaces the ULID `id:` value with a fresh 12-char
+    // Crockford Base32 id. Nothing outside the file holds onto the old
+    // id (wikilinks resolve by slug/title, the SQLite index is derived
+    // from frontmatter at parse time), so the rewrite is self-contained.
+    apply: async (ctx) => {
+      const result = rewritePageId(ctx.raw);
+      const added: AddedFields = {};
+      if (result.idRewritten !== null) added.idRewritten = result.idRewritten;
+      return { text: result.text, added };
+    },
+  },
 ];
+
+// Replace the `id:` field in the frontmatter with a fresh Base32 id.
+// Returns `idRewritten: null` if the file has no `id:` field (the
+// page is unmanaged and the migrator should still stamp the version
+// but has nothing to do here).
+function rewritePageId(raw: string): {
+  text: string;
+  idRewritten: { from: string; to: string } | null;
+} {
+  const parsed = matter(raw);
+  const data = {
+    ...((parsed.data as Record<string, unknown> | undefined) ?? {}),
+  };
+  const existing = data["id"];
+  if (typeof existing !== "string" || existing.trim().length === 0) {
+    return { text: raw, idRewritten: null };
+  }
+  const from = existing.trim();
+  const to = newId();
+  data["id"] = to;
+  return { text: rewriteFrontmatter(raw, data), idRewritten: { from, to } };
+}
 
 // Lift the frontmatter `title` field into the body as a top-level
 // `# ...` heading. Three cases:
