@@ -15,12 +15,14 @@ export type {
   HomeStats,
   UnmanagedEntry,
 } from "./home.js";
-export { searchVault } from "./search.js";
+export { searchVault, searchDocs } from "./search.js";
 export type {
+  SearchDoc,
   SearchHit,
   SearchSnippet,
   SearchMatchKind,
   SearchOptions,
+  Range,
 } from "./search.js";
 export {
   buildGraph,
@@ -103,6 +105,7 @@ export {
   isGitRepo,
   gitStatus,
   snapshot,
+  pullRebase,
   checkpoint,
   recentCommits,
   headCommit,
@@ -121,6 +124,7 @@ export type {
   GitStatusEntry,
   CommitRecord,
   SnapshotResult,
+  PullRebaseResult,
   EnsureRepoResult,
   WorktreeRecord,
   ChangedFile,

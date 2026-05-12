@@ -60,6 +60,7 @@ import {
   loadAgendaConfig,
   loadRefileConfig,
   nowIsoSecond,
+  pullRebase,
   recoverCreatedTimestamp,
   setCreatedIfMissing,
   setModified,
@@ -84,7 +85,12 @@ export default class OakPlugin extends Plugin {
   settings: OakPluginSettings = DEFAULT_SETTINGS;
   state!: VaultState;
 
-  private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
+  // Pending debounced snapshot. Set by `bumpAutoSnapshot` on each
+  // vault edit, fired once the editor has been quiet for
+  // `autoSnapshotIntervalMs`. While the user is actively typing,
+  // the timer keeps getting pushed forward so we never snapshot
+  // mid-edit.
+  private autoSnapshotHandle: ReturnType<typeof setTimeout> | null = null;
   private sidebarRef: OakSidebarView | null = null;
   private linksUnsubscribe: (() => void) | null = null;
   // Live copy of `.oak/agenda.yml`. Used by editor extensions (e.g. the
@@ -168,6 +174,13 @@ export default class OakPlugin extends Plugin {
         this.app,
         openFile,
         () => this.toggleOakMode(),
+        {
+          get: () => this.settings.autoSnapshotIntervalMs,
+          set: async (ms) => {
+            this.settings.autoSnapshotIntervalMs = ms;
+            await this.saveSettings();
+          },
+        },
       );
     });
     this.registerView(VIEW_TYPE_OAK_GHOST, (leaf: WorkspaceLeaf) => {
@@ -241,6 +254,21 @@ export default class OakPlugin extends Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", () => this.state.scheduleRefresh()),
+    );
+    // Auto-snapshot is debounced on vault activity: each edit pushes
+    // the snapshot timer forward so it only fires once the editor
+    // has been quiet for `autoSnapshotIntervalMs`.
+    this.registerEvent(
+      this.app.vault.on("modify", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("create", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", () => this.bumpAutoSnapshot()),
     );
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", (newLeaf) => {
@@ -524,7 +552,7 @@ export default class OakPlugin extends Plugin {
   }
 
   override onunload(): void {
-    if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
     this.linksUnsubscribe?.();
     this.linksUnsubscribe = null;
@@ -555,16 +583,62 @@ export default class OakPlugin extends Plugin {
     this.applyAutoSnapshot();
   }
 
+  // Reset the debounced snapshot timer to match the current settings.
+  // Called on plugin load and whenever settings change. When enabled,
+  // arm the timer immediately so a snapshot fires after the configured
+  // idle period even without a subsequent vault edit — otherwise a
+  // user who toggles auto-snapshot on (e.g. from the home view) and
+  // then stays idle would never see a commit.
   applyAutoSnapshot(): void {
-    if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
+    this.bumpAutoSnapshot();
+  }
+
+  // Called from every vault edit (modify / create / delete / rename).
+  // Resets the debounce window so the snapshot only fires once the
+  // editor has been quiet for the configured interval.
+  bumpAutoSnapshot(): void {
     const ms = this.settings.autoSnapshotIntervalMs;
     if (!ms || ms <= 0) return;
-    this.autoSnapshotHandle = setInterval(() => {
-      void snapshot(vaultRoot(this.app)).catch((err) =>
-        console.warn("oak auto-snapshot failed:", err),
-      );
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
+    this.autoSnapshotHandle = setTimeout(() => {
+      this.autoSnapshotHandle = null;
+      void this.runAutoSnapshot();
     }, ms);
+  }
+
+  // Auto-snapshot fire: commit any pending local edits, pull remote
+  // changes on top, then refresh any open home views so their Git
+  // inspector reflects the new HEAD. Pull runs unconditionally — even
+  // when nothing was committed — so a vault synced across machines
+  // picks up external commits during the same idle window.
+  private async runAutoSnapshot(): Promise<void> {
+    const root = vaultRoot(this.app);
+    try {
+      await snapshot(root);
+    } catch (err) {
+      console.warn("oak auto-snapshot failed:", err);
+    }
+    try {
+      const r = await pullRebase(root);
+      if (r.attempted && !r.ok) {
+        console.warn("oak auto-snapshot pull --rebase failed:", r.details);
+      }
+    } catch (err) {
+      console.warn("oak auto-snapshot pull --rebase failed:", err);
+    }
+    this.refreshHomeViews();
+  }
+
+  private refreshHomeViews(): void {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof OakHomeView) {
+        void view.refreshGit();
+      }
+    }
   }
 
   private async refreshAgendaConfig(): Promise<void> {

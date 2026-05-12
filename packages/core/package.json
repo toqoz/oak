@@ -18,6 +18,10 @@
       "import": "./dist/astro/index.js",
       "types": "./dist/astro/index.d.ts"
     },
+    "./search": {
+      "import": "./dist/search.js",
+      "types": "./dist/search.d.ts"
+    },
     "./package.json": "./package.json"
   },
   "files": ["dist"],

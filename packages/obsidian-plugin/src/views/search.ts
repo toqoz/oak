@@ -224,7 +224,7 @@ export class OakSearchView extends ItemView {
       });
       row.createEl("div", {
         cls: "oak-search-result-path",
-        text: hit.vaultRelPath,
+        text: hit.path,
       });
 
       for (const snip of hit.snippets) {
@@ -294,7 +294,7 @@ export class OakSearchView extends ItemView {
       cls: "oak-search-preview-title",
       text: hit.title,
     });
-    const metaParts: string[] = [hit.visibility, hit.vaultRelPath];
+    const metaParts: string[] = [hit.visibility, hit.path];
     if (hit.bodyMatchCount > 0) {
       metaParts.push(
         `${hit.bodyMatchCount} body match${hit.bodyMatchCount === 1 ? "" : "es"}`,
@@ -327,7 +327,7 @@ export class OakSearchView extends ItemView {
   private openSelected(newTab: boolean): void {
     const hit = this.hits[this.selectedIdx];
     if (!hit) return;
-    const file = this.app2.vault.getAbstractFileByPath(hit.vaultRelPath);
+    const file = this.app2.vault.getAbstractFileByPath(hit.path);
     if (file instanceof TFile) {
       void this.openFile(file, { newTab });
     }
@@ -355,10 +355,20 @@ function renderHighlighted(
   parent: HTMLElement,
   snip: SearchSnippet,
 ): void {
-  const before = snip.text.slice(0, snip.start);
-  const match = snip.text.slice(snip.start, snip.end);
-  const after = snip.text.slice(snip.end);
-  if (before.length > 0) parent.createSpan({ text: before });
-  parent.createEl("mark", { cls: "oak-search-mark", text: match });
-  if (after.length > 0) parent.createSpan({ text: after });
+  // Multi-term queries can land more than one match on the same line;
+  // `ranges` is sorted + merged so we walk it linearly with a cursor.
+  let cursor = 0;
+  for (const r of snip.ranges) {
+    if (r.start > cursor) {
+      parent.createSpan({ text: snip.text.slice(cursor, r.start) });
+    }
+    parent.createEl("mark", {
+      cls: "oak-search-mark",
+      text: snip.text.slice(r.start, r.end),
+    });
+    cursor = r.end;
+  }
+  if (cursor < snip.text.length) {
+    parent.createSpan({ text: snip.text.slice(cursor) });
+  }
 }
