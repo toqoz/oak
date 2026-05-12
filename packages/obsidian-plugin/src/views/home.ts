@@ -6,6 +6,7 @@
 
 import {
   ItemView,
+  MarkdownRenderer,
   Notice,
   TFile,
   WorkspaceLeaf,
@@ -22,6 +23,7 @@ import {
   slugify,
   type CommitRecord,
   type GitStatus,
+  type HomeContent,
   type HomeEntry,
   type HomeViewModel,
   type MountStatus,
@@ -40,6 +42,7 @@ export const VIEW_TYPE_OAK_HOME = "oak-home";
 export class OakHomeView extends ItemView {
   private unsubscribe: (() => void) | null = null;
   private model: HomeViewModel | null = null;
+  private editorHome: HomeContent | null = null;
   private gitInfo: { status: GitStatus; recent: CommitRecord[] } | null = null;
   private mounts: MountStatus[] = [];
   private rendering = false;
@@ -99,6 +102,7 @@ export class OakHomeView extends ItemView {
   private async refresh(snap: VaultSnapshot | null): Promise<void> {
     if (!snap) {
       this.model = null;
+      this.editorHome = null;
       this.gitInfo = null;
       this.mounts = [];
       this.render();
@@ -112,6 +116,11 @@ export class OakHomeView extends ItemView {
         this.refreshGitAndMounts(),
       ]);
       this.model = model;
+      // `snap.vault.homeEditor` is populated by parseVault from
+      // `_home/editor.md`. We render the body as a prelude above the
+      // auto-generated sections so the user can hand-author an intro
+      // (TODO links, today's agenda, etc.) without losing the index.
+      this.editorHome = snap.vault.homeEditor;
       this.render();
     } finally {
       this.rendering = false;
@@ -158,6 +167,11 @@ export class OakHomeView extends ItemView {
 
     const m = this.model;
 
+    // User-authored prelude from `_home/editor.md`. Rendered first so
+    // the auto-generated index that follows feels like a footer to the
+    // hand-written content, not the other way around.
+    this.renderEditorHome(root);
+
     // Header
     const header = root.createDiv({ cls: "oak-home-header" });
     header.createEl("h1", { text: "Oak — Home" });
@@ -197,6 +211,22 @@ export class OakHomeView extends ItemView {
     this.renderGitSection(root);
     this.renderExternalSection(root);
     this.renderExitFooter(root);
+  }
+
+  private renderEditorHome(parent: HTMLElement): void {
+    const home = this.editorHome;
+    if (!home || home.body.trim().length === 0) return;
+    const sec = parent.createDiv({ cls: "oak-home-editor" });
+    // sourcePath drives how relative links and embeds resolve. Passing
+    // `_home/editor.md` lets `[[wiki]]` and `![[image]]` references
+    // resolve against the vault's normal lookup.
+    void MarkdownRenderer.render(
+      this.app2,
+      home.body,
+      sec,
+      home.relPath,
+      this,
+    );
   }
 
   private renderUnmanagedSection(
