@@ -8,6 +8,7 @@ import {
   syncFeedDates,
   writeFeedDates,
 } from "../src/feed-dates.js";
+import { parseVault } from "../src/parse.js";
 
 let scratch: string;
 
@@ -170,6 +171,42 @@ describe("syncFeedDates", () => {
     const r = await syncFeedDates(vault, sidecar, "2026-05-12T10:00:00Z");
     expect(r.eligible).toBe(0);
     expect(r.dates).toEqual({});
+  });
+
+  it("flags feed: true on a non-public page as a parse-level error", async () => {
+    const vault = resolve(scratch, "vault");
+    await mkdir(vault, { recursive: true });
+    await writePage(
+      vault,
+      "unlisted.md",
+      { id: "page-unlisted", visibility: "unlisted", feed: true },
+      "# Unlisted\n",
+    );
+    await writePage(
+      vault,
+      "private.md",
+      { id: "page-private", visibility: "private", feed: true },
+      "# Private\n",
+    );
+    await writePage(
+      vault,
+      "ok.md",
+      { id: "page-ok", visibility: "public", feed: true },
+      "# OK\n",
+    );
+
+    const parsed = await parseVault(vault);
+    const issuesFor = (id: string) =>
+      parsed.pages.get(id)?.parseIssues ?? [];
+    expect(issuesFor("page-unlisted").map((i) => i.code)).toContain(
+      "feed-non-public",
+    );
+    expect(issuesFor("page-private").map((i) => i.code)).toContain(
+      "feed-non-public",
+    );
+    expect(issuesFor("page-ok").map((i) => i.code)).not.toContain(
+      "feed-non-public",
+    );
   });
 
   it("retains stale entries when a page toggles feed: true off", async () => {
