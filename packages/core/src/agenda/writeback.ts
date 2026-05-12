@@ -68,6 +68,7 @@ function makeOakPage(
     type: "page",
     id: "writeback:tmp",
     title: "writeback",
+    titlePlain: "writeback",
     aliases: [],
     visibility: "private",
     slug: "",

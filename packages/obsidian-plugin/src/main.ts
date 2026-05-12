@@ -61,6 +61,8 @@ import {
   loadAgendaConfig,
   loadRefileConfig,
   nowIsoSecond,
+  pathSafeFilename,
+  plainTextTitle,
   pullRebase,
   recoverCreatedTimestamp,
   setCreatedIfMissing,
@@ -80,7 +82,6 @@ import { describeBacklinks, describeTwoHop } from "./format.js";
 import { ensureBlankAfterFrontmatter } from "./frontmatter-normalize.js";
 import { SCRATCH_VAULT_REL_PATH, vaultRoot } from "./paths.js";
 import type { OakOpenFile } from "./open-file.js";
-import { commitTitleChange } from "./title-commit.js";
 
 export default class OakPlugin extends Plugin {
   settings: OakPluginSettings = DEFAULT_SETTINGS;
@@ -150,6 +151,19 @@ export default class OakPlugin extends Plugin {
   // bump. Memory cost grows only with the set of files actually
   // edited in the session.
   private lastSeenContent = new Map<string, string>();
+  // Per-path snapshot of the body `# Title` heading. Used to detect a
+  // title rename so we can refresh the slug and rename the file when
+  // those were originally auto-derived from the title (see
+  // `maybeApplyTitleRename`). The first observation after plugin load
+  // just primes the entry — without a baseline an arbitrary save can't
+  // be told apart from a deliberate rename.
+  private lastSeenTitle = new Map<string, string>();
+  // Per-path debounce timer for `maybeApplyTitleRename`. metadataCache
+  // "changed" can fire several times in quick succession as the user
+  // types into the heading line; we coalesce them so the actual file
+  // rename only runs once the title has settled.
+  private titleRenameTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private static readonly TITLE_RENAME_DEBOUNCE_MS = 500;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -235,15 +249,35 @@ export default class OakPlugin extends Plugin {
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof TFile) this.lastSeenContent.delete(file.path);
+        if (file instanceof TFile) {
+          this.lastSeenContent.delete(file.path);
+          this.lastSeenTitle.delete(file.path);
+          const timer = this.titleRenameTimers.get(file.path);
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            this.titleRenameTimers.delete(file.path);
+          }
+        }
       }),
     );
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        const prev = this.lastSeenContent.get(oldPath);
+        const prevContent = this.lastSeenContent.get(oldPath);
         this.lastSeenContent.delete(oldPath);
-        if (prev !== undefined && file instanceof TFile) {
-          this.lastSeenContent.set(file.path, prev);
+        const prevTitle = this.lastSeenTitle.get(oldPath);
+        this.lastSeenTitle.delete(oldPath);
+        const timer = this.titleRenameTimers.get(oldPath);
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          this.titleRenameTimers.delete(oldPath);
+        }
+        if (file instanceof TFile) {
+          if (prevContent !== undefined) {
+            this.lastSeenContent.set(file.path, prevContent);
+          }
+          if (prevTitle !== undefined) {
+            this.lastSeenTitle.set(file.path, prevTitle);
+          }
         }
       }),
     );
@@ -308,10 +342,13 @@ export default class OakPlugin extends Plugin {
       }),
     );
     this.registerEvent(
-      this.app.metadataCache.on("changed", () => {
+      this.app.metadataCache.on("changed", (file) => {
         this.applyTitleOverrides();
         this.applyLinksCards();
         this.applyPageMeta();
+        if (file instanceof TFile && file.extension === "md") {
+          this.scheduleTitleRename(file);
+        }
       }),
     );
     // Vault state refresh -> backlinks/2-hop change -> rerender cards
@@ -962,6 +999,90 @@ export default class OakPlugin extends Plugin {
     }
   }
 
+  // Watch the body's `# Title` heading; when it changes, refresh the
+  // slug and rename the file iff those were auto-derived from the
+  // title in the first place. Custom slugs / filenames are left alone
+  // — oak only re-derives what it would have derived itself.
+  //
+  // Debounced per-file: metadataCache "changed" fires repeatedly while
+  // the user is typing into the heading line. Coalescing collapses a
+  // burst of keystrokes into a single rename once the title settles.
+  private scheduleTitleRename(file: TFile): void {
+    const existing = this.titleRenameTimers.get(file.path);
+    if (existing !== undefined) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.titleRenameTimers.delete(file.path);
+      void this.maybeApplyTitleRename(file);
+    }, OakPlugin.TITLE_RENAME_DEBOUNCE_MS);
+    this.titleRenameTimers.set(file.path, timer);
+  }
+
+  private async maybeApplyTitleRename(file: TFile): Promise<void> {
+    try {
+      const cache = this.app.metadataCache.getFileCache(file);
+      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+      const id = fm?.["id"];
+      if (typeof id !== "string" || id.trim().length === 0) return;
+
+      const newTitle =
+        cache?.headings?.find((h) => h.level === 1)?.heading?.trim() ?? "";
+      if (newTitle.length === 0) return;
+
+      const previousTitle = this.lastSeenTitle.get(file.path);
+      this.lastSeenTitle.set(file.path, newTitle);
+      // First observation primes the baseline — without a "before"
+      // we can't tell a routine load apart from a user rename.
+      if (previousTitle === undefined || previousTitle === newTitle) return;
+
+      const oldPlain = plainTextTitle(previousTitle);
+      const newPlain = plainTextTitle(newTitle);
+
+      // Slug refresh — only when the recorded slug looks like the one
+      // we would have generated from the *old* title (or is missing).
+      const slugRaw = fm?.["slug"];
+      const slug = typeof slugRaw === "string" ? slugRaw.trim() : "";
+      const slugWasAuto = slug.length === 0 || slugify(oldPlain) === slug;
+      const newSlug = slugify(newPlain);
+      if (slugWasAuto && newSlug.length > 0 && newSlug !== slug) {
+        try {
+          await this.app.fileManager.processFrontMatter(file, (m) => {
+            (m as Record<string, unknown>)["slug"] = newSlug;
+          });
+        } catch (err) {
+          new Notice(
+            `oak: failed to refresh slug — ${(err as Error).message}`,
+          );
+        }
+      }
+
+      // File rename — only when the basename matches the path-safe
+      // form of the old title (i.e. it was auto-derived).
+      const oldBasenameAuto = pathSafeFilename(oldPlain);
+      if (oldBasenameAuto.length === 0 || oldBasenameAuto !== file.basename) {
+        return;
+      }
+      const newBasename = pathSafeFilename(newPlain);
+      if (newBasename.length === 0 || newBasename === file.basename) return;
+      const dir =
+        file.parent && file.parent.path && file.parent.path !== "/"
+          ? `${file.parent.path}/`
+          : "";
+      const newRelPath = `${dir}${newBasename}.md`;
+      const collision = this.app.vault.getAbstractFileByPath(newRelPath);
+      if (collision && collision !== file) {
+        new Notice(`oak: rename skipped — \`${newRelPath}\` already exists`);
+        return;
+      }
+      try {
+        await this.app.fileManager.renameFile(file, newRelPath);
+      } catch (err) {
+        new Notice(`oak: rename failed — ${(err as Error).message}`);
+      }
+    } catch (err) {
+      console.warn("oak: maybeApplyTitleRename failed", err);
+    }
+  }
+
   // Roll back a file Obsidian auto-created in response to a redlink
   // click that bypassed our capture-phase preventDefault. Delete the
   // empty file and switch to the Ghost View for the same target,
@@ -1053,10 +1174,17 @@ export default class OakPlugin extends Plugin {
     void file; // accessed via metadataCache below; kept for callers
     const cache = this.app.metadataCache.getFileCache(view.file!);
     const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-    const fmTitleRaw = fm?.["title"];
-    const fmTitle =
-      typeof fmTitleRaw === "string" && fmTitleRaw.trim().length > 0
-        ? fmTitleRaw.trim()
+    const fmId = fm?.["id"];
+    const isOakPage = typeof fmId === "string" && fmId.trim().length > 0;
+    // Title source: first h1 in the body. Obsidian's metadata cache
+    // exposes headings already parsed; pick the first level-1 entry.
+    // Used to override the tab title (the file basename is a sanitised
+    // form that often drops punctuation present in the displayed title).
+    const firstH1 =
+      cache?.headings?.find((h) => h.level === 1)?.heading ?? null;
+    const titleRaw =
+      typeof firstH1 === "string" && firstH1.trim().length > 0
+        ? firstH1.trim()
         : null;
 
     let existingRow = view.contentEl.querySelector<HTMLElement>(
@@ -1068,22 +1196,14 @@ export default class OakPlugin extends Plugin {
     const tabTitleEl = (view as unknown as { titleEl?: HTMLElement })
       .titleEl;
 
-    const fmVisibilityRaw = fm?.["visibility"];
-    const fmVisibility =
-      typeof fmVisibilityRaw === "string" &&
-      (fmVisibilityRaw === "private" ||
-        fmVisibilityRaw === "unlisted" ||
-        fmVisibilityRaw === "public")
-        ? fmVisibilityRaw
-        : "private";
-
     const isScratch = view.file?.path === SCRATCH_VAULT_REL_PATH;
 
     // The scratch row lives in the view-header bar (replacing the
-    // standard back/forward chrome via CSS); regular oak rows live
-    // inside the cm-scroller. Look up both candidates so we can
-    // clean up a stale row in the wrong place when the leaf
-    // transitions between scratch and a regular page.
+    // standard back/forward chrome via CSS); refile-peek injects a
+    // close-button row there too. Older builds also injected an
+    // editable row inside the cm-scroller for regular pages — we keep
+    // the lookup for that legacy row (`existingRow` above) so it can
+    // be cleaned up if a saved layout still carries one.
     const headerEl = view.containerEl.querySelector<HTMLElement>(
       ".view-header",
     );
@@ -1099,10 +1219,8 @@ export default class OakPlugin extends Plugin {
     // Refile peek pane: hide standard view-header navigation and the
     // tab strip via the marker class + a × close button injected into
     // the view-header. We *don't* return from this branch — the
-    // regular oak title row (editable title + visibility selector,
-    // injected into the scroll container further below) still runs,
-    // so the peek pane shows the destination file's page title in the
-    // same place a regular oak md file would.
+    // regular-oak-page tab-title override further below still runs so
+    // the peek tab shows the destination file's heading text.
     if (oakMode && isRefilePeek) {
       view.containerEl.classList.add("oak-leaf-refile-peek");
       if (headerScratchRow) headerScratchRow.remove();
@@ -1222,64 +1340,20 @@ export default class OakPlugin extends Plugin {
     // header so it doesn't outlive the file transition.
     if (headerScratchRow) headerScratchRow.remove();
 
-    if (oakMode && fmTitle) {
-      // Inject the title row *inside* the scroll container so the
-      // scrollbar runs the full pane height and so the title
-      // scrolls with the content. The row holds the title input on
-      // the left and the visibility selector pinned to the right.
-      // Drop a stale scratch row from a prior file before creating
-      // the editable row in its place.
-      if (existingRow && existingRow.classList.contains("oak-row-scratch")) {
-        existingRow.remove();
-        existingRow = null;
-      }
-      const target = this.findTitleInjectionTarget(view);
-      let row = existingRow;
-      if (!row || (target && row.parentElement !== target)) {
-        // Mode switch (source <-> preview) recreates the scroll
-        // container; drop a stale row and inject into the new one.
-        if (row) row.remove();
-        row = document.createElement("div");
-        row.classList.add("oak-page-title-row");
-
-        const input = document.createElement("input");
-        input.classList.add("oak-page-title");
-        input.type = "text";
-        input.spellcheck = false;
-        row.appendChild(input);
-
-        const select = document.createElement("select");
-        select.classList.add("oak-page-visibility");
-        for (const v of ["private", "unlisted", "public"]) {
-          const o = document.createElement("option");
-          o.value = v;
-          o.textContent = v;
-          select.appendChild(o);
-        }
-        row.appendChild(select);
-
-        if (target) {
-          target.prepend(row);
-          this.attachInlineTitleEditing(view, input);
-          this.attachVisibilitySelect(view, select);
-        }
-      }
-      const input = row.querySelector<HTMLInputElement>(".oak-page-title");
-      const select = row.querySelector<HTMLSelectElement>(".oak-page-visibility");
-      if (input) {
-        // Don't clobber what the user is typing. We only push the
-        // canonical value when the input isn't focused.
-        if (input.value !== fmTitle && document.activeElement !== input) {
-          input.value = fmTitle;
-        }
-      }
-      if (select && select.value !== fmVisibility) {
-        select.value = fmVisibility;
-      }
+    if (oakMode && isOakPage) {
+      // Drop any in-content row left over from an older build that
+      // injected an editable title row here. The title is now edited
+      // as a plain `# ...` heading in the body itself.
+      if (existingRow) existingRow.remove();
 
       if (tabTitleEl) {
-        tabTitleEl.dataset["oakTitle"] = fmTitle;
-        tabTitleEl.classList.add("oak-tab-title-override");
+        if (titleRaw) {
+          tabTitleEl.dataset["oakTitle"] = titleRaw;
+          tabTitleEl.classList.add("oak-tab-title-override");
+        } else {
+          delete tabTitleEl.dataset["oakTitle"];
+          tabTitleEl.classList.remove("oak-tab-title-override");
+        }
       }
     } else {
       if (existingRow) existingRow.remove();
@@ -1288,24 +1362,6 @@ export default class OakPlugin extends Plugin {
         tabTitleEl.classList.remove("oak-tab-title-override");
       }
     }
-  }
-
-  private attachVisibilitySelect(
-    view: MarkdownView,
-    select: HTMLSelectElement,
-  ): void {
-    select.addEventListener("change", () => {
-      const file = view.file;
-      if (!file) return;
-      const next = select.value;
-      void this.app.fileManager
-        .processFrontMatter(file, (fm) => {
-          (fm as Record<string, unknown>)["visibility"] = next;
-        })
-        .catch((err) =>
-          new Notice(`oak: failed to update visibility — ${(err as Error).message}`),
-        );
-    });
   }
 
   // For each open markdown view, render a "Related" footer that
@@ -2326,74 +2382,6 @@ export default class OakPlugin extends Plugin {
       ".markdown-preview-view",
     );
     return preview ?? null;
-  }
-
-  // Figure out which DOM node the inline title belongs in, depending
-  // on the current view mode.
-  //   source / live-preview: `.cm-scroller` (sibling of `.cm-content`)
-  //   reading view:          `.markdown-preview-view` (the scroller)
-  // Returns null if neither is present yet (the next layout-change
-  // will retry).
-  private findTitleInjectionTarget(view: MarkdownView): HTMLElement | null {
-    const cmScroller = view.contentEl.querySelector<HTMLElement>(".cm-scroller");
-    if (cmScroller) return cmScroller;
-    const preview = view.contentEl.querySelector<HTMLElement>(
-      ".markdown-preview-view",
-    );
-    return preview ?? null;
-  }
-
-  private attachInlineTitleEditing(
-    view: MarkdownView,
-    input: HTMLInputElement,
-  ): void {
-    const commit = async () => {
-      const file = view.file;
-      if (!file) return;
-      const newTitle = input.value.trim();
-      const cache = this.app.metadataCache.getFileCache(file);
-      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-      const oldTitleRaw = fm?.["title"];
-      const oldTitle =
-        typeof oldTitleRaw === "string" ? oldTitleRaw.trim() : "";
-      if (newTitle.length === 0 || newTitle === oldTitle) {
-        input.value = oldTitle;
-        return;
-      }
-      const oldSlugRaw = fm?.["slug"];
-      const oldSlug =
-        typeof oldSlugRaw === "string" ? oldSlugRaw.trim() : slugify(oldTitle);
-      const result = await commitTitleChange(
-        this.app,
-        file,
-        { title: oldTitle, slug: oldSlug, basename: file.basename },
-        newTitle,
-      );
-      if (result.status === "frontmatter-failed") {
-        new Notice(`oak: failed to update title — ${result.error}`);
-      } else if (result.status === "rename-skipped") {
-        new Notice(`oak: rename skipped — ${result.reason}`);
-      } else if (result.status === "rename-failed") {
-        new Notice(`oak: rename failed — ${result.error}`);
-      }
-    };
-    input.addEventListener("blur", () => void commit());
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        input.blur();
-      } else if (ev.key === "Escape") {
-        ev.preventDefault();
-        // Revert to the canonical value and bail.
-        const cache = view.file
-          ? this.app.metadataCache.getFileCache(view.file)
-          : null;
-        const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-        const t = fm?.["title"];
-        if (typeof t === "string") input.value = t;
-        input.blur();
-      }
-    });
   }
 
   private async activateSidebar(): Promise<void> {

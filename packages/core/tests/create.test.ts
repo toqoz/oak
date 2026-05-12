@@ -31,9 +31,10 @@ describe("composePage (pure)", () => {
     expect(composed.visibility).toBe("private");
     expect(composed.slug).toBe("my-awesome-page");
     expect(composed.text).toContain("id: 01HX000000000000000000NEW1");
-    expect(composed.text).toContain("title: 'My / Awesome: Page'");
+    // Title lives in the body as a `# ...` heading, not in frontmatter.
+    expect(composed.text).not.toMatch(/^title:/m);
+    expect(composed.text).toContain("# My / Awesome: Page");
     expect(composed.text).toMatch(/^---\n/);
-    expect(composed.text).toMatch(/---\n\n$/);
   });
 
   it("respects --at and aliases", () => {
@@ -74,7 +75,7 @@ describe("createPage (filesystem)", () => {
     expect(result.vaultRelPath).toBe("Hello world.md");
     const text = await readFile(result.filePath, "utf8");
     expect(text).toContain("id:");
-    expect(text).toContain("title: Hello world");
+    expect(text).toContain("# Hello world");
     expect(text).toContain("visibility: public");
 
     const vault = await parseVault(scratch);

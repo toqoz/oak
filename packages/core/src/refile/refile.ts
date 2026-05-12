@@ -300,6 +300,7 @@ function makeOakPage(
     type: "page",
     id: "refile:tmp",
     title: "refile",
+    titlePlain: "refile",
     aliases: [],
     visibility: "private",
     slug: "",

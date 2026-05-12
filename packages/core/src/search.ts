@@ -141,7 +141,10 @@ export function searchDocs(
 function docFromPage(page: OakPage): SearchDoc {
   return {
     id: page.id,
-    title: page.title,
+    // Match against the decoration-stripped title so wikilink syntax
+    // and emphasis markers in the body's `# Title` heading don't leak
+    // into query matching, snippet display, or sort keys.
+    title: page.titlePlain,
     aliases: [...page.aliases],
     body: page.body,
     visibility: page.visibility,

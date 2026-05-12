@@ -13,7 +13,6 @@ export type PageFrontmatter = {
   // to the latest.
   version?: number;
   id?: string;
-  title?: string;
   aliases?: string[];
   visibility?: Visibility;
   slug?: string;
@@ -53,7 +52,14 @@ export type ResolvedLink = RawLink & { resolution: LinkResolution };
 export type OakPage = {
   type: "page";
   id: string;
+  // Raw first-h1 text as written in the body (may include wikilinks,
+  // emphasis, etc.). Falls back to the basename when the body lacks an
+  // h1; a `missing-title` issue is surfaced in that case.
   title: string;
+  // Decoration-stripped form of `title`. Used as the lookup/sort key,
+  // the html `<title>` text, search match target, and any plain-text
+  // listing.
+  titlePlain: string;
   aliases: string[];
   visibility: Visibility;
   slug: string;

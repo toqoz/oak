@@ -81,7 +81,7 @@ describe("snapshot / checkpoint / status", () => {
   it("snapshot commits dirty changes and reports a hash", async () => {
     const vault = await makeVault();
     await ensureGitRepo(vault);
-    await writeFile(resolve(vault, "Note.md"), "---\nid: x\ntitle: x\n---\nbody\n", "utf8");
+    await writeFile(resolve(vault, "Note.md"), "---\nid: x\n---\n\n# x\n\nbody\n", "utf8");
 
     const r = await snapshot(vault);
     expect(r.committed).toBe(true);

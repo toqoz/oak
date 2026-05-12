@@ -75,7 +75,7 @@ function visibleSet(filter?: Visibility[]): Set<Visibility> {
 }
 
 function pageRef(page: OakPage): PageRef {
-  return { id: page.id, title: page.title, slug: page.slug };
+  return { id: page.id, title: page.titlePlain, slug: page.slug };
 }
 
 function buildOutbound(

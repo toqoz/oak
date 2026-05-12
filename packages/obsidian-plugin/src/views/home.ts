@@ -16,6 +16,7 @@ import {
   gitStatus,
   homeViewModel,
   listMountStatus,
+  plainTextTitle,
   recentCommits,
   slugify,
   type CommitRecord,
@@ -26,6 +27,8 @@ import {
   type UnmanagedEntry,
 } from "@oak/core";
 import { ulid } from "ulid";
+
+import { applyTitleEdit } from "../title-commit.js";
 
 import type { VaultSnapshot, VaultState } from "../state.js";
 import type { OakOpenFile } from "../open-file.js";
@@ -241,21 +244,43 @@ export class OakHomeView extends ItemView {
       return;
     }
     try {
+      // Pick the canonical title: a body `# ...` heading wins (it's
+      // the storage location under the post-v3 schema); otherwise
+      // lift the legacy `title:` field; otherwise the filename basename.
+      // Any stray `title:` is dropped from the frontmatter below.
+      const cache = this.app2.metadataCache.getFileCache(file);
+      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+      const fmTitleRaw = fm?.["title"];
+      const fmTitle =
+        typeof fmTitleRaw === "string" ? fmTitleRaw.trim() : "";
+      const bodyH1 =
+        cache?.headings?.find((h) => h.level === 1)?.heading?.trim() ?? "";
+      const titleStr =
+        bodyH1.length > 0
+          ? bodyH1
+          : fmTitle.length > 0
+            ? fmTitle
+            : file.basename;
+
+      if (bodyH1.length === 0) {
+        const raw = await this.app2.vault.read(file);
+        const rewritten = applyTitleEdit(raw, titleStr);
+        if (rewritten !== raw) {
+          await this.app2.vault.modify(file, rewritten);
+        }
+      }
+
       await this.app2.fileManager.processFrontMatter(file, (fm) => {
         const f = fm as Record<string, unknown>;
+        delete f["title"];
         if (typeof f["id"] !== "string" || (f["id"] as string).length === 0) {
           f["id"] = ulid();
         }
-        const titleStr =
-          typeof f["title"] === "string" && (f["title"] as string).length > 0
-            ? (f["title"] as string)
-            : file.basename;
-        f["title"] = titleStr;
         if (typeof f["visibility"] !== "string") {
           f["visibility"] = "private";
         }
         if (typeof f["slug"] !== "string" || (f["slug"] as string).length === 0) {
-          const s = slugify(titleStr);
+          const s = slugify(plainTextTitle(titleStr));
           if (s.length > 0) f["slug"] = s;
         }
       });

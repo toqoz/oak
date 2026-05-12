@@ -173,7 +173,7 @@ function resolveWikiNode(
       const url = parsed.heading
         ? `${base}#${headingSlug(parsed.heading)}`
         : base;
-      const label = parsed.label ?? target.title;
+      const label = parsed.label ?? target.titlePlain;
       // Page embed → render as a marked-up link the template can style.
       if (isEmbed) {
         return {
