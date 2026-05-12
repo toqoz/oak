@@ -338,7 +338,7 @@ describe("migrateFrontmatter", () => {
       "01HX0000000000000000000099",
     );
     expect(report.entries[0]!.added.idRewritten?.to).toMatch(
-      /^[0-9A-HJKMNP-TV-Z]{12}$/,
+      /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/,
     );
     const raw = await readFile(fp, "utf8");
     expect(raw).not.toMatch(/^title:/m);
@@ -348,7 +348,7 @@ describe("migrateFrontmatter", () => {
     expect(raw).toContain(`id: ${report.entries[0]!.added.idRewritten?.to}`);
   });
 
-  it("rewrites a v3 page's id into 12-char Base32 and stamps version 4", async () => {
+  it("rewrites a v3 page's id into grouped Base32 and stamps version 4", async () => {
     const fp = resolve(scratch, "a.md");
     const before =
       `---\nversion: 3\nid: 01HX0000000000000000000042\n` +
@@ -363,7 +363,7 @@ describe("migrateFrontmatter", () => {
     expect(report.entries[0]!.added.titleMoved).toBeUndefined();
     const rewritten = report.entries[0]!.added.idRewritten;
     expect(rewritten?.from).toBe("01HX0000000000000000000042");
-    expect(rewritten?.to).toMatch(/^[0-9A-HJKMNP-TV-Z]{12}$/);
+    expect(rewritten?.to).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
     const raw = await readFile(fp, "utf8");
     expect(raw).not.toContain("01HX0000000000000000000042");
     expect(raw).toContain(`id: ${rewritten?.to}`);

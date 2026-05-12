@@ -18,8 +18,9 @@
 //        field and, if the body lacks an h1, inserts `# <old title>`
 //        immediately after the frontmatter fence.
 //   v4 — page ids switch from ULID (26-char Crockford Base32 with a
-//        time prefix) to a 12-char Crockford Base32 random id with
-//        the visually ambiguous I/L/O/U excluded. The 3→4 step rewrites
+//        time prefix) to a 12-char Crockford Base32 random id grouped
+//        as `XXXX-XXXX-XXXX` (14 chars including hyphens), with the
+//        visually ambiguous I/L/O/U excluded. The 3→4 step rewrites
 //        the `id:` value in place. Wikilinks resolve by slug/title and
 //        the SQLite index is rebuilt from frontmatter, so no other
 //        files need updating.
