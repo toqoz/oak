@@ -304,13 +304,16 @@ export class OakHomeView extends ItemView {
   private renderAutoSnapshotToggle(parent: HTMLElement): void {
     const ms = this.autoSnapshot.get();
     const enabled = ms > 0;
-    const row = parent.createDiv({ cls: "oak-home-meta" });
+    const row = parent.createDiv({
+      cls: "oak-home-meta oak-home-auto-snapshot",
+    });
     row.createSpan({
       text: enabled
-        ? `Auto-snapshot: after ${Math.round(ms / 60000)} min idle · `
-        : "Auto-snapshot: off · ",
+        ? `Auto-snapshot: after ${Math.round(ms / 60000)} min idle`
+        : "Auto-snapshot: off",
     });
     const btn = row.createEl("button", {
+      cls: "oak-home-auto-snapshot-toggle",
       text: enabled ? "Disable" : "Enable",
     });
     btn.addEventListener("click", (ev) => {
