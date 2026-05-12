@@ -22,6 +22,7 @@ import {
   pubInit,
   pubStatus,
 } from "../src/publish-branch.js";
+import { FEED_DATES_FILENAME, readFeedDates } from "../src/feed-dates.js";
 
 const exec = promisify(execFile);
 
@@ -86,6 +87,33 @@ async function writePage(
   await writeFile(
     abs,
     `---\nvisibility: ${visibility}\n---\n\n${body}`,
+    "utf8",
+  );
+}
+
+// Variant that also stamps `id:` (required for stable feed-dates keys)
+// and an opt-in `feed: true` flag.
+async function writeFeedPage(
+  vault: string,
+  relPath: string,
+  visibility: "public" | "unlisted" | "private",
+  id: string,
+  feed: boolean,
+  body: string,
+): Promise<void> {
+  const abs = resolve(vault, relPath);
+  await mkdir(resolve(abs, ".."), { recursive: true });
+  await writeFile(
+    abs,
+    [
+      "---",
+      `id: ${id}`,
+      `visibility: ${visibility}`,
+      `feed: ${feed}`,
+      "---",
+      "",
+      body,
+    ].join("\n"),
     "utf8",
   );
 }
@@ -378,6 +406,75 @@ describe("pubBuild", () => {
     await expect(
       pubBuild({ vaultRoot: vault, push: false }),
     ).rejects.toMatchObject({ code: "worktree-missing" });
+  });
+});
+
+describe("pubBuild / feed-dates", () => {
+  it("stamps a feed-dates.json sidecar at the worktree root for feed-eligible pages", async () => {
+    const vault = await makeVault();
+    const template = await makeTemplate();
+    await writeFeedPage(vault, "alpha.md", "public", "page-alpha", true, "# Alpha\n");
+    await writeFeedPage(vault, "beta.md", "public", "page-beta", false, "# Beta\n");
+    await exec("git", ["-C", vault, "add", "."]);
+    await exec("git", ["-C", vault, "commit", "-m", "seed"]);
+
+    await pubInit({ vaultRoot: vault, templateDir: template });
+    const r = await pubBuild({ vaultRoot: vault, push: false });
+
+    expect(r.feed.eligible).toBe(1);
+    expect(r.feed.added).toBe(1);
+    expect(r.feed.reused).toBe(0);
+    expect(r.feed.dates["page-alpha"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    const sidecar = await readFeedDates(
+      resolve(vault, PUBLISH_WORKTREE_REL, FEED_DATES_FILENAME),
+    );
+    expect(Object.keys(sidecar)).toEqual(["page-alpha"]);
+
+    // The sidecar is tracked on the publish branch alongside vault/.
+    const ls = await exec("git", [
+      "-C",
+      vault,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      DEFAULT_PUBLISH_BRANCH,
+    ]);
+    expect(ls.stdout.trim().split("\n")).toContain(FEED_DATES_FILENAME);
+  });
+
+  it("keeps the same stamped date across repeated builds", async () => {
+    const vault = await makeVault();
+    const template = await makeTemplate();
+    await writeFeedPage(vault, "alpha.md", "public", "page-alpha", true, "# Alpha\n");
+    await exec("git", ["-C", vault, "add", "."]);
+    await exec("git", ["-C", vault, "commit", "-m", "seed"]);
+
+    await pubInit({ vaultRoot: vault, templateDir: template });
+    const r1 = await pubBuild({ vaultRoot: vault, push: false });
+    const stamp = r1.feed.dates["page-alpha"]!;
+
+    // Wait long enough that nowIsoSecond would advance if called again.
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const r2 = await pubBuild({ vaultRoot: vault, push: false });
+    expect(r2.feed.reused).toBe(1);
+    expect(r2.feed.added).toBe(0);
+    expect(r2.feed.dates["page-alpha"]).toBe(stamp);
+  });
+
+  it("does not stamp private or unlisted pages even when feed: true is set", async () => {
+    const vault = await makeVault();
+    const template = await makeTemplate();
+    await writeFeedPage(vault, "u.md", "unlisted", "page-u", true, "# U\n");
+    await writeFeedPage(vault, "p.md", "private", "page-p", true, "# P\n");
+    await exec("git", ["-C", vault, "add", "."]);
+    await exec("git", ["-C", vault, "commit", "-m", "seed"]);
+
+    await pubInit({ vaultRoot: vault, templateDir: template });
+    const r = await pubBuild({ vaultRoot: vault, push: false });
+    expect(r.feed.eligible).toBe(0);
+    expect(r.feed.dates).toEqual({});
   });
 });
 

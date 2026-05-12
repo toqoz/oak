@@ -311,6 +311,7 @@ function makeOakPage(
     rawFrontmatter: {},
     created: null,
     modified: null,
+    feed: false,
     links: [],
     parseIssues: [],
   };

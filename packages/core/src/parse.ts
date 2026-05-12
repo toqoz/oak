@@ -164,6 +164,8 @@ export async function parsePage(
     (fm as Record<string, unknown>)["modified"],
   );
 
+  const feed = (fm as Record<string, unknown>)["feed"] === true;
+
   return {
     type: "page",
     id,
@@ -179,6 +181,7 @@ export async function parsePage(
     rawFrontmatter: fm,
     created,
     modified,
+    feed,
     links,
     parseIssues: issues,
   };
