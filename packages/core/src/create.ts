@@ -8,6 +8,7 @@ import { dirname, extname, isAbsolute, posix, resolve, sep } from "node:path";
 import yaml from "js-yaml";
 import { ulid } from "ulid";
 
+import { LATEST_FRONTMATTER_VERSION } from "./frontmatter-migrate.js";
 import { slugify } from "./slug.js";
 import { nowIsoSecond } from "./timestamps.js";
 import type { Visibility } from "./types.js";
@@ -130,8 +131,13 @@ export function composePage(options: CreatePageOptions): ComposedPage {
 
   // Build frontmatter explicitly so the YAML is self-documenting:
   // every page on disk shows visibility even when it's at the
-  // default.
-  const fm: Record<string, unknown> = { id, title };
+  // default. `version` leads so `oak migrate` can detect the schema
+  // a file conforms to in a single regex pass.
+  const fm: Record<string, unknown> = {
+    version: LATEST_FRONTMATTER_VERSION,
+    id,
+    title,
+  };
   if (aliases.length > 0) fm["aliases"] = aliases;
   fm["visibility"] = visibility;
   fm["slug"] = slug;

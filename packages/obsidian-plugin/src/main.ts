@@ -44,6 +44,7 @@ import {
   openScratch,
   openScratchHistory,
   runCheckpoint,
+  runMigrateFrontmatter,
   runMount,
   runRefileFromEditor,
   runSnapshot,
@@ -462,6 +463,11 @@ export default class OakPlugin extends Plugin {
       id: "oak-mount-external",
       name: "Mount external directory",
       callback: () => void runMount(this),
+    });
+    this.addCommand({
+      id: "oak-migrate-frontmatter",
+      name: "Migrate frontmatter…",
+      callback: () => void runMigrateFrontmatter(this),
     });
     this.addCommand({
       id: "oak-agenda",

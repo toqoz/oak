@@ -5,14 +5,18 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { migrateTimestamps } from "../src/timestamps-migrate.js";
+import {
+  LATEST_FRONTMATTER_VERSION,
+  getFrontmatterVersion,
+  migrateFrontmatter,
+} from "../src/frontmatter-migrate.js";
 
 const exec = promisify(execFile);
 
 let scratch: string;
 
 beforeEach(async () => {
-  scratch = await mkdtemp(resolve(tmpdir(), "oak-ts-migrate-"));
+  scratch = await mkdtemp(resolve(tmpdir(), "oak-fm-migrate-"));
 });
 
 afterEach(async () => {
@@ -23,7 +27,11 @@ function nowSecondsIso(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-function oakPage(id: string, body: string, extra: Record<string, string> = {}): string {
+function oakPage(
+  id: string,
+  body: string,
+  extra: Record<string, string> = {},
+): string {
   const lines = [`id: ${id}`, `title: T-${id.slice(-2)}`];
   for (const [k, v] of Object.entries(extra)) {
     lines.push(`${k}: '${v}'`);
@@ -31,47 +39,58 @@ function oakPage(id: string, body: string, extra: Record<string, string> = {}): 
   return `---\n${lines.join("\n")}\n---\n\n${body}`;
 }
 
-describe("migrateTimestamps", () => {
-  it("fills both fields on a page that has neither", async () => {
+describe("getFrontmatterVersion", () => {
+  it("returns 1 when no version field is present (legacy file)", () => {
+    expect(
+      getFrontmatterVersion(oakPage("01HX0000000000000000000001", "body\n")),
+    ).toBe(1);
+  });
+
+  it("returns the declared version when present", () => {
+    const raw = `---\nversion: 2\nid: 01HX0000000000000000000001\ntitle: t\n---\n\nbody\n`;
+    expect(getFrontmatterVersion(raw)).toBe(2);
+  });
+
+  it("treats a non-numeric version as 1 (recover via re-migration)", () => {
+    const raw = `---\nversion: garbage\nid: 01HX0000000000000000000001\ntitle: t\n---\n\nbody\n`;
+    expect(getFrontmatterVersion(raw)).toBe(1);
+  });
+
+  it("returns 1 for files without frontmatter", () => {
+    expect(getFrontmatterVersion("plain markdown\n")).toBe(1);
+  });
+});
+
+describe("migrateFrontmatter", () => {
+  it("stamps version on a legacy page and fills both timestamps", async () => {
     const fp = resolve(scratch, "a.md");
     await writeFile(fp, oakPage("01HX0000000000000000000001", "body\n"));
-    const report = await migrateTimestamps({ vaultRoot: scratch });
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
     expect(report.scanned).toBe(1);
     expect(report.changed).toBe(1);
     expect(report.unchanged).toBe(0);
+    expect(report.entries[0]!.fromVersion).toBe(1);
+    expect(report.entries[0]!.toVersion).toBe(LATEST_FRONTMATTER_VERSION);
     expect(report.entries[0]!.added.created).toBeDefined();
     expect(report.entries[0]!.added.modified).toBeDefined();
-    // Both cascades reach for filesystem signals (birthtime / mtime)
-    // when no git history exists, so for a freshly-written file the
-    // values land in the same second and end up equal — but that's a
-    // consequence of the file being brand new, not of an explicit
-    // anchor. See the git-history test below for the case where the
-    // values actually diverge.
     const raw = await readFile(fp, "utf8");
+    expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
     expect(raw).toContain("created:");
     expect(raw).toContain("modified:");
+    expect(getFrontmatterVersion(raw)).toBe(LATEST_FRONTMATTER_VERSION);
   });
 
   it("preserves a present `created`, fills `modified` from mtime", async () => {
-    // Capture a window around the write so we can assert that the
-    // recovered `modified` came from mtime (which is set at write
-    // time), not from the ancient `created` value.
     const beforeWrite = nowSecondsIso();
     const fp = resolve(scratch, "a.md");
     const before = oakPage("01HX0000000000000000000001", "body\n", {
       created: "2020-01-01T00:00:00Z",
     });
     await writeFile(fp, before);
-    const report = await migrateTimestamps({ vaultRoot: scratch });
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
     const afterRun = nowSecondsIso();
     expect(report.changed).toBe(1);
     expect(report.entries[0]!.added.created).toBeUndefined();
-    // `modified` no longer anchors to the (potentially ancient)
-    // existing `created` — it comes from the modified-recovery
-    // cascade (git last-touch → mtime → created → now). With no git
-    // history this lands on mtime, which is the moment we just wrote
-    // the file. Verify it's in the write window, not the 2020 value
-    // that the old "anchor to created" behaviour would have written.
     const mod = report.entries[0]!.added.modified!;
     expect(mod).not.toBe("2020-01-01T00:00:00Z");
     expect(mod >= beforeWrite).toBe(true);
@@ -79,15 +98,10 @@ describe("migrateTimestamps", () => {
     const raw = await readFile(fp, "utf8");
     expect(raw).toContain("created: '2020-01-01T00:00:00Z'");
     expect(raw).toContain(`modified: '${mod}'`);
+    expect(getFrontmatterVersion(raw)).toBe(LATEST_FRONTMATTER_VERSION);
   });
 
   it("uses the oldest signal for `created` (mtime older than git first-add)", async () => {
-    // Bootstrap-into-git scenario: a file existed on disk for years
-    // before the vault was put under git. mtime preserves the
-    // original creation; git first-add only knows about the
-    // bootstrap commit. The migration must pick the older signal
-    // (mtime here, because birthtime can't be set from userspace
-    // and would be ≈ now in this test).
     try {
       await exec("git", ["init", "-q"], { cwd: scratch });
       await exec("git", ["config", "user.email", "t@t"], { cwd: scratch });
@@ -95,8 +109,6 @@ describe("migrateTimestamps", () => {
       await exec("git", ["config", "commit.gpgsign", "false"], { cwd: scratch });
       const fp = resolve(scratch, "a.md");
       await writeFile(fp, oakPage("01HX0000000000000000000001", "old\n"));
-      // Push mtime back to 2018, simulating a file that's been on
-      // disk for years pre-dating the git bootstrap.
       const old = new Date("2018-03-04T05:06:07Z");
       await utimes(fp, old, old);
       await exec("git", ["add", "a.md"], { cwd: scratch });
@@ -112,12 +124,9 @@ describe("migrateTimestamps", () => {
           },
         },
       );
-      // git add can re-touch mtime on some platforms; restore it.
       await utimes(fp, old, old);
-      const report = await migrateTimestamps({ vaultRoot: scratch });
+      const report = await migrateFrontmatter({ vaultRoot: scratch });
       expect(report.changed).toBe(1);
-      // `created` picks the oldest evidence (mtime = 2018), NOT the
-      // git first-add date (= 2024 bootstrap commit).
       expect(report.entries[0]!.added.created).toBe("2018-03-04T05:06:07Z");
     } catch (err) {
       const msg = (err as Error).message;
@@ -127,11 +136,6 @@ describe("migrateTimestamps", () => {
   });
 
   it("uses git last-touch commit for `modified` when history exists", async () => {
-    // Initialise a tiny repo with two commits a year apart and verify
-    // that the migration backfills `modified` from the *latest*
-    // commit, not from `created` or mtime. Skip when the sandbox
-    // refuses to commit (signing infra) — the same skip pattern as
-    // the recoverCreatedTimestamp git test in timestamps.test.ts.
     try {
       await exec("git", ["init", "-q"], { cwd: scratch });
       await exec("git", ["config", "user.email", "t@t"], { cwd: scratch });
@@ -166,7 +170,7 @@ describe("migrateTimestamps", () => {
           },
         },
       );
-      const report = await migrateTimestamps({ vaultRoot: scratch });
+      const report = await migrateFrontmatter({ vaultRoot: scratch });
       expect(report.changed).toBe(1);
       expect(report.entries[0]!.added.created).toBe("2020-01-02T03:04:05Z");
       expect(report.entries[0]!.added.modified).toBe("2024-06-15T10:11:12Z");
@@ -183,23 +187,45 @@ describe("migrateTimestamps", () => {
       modified: "2019-06-15T12:00:00Z",
     });
     await writeFile(fp, before);
-    const report = await migrateTimestamps({ vaultRoot: scratch });
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
     expect(report.changed).toBe(1);
-    // Only `created` was added; the user's `modified` value stands.
     expect(report.entries[0]!.added.modified).toBeUndefined();
     expect(report.entries[0]!.added.created).toBeDefined();
     const raw = await readFile(fp, "utf8");
     expect(raw).toContain("modified: '2019-06-15T12:00:00Z'");
   });
 
-  it("skips pages that already have both fields", async () => {
+  it("only stamps the version on a v1 page that already has both timestamps", async () => {
+    // The pre-version era left a long tail of pages with `created`
+    // and `modified` already populated but no `version:`. The
+    // migration must still touch them — to set version: 2 — even
+    // though it has no fields to fill.
     const fp = resolve(scratch, "a.md");
     const before = oakPage("01HX0000000000000000000001", "body\n", {
       created: "2020-01-01T00:00:00Z",
       modified: "2020-01-02T00:00:00Z",
     });
     await writeFile(fp, before);
-    const report = await migrateTimestamps({ vaultRoot: scratch });
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
+    expect(report.changed).toBe(1);
+    expect(report.unchanged).toBe(0);
+    expect(report.entries[0]!.fromVersion).toBe(1);
+    expect(report.entries[0]!.toVersion).toBe(LATEST_FRONTMATTER_VERSION);
+    expect(report.entries[0]!.added.created).toBeUndefined();
+    expect(report.entries[0]!.added.modified).toBeUndefined();
+    const raw = await readFile(fp, "utf8");
+    expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
+    expect(raw).toContain("created: '2020-01-01T00:00:00Z'");
+    expect(raw).toContain("modified: '2020-01-02T00:00:00Z'");
+  });
+
+  it("skips pages already at the latest version", async () => {
+    const fp = resolve(scratch, "a.md");
+    const before =
+      `---\nversion: ${LATEST_FRONTMATTER_VERSION}\nid: 01HX0000000000000000000001\ntitle: t\ncreated: '2020-01-01T00:00:00Z'\nmodified: '2020-01-02T00:00:00Z'\n---\n\nbody\n`;
+    await writeFile(fp, before);
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
+    expect(report.scanned).toBe(1);
     expect(report.changed).toBe(0);
     expect(report.unchanged).toBe(1);
     expect(report.entries).toEqual([]);
@@ -210,7 +236,7 @@ describe("migrateTimestamps", () => {
   it("skips non-oak markdown (no `id:` frontmatter)", async () => {
     const fp = resolve(scratch, "plain.md");
     await writeFile(fp, "# heading\n\njust a note\n");
-    const report = await migrateTimestamps({ vaultRoot: scratch });
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
     expect(report.scanned).toBe(0);
     expect(report.changed).toBe(0);
     const raw = await readFile(fp, "utf8");
@@ -221,12 +247,14 @@ describe("migrateTimestamps", () => {
     const fp = resolve(scratch, "a.md");
     const before = oakPage("01HX0000000000000000000001", "body\n");
     await writeFile(fp, before);
-    const report = await migrateTimestamps({
+    const report = await migrateFrontmatter({
       vaultRoot: scratch,
       dryRun: true,
     });
     expect(report.dryRun).toBe(true);
     expect(report.changed).toBe(1);
+    expect(report.entries[0]!.fromVersion).toBe(1);
+    expect(report.entries[0]!.toVersion).toBe(LATEST_FRONTMATTER_VERSION);
     expect(report.entries[0]!.added.created).toBeDefined();
     const raw = await readFile(fp, "utf8");
     expect(raw).toBe(before);
@@ -247,7 +275,7 @@ describe("migrateTimestamps", () => {
       resolve(dir, "nested.md"),
       oakPage("01HX0000000000000000000002", "y\n"),
     );
-    const report = await migrateTimestamps({ vaultRoot: scratch });
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
     expect(report.scanned).toBe(2);
     expect(report.changed).toBe(2);
   });
