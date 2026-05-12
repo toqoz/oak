@@ -200,7 +200,7 @@ describe("system root files", () => {
   it("excludes vault-root scratch.md from the indexed surface", async () => {
     await writeFile(
       resolve(scratchDir, "real.md"),
-      "---\ntitle: Real\nvisibility: private\n---\nbody\n",
+      "---\nid: real\nvisibility: private\n---\n\n# Real\n\nbody\n",
       "utf8",
     );
     await writeFile(
@@ -214,6 +214,103 @@ describe("system root files", () => {
     expect(titles).not.toContain("*scratch*");
     const paths = [...vault.pages.values()].map((p) => p.relPath);
     expect(paths).not.toContain("scratch.md");
+  });
+});
+
+describe("title sourced from body h1", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(resolve(tmpdir(), "oak-title-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("extracts the first ATX h1 from the body as the page title", async () => {
+    await writeFile(
+      resolve(dir, "Foo.md"),
+      "---\nid: 01HX000000000000000000FOO1\nvisibility: public\n---\n\n# Foo Title\n\nbody\n",
+      "utf8",
+    );
+    const vault = await parseVault(dir);
+    const page = [...vault.pages.values()][0]!;
+    expect(page.title).toBe("Foo Title");
+    expect(page.titlePlain).toBe("Foo Title");
+    expect(page.parseIssues.filter((i) => i.code === "missing-title")).toEqual(
+      [],
+    );
+  });
+
+  it("falls back to the basename and flags `missing-title` when there is no h1", async () => {
+    await writeFile(
+      resolve(dir, "No Heading.md"),
+      "---\nid: 01HX000000000000000000NOH1\nvisibility: public\n---\n\njust prose, no heading.\n",
+      "utf8",
+    );
+    const vault = await parseVault(dir);
+    const page = [...vault.pages.values()][0]!;
+    expect(page.title).toBe("No Heading");
+    expect(
+      page.parseIssues.some((i) => i.code === "missing-title"),
+    ).toBe(true);
+  });
+
+  it("derives titlePlain by stripping wikilinks, decorations, and inline code", async () => {
+    await writeFile(
+      resolve(dir, "Decorated.md"),
+      "---\nid: 01HX000000000000000000DEC1\nvisibility: public\n---\n\n# *Foo* about [[Bar|baz]] and `qux`\n\nbody\n",
+      "utf8",
+    );
+    const vault = await parseVault(dir);
+    const page = [...vault.pages.values()][0]!;
+    expect(page.title).toBe("*Foo* about [[Bar|baz]] and `qux`");
+    expect(page.titlePlain).toBe("Foo about baz and qux");
+  });
+
+  it("resolves wikilinks against the plain-text title key", async () => {
+    await writeFile(
+      resolve(dir, "Hub.md"),
+      "---\nid: 01HX000000000000000000HUB1\nvisibility: public\n---\n\n# *Hub* point\n",
+      "utf8",
+    );
+    await writeFile(
+      resolve(dir, "Referrer.md"),
+      "---\nid: 01HX000000000000000000REF1\nvisibility: public\n---\n\n# Referrer\n\nSee [[Hub point]].\n",
+      "utf8",
+    );
+    const vault = await parseVault(dir);
+    const graph = buildGraph(vault);
+    const referrer = findPageId(vault, "Referrer");
+    const hub = [...vault.pages.values()].find(
+      (p) => p.titlePlain === "Hub point",
+    )!.id;
+    const out = getOutboundLinks(graph, referrer);
+    const resolved = out
+      .map((l) => (l.resolution.status === "resolved" ? l.resolution.targetId : null))
+      .filter((x): x is string => x !== null);
+    expect(resolved).toContain(hub);
+  });
+
+  it("emits title-internal wikilinks as outgoing links", async () => {
+    await writeFile(
+      resolve(dir, "Target.md"),
+      "---\nid: 01HX000000000000000000TGT1\nvisibility: public\n---\n\n# Target\n",
+      "utf8",
+    );
+    await writeFile(
+      resolve(dir, "WithLinkTitle.md"),
+      "---\nid: 01HX000000000000000000WLT1\nvisibility: public\n---\n\n# Note about [[Target]]\n",
+      "utf8",
+    );
+    const vault = await parseVault(dir);
+    const graph = buildGraph(vault);
+    const owner = findPageId(vault, "Note about [[Target]]");
+    const target = findPageId(vault, "Target");
+    const out = getOutboundLinks(graph, owner);
+    const resolved = out
+      .map((l) => (l.resolution.status === "resolved" ? l.resolution.targetId : null))
+      .filter((x): x is string => x !== null);
+    expect(resolved).toContain(target);
   });
 });
 

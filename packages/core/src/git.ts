@@ -328,6 +328,51 @@ export async function snapshot(
   return commit(vaultRoot, msg);
 }
 
+export type PullRebaseResult = {
+  // True if we actually invoked `git pull --rebase`.
+  attempted: boolean;
+  ok: boolean;
+  reason: "no-repo" | "no-upstream" | "ok" | "failed";
+  details?: string;
+};
+
+// Pull remote changes onto the current branch, rebasing local commits
+// on top. Used by auto-snapshot so a vault synced across machines picks
+// up external commits during the same idle window that snapshots local
+// edits. Skips silently when the branch has no upstream configured — a
+// fresh local-only vault must not surface noisy errors.
+export async function pullRebase(
+  vaultRoot: string,
+): Promise<PullRebaseResult> {
+  if (!(await isGitRepo(vaultRoot))) {
+    return { attempted: false, ok: false, reason: "no-repo" };
+  }
+  const upstreamR = await runGit(
+    vaultRoot,
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    { allowFailure: true },
+  );
+  if (upstreamR.code !== 0) {
+    return { attempted: false, ok: false, reason: "no-upstream" };
+  }
+  // `--autostash` keeps the rebase resilient when stray edits land
+  // between our snapshot and the pull (e.g. Obsidian saving mid-flight).
+  const r = await runGit(
+    vaultRoot,
+    ["pull", "--rebase", "--autostash"],
+    { allowFailure: true },
+  );
+  if (r.code !== 0) {
+    return {
+      attempted: true,
+      ok: false,
+      reason: "failed",
+      details: (r.stderr || r.stdout).trim(),
+    };
+  }
+  return { attempted: true, ok: true, reason: "ok" };
+}
+
 export async function checkpoint(
   vaultRoot: string,
   message: string,

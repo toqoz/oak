@@ -19,10 +19,12 @@ import {
   composePage,
   findEnclosingHeading,
   frontmatterLineCount,
+  migrateFrontmatter,
   parseVault,
   partitionIssues,
   snapshot,
   validateVault,
+  type FrontmatterMigrationReport,
   type Visibility,
 } from "@oak/core";
 import { findHeadingsInEditorSelection } from "./refile-selection.js";
@@ -863,6 +865,107 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
     plugin.agendaConfig,
     { sourceLeaf, isPeekSource },
   );
+}
+
+// Confirmation dialog for the frontmatter migration. The plan is
+// computed up-front with a dry-run pass so the user sees exactly
+// which pages move and what fields will be added before any file is
+// rewritten. Apply re-runs the migration without dry-run; we don't
+// reuse the dry-run text because the second pass may pick up files
+// that landed between the two runs (a long-running session may sit
+// on this modal for a while).
+class MigrateFrontmatterModal extends Modal {
+  constructor(
+    app: App,
+    private plan: FrontmatterMigrationReport,
+    private resolve: (apply: boolean) => void,
+  ) {
+    super(app);
+  }
+  override onOpen(): void {
+    this.contentEl.createEl("h2", { text: "Migrate frontmatter" });
+    this.contentEl.createEl("p", {
+      text:
+        `${this.plan.changed} page(s) will be upgraded ` +
+        `(${this.plan.unchanged} already current, ${this.plan.scanned} scanned).`,
+    });
+    if (this.plan.entries.length > 0) {
+      const list = this.contentEl.createEl("ul");
+      list.style.maxHeight = "16em";
+      list.style.overflowY = "auto";
+      for (const entry of this.plan.entries.slice(0, 50)) {
+        const parts: string[] = [`v${entry.fromVersion}→v${entry.toVersion}`];
+        if (entry.added.created !== undefined) {
+          parts.push(`+created=${entry.added.created}`);
+        }
+        if (entry.added.modified !== undefined) {
+          parts.push(`+modified=${entry.added.modified}`);
+        }
+        if (entry.added.titleMoved !== undefined) {
+          parts.push(`+title→body=${entry.added.titleMoved}`);
+        }
+        list.createEl("li", {
+          text: `${entry.relPath}  ${parts.join(" ")}`,
+        });
+      }
+      if (this.plan.entries.length > 50) {
+        this.contentEl.createEl("p", {
+          text: `…and ${this.plan.entries.length - 50} more.`,
+        });
+      }
+    }
+    new Setting(this.contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Apply")
+          .setCta()
+          .onClick(() => this.finish(true)),
+      )
+      .addButton((b) =>
+        b.setButtonText("Cancel").onClick(() => this.finish(false)),
+      );
+  }
+  private finish(apply: boolean): void {
+    this.resolve(apply);
+    this.resolve = () => undefined;
+    this.close();
+  }
+  override onClose(): void {
+    this.contentEl.empty();
+    this.resolve(false);
+    this.resolve = () => undefined;
+  }
+}
+
+export async function runMigrateFrontmatter(plugin: OakPlugin): Promise<void> {
+  const root = vaultRoot(plugin.app);
+  let plan: FrontmatterMigrationReport;
+  try {
+    plan = await migrateFrontmatter({ vaultRoot: root, dryRun: true });
+  } catch (err) {
+    new Notice(`oak: migrate plan failed — ${(err as Error).message}`);
+    return;
+  }
+  if (plan.changed === 0) {
+    new Notice(
+      `oak: migrate frontmatter — all ${plan.scanned} page(s) at latest version`,
+    );
+    return;
+  }
+  const apply = await new Promise<boolean>((resolve) => {
+    new MigrateFrontmatterModal(plugin.app, plan, resolve).open();
+  });
+  if (!apply) return;
+  try {
+    const report = await migrateFrontmatter({ vaultRoot: root });
+    new Notice(
+      `oak: migrated ${report.changed} page(s) ` +
+        `(${report.unchanged} unchanged, ${report.scanned} scanned)`,
+    );
+    plugin.state.scheduleRefresh();
+  } catch (err) {
+    new Notice(`oak: migrate failed — ${(err as Error).message}`);
+  }
 }
 
 export async function runMount(plugin: OakPlugin): Promise<void> {

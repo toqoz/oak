@@ -63,7 +63,7 @@ export function validateVault(vault: Vault, graph: Graph): Issue[] {
           issues.push({
             severity: "error",
             code: "private-leak",
-            message: `${page.visibility} page \`${page.title}\` links to private page \`${target.title}\` (line ${link.line})`,
+            message: `${page.visibility} page \`${page.titlePlain}\` links to private page \`${target.titlePlain}\` (line ${link.line})`,
             pageId: page.id,
             filePath: page.filePath,
           });
@@ -73,7 +73,7 @@ export function validateVault(vault: Vault, graph: Graph): Issue[] {
           issues.push({
             severity: "error",
             code: "external-leak",
-            message: `${page.visibility} page \`${page.title}\` links to external document \`${link.target}\` (line ${link.line})`,
+            message: `${page.visibility} page \`${page.titlePlain}\` links to external document \`${link.target}\` (line ${link.line})`,
             pageId: page.id,
             filePath: page.filePath,
           });
@@ -82,7 +82,7 @@ export function validateVault(vault: Vault, graph: Graph): Issue[] {
         issues.push({
           severity: "error",
           code: "invalid-link",
-          message: `Invalid link in \`${page.title}\`: ${r.reason} (line ${link.line})`,
+          message: `Invalid link in \`${page.titlePlain}\`: ${r.reason} (line ${link.line})`,
           pageId: page.id,
           filePath: page.filePath,
         });
@@ -96,7 +96,7 @@ export function validateVault(vault: Vault, graph: Graph): Issue[] {
         issues.push({
           severity: "error",
           code: "unresolved-embed",
-          message: `Unresolved embed in \`${page.title}\`: ![[${link.target}]] (line ${link.line})`,
+          message: `Unresolved embed in \`${page.titlePlain}\`: ![[${link.target}]] (line ${link.line})`,
           pageId: page.id,
           filePath: page.filePath,
         });

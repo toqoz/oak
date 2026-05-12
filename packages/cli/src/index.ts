@@ -43,7 +43,7 @@ import {
   listMountStatus,
   loadAgendaConfig,
   markDone,
-  migrateTimestamps,
+  migrateFrontmatter,
   mountDoctor,
   parseVault,
   partitionIssues,
@@ -106,8 +106,9 @@ Commands:
   agenda s <regex>           Search entry titles + bodies
   agenda done <path>:<line>  Mark an entry DONE; advances repeaters
 
-  migrate timestamps         Backfill missing created/modified on oak pages
-                             (use --dry-run to preview)
+  migrate [frontmatter]      Upgrade oak page frontmatter to the latest
+                             schema (currently v2 — backfills missing
+                             created/modified). Use --dry-run to preview.
 
 Common options:
   --vault <path>             Vault root (default: current directory)
@@ -1208,36 +1209,40 @@ async function cmdMigrate(
   flags: Record<string, string | boolean>,
   json: boolean,
 ): Promise<number> {
-  const sub = positional[0];
-  if (sub !== "timestamps") {
-    process.stderr.write("Usage: oak migrate timestamps [--dry-run]\n");
+  // `oak migrate` defaults to the frontmatter migration — currently
+  // the only one, but the positional slot is reserved so future
+  // schemas (config, index, …) can plug in without breaking the
+  // surface.
+  const sub = positional[0] ?? "frontmatter";
+  if (sub !== "frontmatter") {
+    process.stderr.write("Usage: oak migrate [frontmatter] [--dry-run]\n");
     return 1;
   }
   const dryRun = getBool(flags, "dry-run");
-  const report = await migrateTimestamps({ vaultRoot: vaultPath, dryRun });
+  const report = await migrateFrontmatter({ vaultRoot: vaultPath, dryRun });
   if (json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     return 0;
   }
   if (report.changed === 0) {
     process.stdout.write(
-      `migrate timestamps: scanned ${report.scanned} page(s); nothing to fill.\n`,
+      `migrate frontmatter: scanned ${report.scanned} page(s); all at latest version.\n`,
     );
     return 0;
   }
-  const prefix = dryRun ? "[dry-run] would update" : "updated";
+  const prefix = dryRun ? "[dry-run] would migrate" : "migrated";
   for (const entry of report.entries) {
-    const parts: string[] = [];
+    const parts: string[] = [`v${entry.fromVersion}→v${entry.toVersion}`];
     if (entry.added.created !== undefined) {
-      parts.push(`created=${entry.added.created}`);
+      parts.push(`+created=${entry.added.created}`);
     }
     if (entry.added.modified !== undefined) {
-      parts.push(`modified=${entry.added.modified}`);
+      parts.push(`+modified=${entry.added.modified}`);
     }
     process.stdout.write(`${prefix} ${entry.relPath}  ${parts.join(" ")}\n`);
   }
   process.stdout.write(
-    `\nmigrate timestamps: ${report.changed} changed, ${report.unchanged} unchanged, ${report.scanned} scanned${dryRun ? " (dry-run, no files written)" : ""}.\n`,
+    `\nmigrate frontmatter: ${report.changed} migrated, ${report.unchanged} unchanged, ${report.scanned} scanned${dryRun ? " (dry-run, no files written)" : ""}.\n`,
   );
   return 0;
 }

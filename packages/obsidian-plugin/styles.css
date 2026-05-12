@@ -75,8 +75,8 @@ body.oak-mode-active
 
 /* The markdown leaf's view header keeps the back/forward nav
    buttons (and other left-side header chrome) but loses the
-   small file title — it's redundant with the inline title and
-   the tab strip overlay. */
+   small file title — it's redundant with the body `# Title`
+   heading and the tab strip overlay. */
 body.oak-mode-active
   .workspace-leaf-content[data-type="markdown"]
   .view-header-title-container,
@@ -350,21 +350,15 @@ button.oak-scratch-history-action:disabled {
   cursor: not-allowed;
 }
 
-/* Scratch row sits inside the view-header (as a flex child), not
-   absolutely positioned over the cm-scroller like the editable
-   title row on regular oak pages. Override the absolute geometry
-   inherited from `.oak-page-title-row`. Inline padding is supplied
-   by the view-header itself (4rem, matching the editor body
-   gutter), so the row needs no padding of its own.
+/* Scratch row sits inside the view-header as a flex child. Inline
+   padding is supplied by the view-header itself (4rem, matching the
+   editor body gutter), so the row needs no padding of its own.
    3-column grid (1fr / auto / 1fr) parks the title group dead-center
    regardless of its width and pins the close button to the row's
    trailing edge — same centering convention as `.oak-view-title`
    on the other oak views. */
 body.oak-mode-active .oak-page-title-row.oak-row-scratch {
-  position: static;
   flex: 1 1 auto;
-  background: transparent;
-  padding: 0;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -382,20 +376,6 @@ body.oak-mode-active .oak-row-scratch > button.oak-scratch-close {
   grid-column: 3;
   justify-self: end;
   margin-left: 0;
-}
-
-/* Tighten the gap between the view-header bar and the first line
-   of the scratch buffer. The dominant contributor is the
-   `.cm-scroller` rule that wraps the editor in `var(--file-margins)`
-   on every side — that comfort margin is appropriate when the
-   editor sits flush at the top of a leaf, but here the view-header
-   already provides the chrome separation. Zero out the top side
-   for scratch (the inline gutter is already zeroed by the
-   global oak rule, and the bottom side stays for trailing
-   breathing room). `.cm-content` keeps its default 2em padding-top
-   so the cursor still has a touch of breathing room below the bar. */
-body.oak-mode-active .oak-leaf-scratch .cm-scroller {
-  padding-block-start: 0 !important;
 }
 
 /* Refile peek pane — same chrome strategy as scratch. The pane is a
@@ -417,19 +397,11 @@ body.oak-mode-active .oak-leaf-refile-peek .view-header {
   align-items: center !important;
 }
 body.oak-mode-active .oak-page-title-row.oak-row-refile-peek {
-  position: static;
   flex: 1 1 auto;
-  background: transparent;
-  padding: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
 }
-/* The peek pane keeps the regular oak `.oak-page-title-row` (editable
-   title + visibility) absolutely-positioned above the body. The
-   default `.cm-scroller` padding-block-start (`var(--file-margins)`)
-   reserves the room that title needs — don't zero it out the way we
-   do for scratch, or the title overlaps the first body line. */
 
 /* While the peek pane is the active main-pane leaf, fade the rest of
    the main pane so the peek reads as the focused surface. Sidebar
@@ -819,83 +791,21 @@ body.oak-mode-active .metadata-properties {
   display: none !important;
 }
 
-/* Replace Obsidian's filename surfaces with the oak page's
-   frontmatter `title`. Both overrides are display-only — neither
-   mutates the actual textContent of editable / file-bound elements,
-   so titles can contain characters that aren't path-safe.
-
-   Inline title (top of the editor):
-     - Obsidian's `.inline-title` is hidden
-     - the plugin injects a sibling read-only `.oak-page-title`
-       (users edit the title via the sidebar form, which then auto-
-       renames the file via path-safe filename derivation) */
+/* Hide Obsidian's filename inline-title. The page already carries
+   the title as a body `# ...` heading; showing the (sanitised) filename
+   above it is duplication. */
 body.oak-mode-active .inline-title {
   display: none !important;
 }
-.oak-page-title {
-  display: none;
-}
-/* The title row holds the title input on the left and the
-   visibility selector pinned to the right. Absolute so the row is
-   taken out of `.cm-scroller`'s flex flow (otherwise it shares a
-   row with `.cm-content` + the gutter and renders as side-by-side
-   text columns). */
-body.oak-mode-active .oak-page-title-row {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 1em;
-  padding: 1em 4rem 0.5em;
-  box-sizing: border-box;
-  background: var(--background-primary);
-}
-body.oak-mode-active input.oak-page-title {
-  flex: 1 1 auto;
-  display: block;
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  /* 24px — quiet, closer to body text than a heading. */
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--text-normal);
-  background: transparent;
-  border: 0;
-  outline: 0;
-  font-family: inherit;
-}
-body.oak-mode-active select.oak-page-visibility {
-  flex: 0 0 auto;
-  background: transparent;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  font-family: inherit;
-}
-body.oak-mode-active select.oak-page-visibility:focus {
-  outline: 1px solid var(--text-accent);
-  outline-offset: 0;
-}
-body.oak-mode-active input.oak-page-title:focus {
-  outline: 1px dashed var(--text-muted);
-  outline-offset: 2px;
-}
 
 /* Tab header title:
-   The plugin sets `data-oak-title="<frontmatter title>"` and
+   The plugin sets `data-oak-title="<body h1>"` and
    `.oak-tab-title-override` on `view.titleEl` while in oak mode.
    CSS hides the original text via `color: transparent` and
    overlays the data attribute through a `::before` pseudo-element.
-   The tab dimensions stay driven by the original (real) text, which
-   keeps Obsidian's tab-bar layout untouched. */
+   The tab dimensions stay driven by the original (filename) text,
+   which keeps Obsidian's tab-bar layout untouched and lets titles
+   contain characters the filename can't. */
 body.oak-mode-active .oak-tab-title-override {
   position: relative;
   color: transparent;
@@ -1141,20 +1051,15 @@ body.oak-mode-active {
    `.markdown-preview-view`) so the scrollbar — which lives on
    `.cm-scroller` (or on `.markdown-preview-view` in reading mode)
    — sits flush with the right edge of the pane and runs the full
-   pane height.
-   The inline title is injected as a sibling of `.cm-content`
-   inside `.cm-scroller`, so it shares the same scroll surface;
-   it picks up the same 4rem horizontal padding via its own
-   declaration below. */
+   pane height. */
 body.oak-mode-active .oak-home {
   max-width: none;
-  /* Match the markdown title row's geometry: same top padding
-     (1em) and same horizontal gutter (4rem) so the page title
-     lands at the same coordinates whether the user is on Home
-     or on a markdown page. */
+  /* Match the markdown page geometry: same top padding (1em) and
+     same horizontal gutter (4rem) so the home heading lands at
+     the same coordinates as a page's `# Title` heading. */
   padding: 1em 4rem 0.5em;
 }
-/* Align the Home `<h1>` with the markdown inline title:
+/* Align the Home `<h1>` with the markdown page heading:
    1.5rem / weight 700 / 1.2 line-height. The non-oak rule below
    still applies outside oak mode. */
 body.oak-mode-active .oak-home-header h1 {
@@ -1168,10 +1073,10 @@ body.oak-mode-active {
 }
 body.oak-mode-active .cm-content {
   padding-inline: 4rem !important;
-  /* Just enough room for the absolutely-positioned title above
-     (title is now ~24px so the spacer no longer needs to clear a
-     2.2em heading). */
-  padding-top: 2em !important;
+  /* Match the home / agenda views (1em top, 4rem horizontal) so the
+     body's `# Title` heading lands at the same coordinates as the
+     headings on those views. */
+  padding-top: 1em !important;
   /* CodeMirror / Obsidian normally adds a tall bottom padding so
      the last line can sit near the middle of the viewport. With
      the "Related" cards living right below, that comfort space
@@ -1180,19 +1085,18 @@ body.oak-mode-active .cm-content {
 }
 body.oak-mode-active .markdown-preview-view {
   padding-inline: 4rem !important;
-  padding-top: 2em !important;
+  padding-top: 1em !important;
   padding-bottom: 1em !important;
 }
 /* The scrollers themselves stay edge-to-edge so the scrollbar
-   tracks the full pane height. */
+   tracks the full pane height. The block-start padding Obsidian
+   applies via `var(--file-margins)` is also zeroed — `.cm-content`'s
+   1em provides the comfort space, and stacking both adds up to a
+   gap noticeably taller than the home / agenda views (which is the
+   target alignment). */
 body.oak-mode-active .cm-scroller {
   padding-inline: 0 !important;
-  /* Establish positioning context for the absolutely-positioned
-     title injected as a child. */
-  position: relative !important;
-}
-body.oak-mode-active .markdown-preview-view {
-  position: relative !important;
+  padding-block-start: 0 !important;
 }
 
 /* ====================================================================

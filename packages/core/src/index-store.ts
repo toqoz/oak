@@ -213,7 +213,7 @@ export async function writeIndex(
         pageCount++;
         insertPage.run(
           page.id,
-          page.title,
+          page.titlePlain,
           page.slug,
           page.visibility,
           page.filePath,

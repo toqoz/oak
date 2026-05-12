@@ -71,6 +71,11 @@ export function isOakManaged(raw: string): boolean {
 // on purpose — never overwrite it. The body-changed branch still
 // runs for the removal case so an accidental deletion gets a
 // reasonable value back.
+//
+// The title is stored as the body's first `# ...` heading, so a title
+// rename arrives as a body change and is handled by the body-changed
+// branch. Pure frontmatter edits — including poking a legacy `title:`
+// field on an unmigrated page — never bump; oak doesn't read those.
 export function shouldBumpModified(oldRaw: string, newRaw: string): boolean {
   if (oldRaw === newRaw) return false;
   if (!isOakManaged(newRaw)) return false;
@@ -90,10 +95,7 @@ export function shouldBumpModified(oldRaw: string, newRaw: string): boolean {
   // null while oldMod was set) falls through to the normal rules so
   // the next body edit refills it.
   if (newMod !== null && newMod !== oldMod) return false;
-  if (oldP.content !== newP.content) return true;
-  const oldTitle = (oldP.data as PageFrontmatter | undefined)?.title;
-  const newTitle = (newP.data as PageFrontmatter | undefined)?.title;
-  return oldTitle !== newTitle;
+  return oldP.content !== newP.content;
 }
 
 // Replace (or insert) the YAML frontmatter block of `raw` with one
@@ -188,6 +190,19 @@ export function setModifiedIfMissing(raw: string, iso: string): string {
   const existing = coerceTimestamp(data["modified"]);
   if (existing !== null) return raw;
   data["modified"] = iso;
+  return rewriteFrontmatter(raw, data);
+}
+
+// Write `version: <n>` at the top of the frontmatter, replacing any
+// existing value. The version stamp leads the block because it's the
+// thing every reader (migration tooling first and foremost) cares
+// about — putting it first means a single regex pass can decide
+// whether the file needs touching at all.
+export function setFrontmatterVersion(raw: string, version: number): string {
+  const parsed = matter(raw);
+  const existing = { ...((parsed.data as Record<string, unknown> | undefined) ?? {}) };
+  delete existing["version"];
+  const data: Record<string, unknown> = { version, ...existing };
   return rewriteFrontmatter(raw, data);
 }
 

@@ -7,8 +7,9 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, posix, resolve, sep } from "node:path";
 import yaml from "js-yaml";
 
+import { LATEST_FRONTMATTER_VERSION } from "./frontmatter-migrate.js";
 import { newId } from "./id.js";
-import { slugify } from "./slug.js";
+import { plainTextTitle, slugify } from "./slug.js";
 import { nowIsoSecond } from "./timestamps.js";
 import type { Visibility } from "./types.js";
 
@@ -126,12 +127,17 @@ export function composePage(options: CreatePageOptions): ComposedPage {
   }
 
   const id = options.generateId ? options.generateId() : newId();
-  const slug = options.slug?.trim() || slugify(title);
+  const slug = options.slug?.trim() || slugify(plainTextTitle(title));
 
   // Build frontmatter explicitly so the YAML is self-documenting:
   // every page on disk shows visibility even when it's at the
-  // default.
-  const fm: Record<string, unknown> = { id, title };
+  // default. `version` leads so `oak migrate` can detect the schema
+  // a file conforms to in a single regex pass. Title lives in the body
+  // as a `# ...` heading, not here in the frontmatter.
+  const fm: Record<string, unknown> = {
+    version: LATEST_FRONTMATTER_VERSION,
+    id,
+  };
   if (aliases.length > 0) fm["aliases"] = aliases;
   fm["visibility"] = visibility;
   fm["slug"] = slug;
@@ -148,8 +154,12 @@ export function composePage(options: CreatePageOptions): ComposedPage {
     lineWidth: 120,
     noRefs: true,
   });
-  const body = options.body ?? "";
-  const text = `---\n${yamlText}---\n\n${body}${body.endsWith("\n") || body.length === 0 ? "" : "\n"}`;
+  const userBody = options.body ?? "";
+  const bodyHasTrailingNewline =
+    userBody.endsWith("\n") || userBody.length === 0;
+  const bodySection =
+    userBody.length === 0 ? "" : `\n${userBody}${bodyHasTrailingNewline ? "" : "\n"}`;
+  const text = `---\n${yamlText}---\n\n# ${title}\n${bodySection}`;
 
   return {
     id,

@@ -83,7 +83,7 @@ export function collectRedlinks(
       if (!entry.bridges.has(page.id)) {
         entry.bridges.set(page.id, {
           id: page.id,
-          title: page.title,
+          title: page.titlePlain,
           slug: page.slug,
           // Use a short body-line context if available, else fall back
           // to the heading-style excerpt.

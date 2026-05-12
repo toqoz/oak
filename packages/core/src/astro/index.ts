@@ -132,7 +132,7 @@ export async function loadOakPagesInto(
     });
     const data: OakEntryData = {
       oakId: page.id,
-      title: page.title,
+      title: page.titlePlain,
       slug: page.slug,
       visibility: page.visibility,
       aliases: page.aliases,

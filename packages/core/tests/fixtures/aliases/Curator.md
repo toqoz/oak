@@ -1,7 +1,8 @@
 ---
 id: 01HX000000000000000000ALS2
-title: Curator
 visibility: public
 ---
+
+# Curator
 
 Read more from [[abrandon]] and also [[Alexander Brandon]].

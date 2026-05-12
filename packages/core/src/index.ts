@@ -37,7 +37,12 @@ export {
   redlinkTargetId,
 } from "./graph.js";
 export { validateVault, partitionIssues } from "./validate.js";
-export { slugify, normalizeKey } from "./slug.js";
+export {
+  slugify,
+  normalizeKey,
+  plainTextTitle,
+  extractFirstH1,
+} from "./slug.js";
 export {
   coerceTimestamp,
   isOakManaged,
@@ -45,6 +50,7 @@ export {
   recoverCreatedTimestamp,
   setCreatedAndModified,
   setCreatedIfMissing,
+  setFrontmatterVersion,
   setModified,
   setModifiedIfMissing,
   shouldBumpModified,
@@ -52,11 +58,17 @@ export {
   withTimestampUpdateAndRecovery,
 } from "./timestamps.js";
 export {
-  migrateTimestamps,
-  type MigrateTimestampsOptions,
-  type TimestampMigrationEntry,
-  type TimestampMigrationReport,
-} from "./timestamps-migrate.js";
+  LATEST_FRONTMATTER_VERSION,
+  getFrontmatterVersion,
+  migrateFrontmatter,
+  migratePageRaw,
+  type AddedFields,
+  type FrontmatterMigrationEntry,
+  type FrontmatterMigrationReport,
+  type MigrateFrontmatterOptions,
+  type MigrationContext,
+  type MigrationStep,
+} from "./frontmatter-migrate.js";
 export {
   writeIndex,
   readIndexMeta,
@@ -99,6 +111,7 @@ export {
   isGitRepo,
   gitStatus,
   snapshot,
+  pullRebase,
   checkpoint,
   recentCommits,
   headCommit,
@@ -117,6 +130,7 @@ export type {
   GitStatusEntry,
   CommitRecord,
   SnapshotResult,
+  PullRebaseResult,
   EnsureRepoResult,
   WorktreeRecord,
   ChangedFile,
