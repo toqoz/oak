@@ -30,6 +30,7 @@ import { ulid } from "ulid";
 import type { VaultSnapshot, VaultState } from "../state.js";
 import type { OakOpenFile } from "../open-file.js";
 import { vaultRoot } from "../paths.js";
+import { DEFAULT_AUTO_SNAPSHOT_INTERVAL_MS } from "../settings.js";
 
 export const VIEW_TYPE_OAK_HOME = "oak-home";
 
@@ -46,6 +47,10 @@ export class OakHomeView extends ItemView {
     private app2: App,
     private openFile: OakOpenFile,
     private exitOakMode: () => Promise<void> | void,
+    private autoSnapshot: {
+      get: () => number;
+      set: (ms: number) => Promise<void>;
+    },
   ) {
     super(leaf);
   }
@@ -284,6 +289,7 @@ export class OakHomeView extends ItemView {
     sec.createEl("p", {
       text: `${status.branch ?? "(detached)"}: ${status.dirty ? "dirty" : "clean"} (staged ${status.staged.length}, unstaged ${status.unstaged.length}, untracked ${status.untracked.length})`,
     });
+    this.renderAutoSnapshotToggle(sec);
     if (recent.length > 0) {
       const ul = sec.createEl("ul", { cls: "oak-home-list" });
       for (const c of recent) {
@@ -293,6 +299,41 @@ export class OakHomeView extends ItemView {
         });
       }
     }
+  }
+
+  private renderAutoSnapshotToggle(parent: HTMLElement): void {
+    const ms = this.autoSnapshot.get();
+    const enabled = ms > 0;
+    const row = parent.createDiv({
+      cls: "oak-home-meta oak-home-auto-snapshot",
+    });
+    row.createSpan({
+      text: enabled
+        ? `Auto-snapshot: after ${Math.round(ms / 60000)} min idle`
+        : "Auto-snapshot: off",
+    });
+    const btn = row.createEl("button", {
+      cls: "oak-home-auto-snapshot-toggle",
+      text: enabled ? "Disable" : "Enable",
+    });
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      btn.disabled = true;
+      const next = enabled ? 0 : DEFAULT_AUTO_SNAPSHOT_INTERVAL_MS;
+      void this.autoSnapshot
+        .set(next)
+        .then(() => {
+          new Notice(
+            next > 0 ? "oak: auto-snapshot enabled" : "oak: auto-snapshot disabled",
+          );
+          this.render();
+        })
+        .catch((err) => {
+          console.error("oak: toggle auto-snapshot failed", err);
+          new Notice(`oak: ${(err as Error).message}`);
+          btn.disabled = false;
+        });
+    });
   }
 
   private renderExternalSection(parent: HTMLElement): void {

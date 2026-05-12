@@ -19,6 +19,11 @@ export type OakPluginSettings = {
   refilePeekLeafId: string | null;
 };
 
+// Interval applied when auto-snapshot is enabled from the home view
+// without an explicit value. Power users can still tune the raw
+// number from the settings tab.
+export const DEFAULT_AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
 export const DEFAULT_SETTINGS: OakPluginSettings = {
   autoSnapshotIntervalMs: 0,
   showRedlinksInline: true,
@@ -36,9 +41,9 @@ export class OakSettingTab extends PluginSettingTab {
     containerEl.createEl("h2", { text: "Oak settings" });
 
     new Setting(containerEl)
-      .setName("Auto-snapshot interval (ms)")
+      .setName("Auto-snapshot quiet period (ms)")
       .setDesc(
-        "Snapshot the vault automatically when the editor goes quiet. Set to 0 to disable.",
+        "Snapshot the vault automatically once edits stop for this many ms. Each edit pushes the timer forward; the snapshot only fires while you're idle. Set to 0 to disable.",
       )
       .addText((t) =>
         t
