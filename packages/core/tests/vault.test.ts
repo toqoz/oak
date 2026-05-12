@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-import { parseVault } from "../src/parse.js";
+import { parseVault, scaffoldHomeFile } from "../src/parse.js";
 import {
   buildGraph,
   getBacklinks,
@@ -153,6 +153,97 @@ describe("twohop-redlinks fixture", () => {
     const betaIds = fromBeta.map((t) => t.pageId);
     expect(betaIds).not.toContain(gamma);
     expect(betaIds.sort()).toEqual([alpha, delta].sort());
+  });
+});
+
+describe("_home content", () => {
+  let scratchDir: string;
+  beforeEach(async () => {
+    scratchDir = await mkdtemp(resolve(tmpdir(), "oak-home-"));
+  });
+  afterEach(async () => {
+    await rm(scratchDir, { recursive: true, force: true });
+  });
+
+  it("loads `_home/pub.md` and `_home/editor.md` onto the Vault", async () => {
+    const homeDir = resolve(scratchDir, "_home");
+    await mkdtemp(homeDir).catch(() => undefined);
+    // mkdtemp won't create the exact path; just mkdir it.
+    await writeFile(
+      resolve(scratchDir, "Real.md"),
+      "---\nid: 01HX000000000000000REAL01\nvisibility: public\n---\n\n# Real\n",
+      "utf8",
+    );
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(
+      resolve(homeDir, "pub.md"),
+      "# Welcome\n\nHello from the homepage.\n",
+      "utf8",
+    );
+    await writeFile(
+      resolve(homeDir, "editor.md"),
+      "# Editor intro\n\nTODO list goes here.\n",
+      "utf8",
+    );
+    const vault = await parseVault(scratchDir);
+    expect(vault.homePub).not.toBeNull();
+    expect(vault.homePub!.kind).toBe("pub");
+    expect(vault.homePub!.titlePlain).toBe("Welcome");
+    expect(vault.homePub!.body).toContain("Hello from the homepage.");
+    expect(vault.homePub!.relPath).toBe("_home/pub.md");
+
+    expect(vault.homeEditor).not.toBeNull();
+    expect(vault.homeEditor!.kind).toBe("editor");
+    expect(vault.homeEditor!.titlePlain).toBe("Editor intro");
+
+    // The `_home/` files must not leak into `pages` or the lookup tables.
+    expect(vault.pages.size).toBe(1);
+    expect(vault.byBasename.has("pub")).toBe(false);
+    expect(vault.byBasename.has("editor")).toBe(false);
+  });
+
+  it("returns null for missing files (and missing _home/ directory)", async () => {
+    await writeFile(
+      resolve(scratchDir, "Real.md"),
+      "---\nid: 01HX000000000000000REAL02\nvisibility: public\n---\n\n# Real\n",
+      "utf8",
+    );
+    const vault = await parseVault(scratchDir);
+    expect(vault.homePub).toBeNull();
+    expect(vault.homeEditor).toBeNull();
+  });
+
+  it("tolerates an empty body (no H1, no content)", async () => {
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(resolve(scratchDir, "_home"), { recursive: true });
+    await writeFile(resolve(scratchDir, "_home/pub.md"), "", "utf8");
+    const vault = await parseVault(scratchDir);
+    expect(vault.homePub).not.toBeNull();
+    expect(vault.homePub!.title).toBe("");
+    expect(vault.homePub!.titlePlain).toBe("");
+    expect(vault.homePub!.body).toBe("");
+  });
+
+  it("scaffolds `_home/editor.md` and `_home/pub.md` to their default bodies", async () => {
+    const editorRel = await scaffoldHomeFile(scratchDir, "editor");
+    const pubRel = await scaffoldHomeFile(scratchDir, "pub");
+    expect(editorRel).toBe("_home/editor.md");
+    expect(pubRel).toBe("_home/pub.md");
+    const { readFile } = await import("node:fs/promises");
+    expect(await readFile(resolve(scratchDir, "_home/editor.md"), "utf8")).toBe(
+      "",
+    );
+    expect(await readFile(resolve(scratchDir, "_home/pub.md"), "utf8")).toBe(
+      "# Home\n",
+    );
+  });
+
+  it("scaffoldHomeFile is idempotent — returns null when the file exists", async () => {
+    const first = await scaffoldHomeFile(scratchDir, "editor");
+    expect(first).toBe("_home/editor.md");
+    const second = await scaffoldHomeFile(scratchDir, "editor");
+    expect(second).toBeNull();
   });
 });
 

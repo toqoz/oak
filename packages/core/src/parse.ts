@@ -1,13 +1,22 @@
 // Parse oak vault files into typed data structures.
 
-import { readFile, readdir, stat, lstat, realpath } from "node:fs/promises";
-import { extname, join, posix, relative, resolve, sep } from "node:path";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  lstat,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, extname, join, posix, relative, resolve, sep } from "node:path";
 import matter from "gray-matter";
 import yaml from "js-yaml";
 
 import { newId } from "./id.js";
 import type {
   ExternalDocument,
+  HomeContent,
   Issue,
   Mount,
   OakPage,
@@ -27,12 +36,23 @@ import { coerceTimestamp } from "./timestamps.js";
 const SYSTEM_DIRS = new Set([
   "_assets",
   "_external",
+  "_home",
   ".oak",
   ".obsidian",
   ".git",
   "node_modules",
   "public-site",
 ]);
+
+// Files under `_home/` are user-authored "site furniture" — the
+// publish homepage and the editor's home pane intro — not vault
+// pages. They are loaded separately by `parseHomeContent` and never
+// flow through the page walk above.
+const HOME_DIR = "_home";
+const HOME_FILES: Record<"pub" | "editor", string> = {
+  pub: "pub.md",
+  editor: "editor.md",
+};
 
 // Top-level filenames the indexer treats as out-of-band even though
 // they sit in the vault root. `scratch.md` is the emacs-style scratch
@@ -356,6 +376,74 @@ async function* walkAll(dir: string): AsyncGenerator<string> {
   }
 }
 
+// Parse a single `_home/*.md` file into a HomeContent. Returns null
+// when the file is absent. Soft on errors: empty body / missing H1 is
+// fine — these files are intentionally minimal and may be blank when
+// freshly scaffolded.
+export async function parseHomeContent(
+  rootPath: string,
+  kind: "pub" | "editor",
+): Promise<HomeContent | null> {
+  const filePath = resolve(rootPath, HOME_DIR, HOME_FILES[kind]);
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = matter(raw);
+  const fm = parsed.data ?? {};
+  const body = parsed.content;
+  const h1 = extractFirstH1(body);
+  const title = h1 ? h1.raw : "";
+  const titlePlain = title.length > 0 ? plainTextTitle(title) : "";
+  const created = coerceTimestamp((fm as Record<string, unknown>)["created"]);
+  const modified = coerceTimestamp(
+    (fm as Record<string, unknown>)["modified"],
+  );
+  const links = extractLinks(body);
+  const relPath = toPosix(relative(rootPath, filePath));
+  return {
+    type: "home-content",
+    kind,
+    filePath,
+    relPath,
+    title,
+    titlePlain,
+    body,
+    created,
+    modified,
+    links,
+  };
+}
+
+// Minimal default body for each `_home/*.md`. Kept here so the
+// scaffold writers (cli `init`, `pubInit`) emit identical content.
+const HOME_SCAFFOLD_BODIES: Record<"pub" | "editor", string> = {
+  pub: "# Home\n",
+  editor: "",
+};
+
+// Write `_home/<kind>.md` with its minimal scaffold body if the file
+// does not already exist. Idempotent: returns the vault-relative path
+// when a file was created, null when one was already present.
+export async function scaffoldHomeFile(
+  rootPath: string,
+  kind: "pub" | "editor",
+): Promise<string | null> {
+  const rel = `${HOME_DIR}/${HOME_FILES[kind]}`;
+  const abs = resolve(rootPath, rel);
+  try {
+    await stat(abs);
+    return null;
+  } catch {
+    // File missing — fall through to create.
+  }
+  await mkdir(dirname(abs), { recursive: true });
+  await writeFile(abs, HOME_SCAFFOLD_BODIES[kind], "utf8");
+  return rel;
+}
+
 function recordConflict(
   map: Map<string, string[]>,
   key: string,
@@ -493,6 +581,9 @@ export async function parseVault(rootPath: string): Promise<Vault> {
     byVaultRelPath.set(k, ext.id);
   }
 
+  const homePub = await parseHomeContent(absRoot, "pub");
+  const homeEditor = await parseHomeContent(absRoot, "editor");
+
   return {
     rootPath: absRoot,
     pages,
@@ -507,6 +598,8 @@ export async function parseVault(rootPath: string): Promise<Vault> {
     aliasConflicts,
     slugConflicts,
     basenameConflicts,
+    homePub,
+    homeEditor,
     issues,
   };
 }
