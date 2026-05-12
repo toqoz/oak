@@ -38,9 +38,6 @@ importers:
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
-      ulid:
-        specifier: ^2.3.0
-        version: 2.4.0
       unist-util-visit:
         specifier: ^5.0.0
         version: 5.1.0
@@ -72,9 +69,6 @@ importers:
       '@oak/core':
         specifier: workspace:*
         version: link:../core
-      ulid:
-        specifier: ^2.3.0
-        version: 2.4.0
     devDependencies:
       '@codemirror/state':
         specifier: ^6.5.0
@@ -1930,10 +1924,6 @@ packages:
 
   ufo@1.6.4:
     resolution: {integrity: sha512-JFNbkD1Svwe0KvGi8GOeLcP4kAWQ609twvCdcHxq1oSL8svv39ZuSvajcD8B+5D0eL4+s1Is2D/O6KN3qcTeRA==}
-
-  ulid@2.4.0:
-    resolution: {integrity: sha512-fIRiVTJNcSRmXKPZtGzFQv9WRrZ3M9eoptl/teFJvjOzmpU+/K/JH6HZ8deBfb5vMEpicJcLn7JmvdknlMq7Zg==}
-    hasBin: true
 
   ultrahtml@1.6.0:
     resolution: {integrity: sha512-R9fBn90VTJrqqLDwyMph+HGne8eqY1iPfYhPzZrvKpIfwkWZbcYlfpsb8B9dTvBfpy1/hqAD7Wi8EKfP9e8zdw==}
@@ -4192,8 +4182,6 @@ snapshots:
   typescript@5.9.3: {}
 
   ufo@1.6.4: {}
-
-  ulid@2.4.0: {}
 
   ultrahtml@1.6.0: {}
 

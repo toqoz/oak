@@ -4,8 +4,8 @@ import { readFile, readdir, stat, lstat, realpath } from "node:fs/promises";
 import { extname, join, posix, relative, resolve, sep } from "node:path";
 import matter from "gray-matter";
 import yaml from "js-yaml";
-import { ulid } from "ulid";
 
+import { newId } from "./id.js";
 import type {
   ExternalDocument,
   Issue,
@@ -406,7 +406,7 @@ export async function parseVault(rootPath: string): Promise<Vault> {
           message: `Duplicate id \`${page.id}\` in ${page.relPath} (also ${existing.relPath})`,
           filePath: file,
         });
-        const reassigned = `${page.id}#${ulid()}`;
+        const reassigned = `${page.id}#${newId()}`;
         pages.set(reassigned, { ...page, id: reassigned });
       } else {
         pages.set(page.id, page);

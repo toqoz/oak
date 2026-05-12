@@ -1239,6 +1239,11 @@ async function cmdMigrate(
     if (entry.added.modified !== undefined) {
       parts.push(`+modified=${entry.added.modified}`);
     }
+    if (entry.added.idRewritten !== undefined) {
+      parts.push(
+        `id=${entry.added.idRewritten.from}→${entry.added.idRewritten.to}`,
+      );
+    }
     process.stdout.write(`${prefix} ${entry.relPath}  ${parts.join(" ")}\n`);
   }
   process.stdout.write(

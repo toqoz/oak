@@ -904,6 +904,11 @@ class MigrateFrontmatterModal extends Modal {
         if (entry.added.titleMoved !== undefined) {
           parts.push(`+title→body=${entry.added.titleMoved}`);
         }
+        if (entry.added.idRewritten !== undefined) {
+          parts.push(
+            `id=${entry.added.idRewritten.from}→${entry.added.idRewritten.to}`,
+          );
+        }
         list.createEl("li", {
           text: `${entry.relPath}  ${parts.join(" ")}`,
         });

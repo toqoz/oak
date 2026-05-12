@@ -16,6 +16,7 @@ import {
   gitStatus,
   homeViewModel,
   listMountStatus,
+  newId,
   plainTextTitle,
   recentCommits,
   slugify,
@@ -26,7 +27,6 @@ import {
   type MountStatus,
   type UnmanagedEntry,
 } from "@oak/core";
-import { ulid } from "ulid";
 
 import { applyTitleEdit } from "../title-commit.js";
 
@@ -274,7 +274,7 @@ export class OakHomeView extends ItemView {
         const f = fm as Record<string, unknown>;
         delete f["title"];
         if (typeof f["id"] !== "string" || (f["id"] as string).length === 0) {
-          f["id"] = ulid();
+          f["id"] = newId();
         }
         if (typeof f["visibility"] !== "string") {
           f["visibility"] = "private";

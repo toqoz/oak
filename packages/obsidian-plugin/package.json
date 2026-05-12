@@ -11,8 +11,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@oak/core": "workspace:*",
-    "ulid": "^2.3.0"
+    "@oak/core": "workspace:*"
   },
   "devDependencies": {
     "@codemirror/state": "^6.5.0",
