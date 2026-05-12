@@ -1,5 +1,9 @@
 import { defineCollection } from "astro:content";
-import { oakLoader, oakRedlinkLoader } from "@oak/core/astro";
+import {
+  oakHomeLoader,
+  oakLoader,
+  oakRedlinkLoader,
+} from "@oak/core/astro";
 
 // `./vault` is the publishable subset of the vault, sync'd into the
 // publish worktree by `oak pub build`. Pages with visibility `private`
@@ -12,6 +16,15 @@ import { oakLoader, oakRedlinkLoader } from "@oak/core/astro";
 export const collections = {
   docs: defineCollection({
     loader: oakLoader({
+      vault: "./vault",
+      optimizeImages: true,
+    }),
+  }),
+  // Single-entry collection backed by `<vault>/_home/pub.md`. Empty
+  // when the user hasn't authored a homepage yet; `index.astro` falls
+  // back to the auto-generated page list in that case.
+  home: defineCollection({
+    loader: oakHomeLoader({
       vault: "./vault",
       optimizeImages: true,
     }),

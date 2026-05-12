@@ -237,6 +237,152 @@ export function oakLoader(options: OakLoaderOptions): Loader {
   };
 }
 
+// Options for `oakHomeLoader`. Same surface as `oakLoader` minus the
+// visibility/id concerns (home content is a single fixed file, not a
+// page).
+export type OakHomeLoaderOptions = {
+  vault: string;
+  assetOutDir?: string;
+  assetUrlPrefix?: string;
+  optimizeImages?: boolean;
+  imageWidths?: number[];
+  imageQuality?: number;
+};
+
+// What ends up in the homepage entry's `data`. Title is the plain
+// H1 text (used as the `<title>` element); timestamps are surfaced
+// for "last updated" UI but optional. The body lives on `body` like
+// any other content-layer entry.
+export type OakHomeData = {
+  title: string;
+  created: string | null;
+  modified: string | null;
+};
+
+const HOME_ENTRY_ID = "pub";
+
+// Testable inner load step: parse the vault, render the homepage, and
+// write the single store entry. Returns whether anything was loaded
+// so callers can log a meaningful message.
+export async function loadOakHomeInto(
+  store: LoaderContext["store"],
+  generateDigest: LoaderContext["generateDigest"],
+  options: OakHomeLoaderOptions,
+  projectRoot: string = process.cwd(),
+  renderMarkdown?: LoaderContext["renderMarkdown"],
+): Promise<{ loaded: boolean; relPath: string | null }> {
+  const vaultRoot = isAbsolute(options.vault)
+    ? options.vault
+    : resolve(projectRoot, options.vault);
+  const assetOutDir = options.assetOutDir
+    ? isAbsolute(options.assetOutDir)
+      ? options.assetOutDir
+      : resolve(projectRoot, options.assetOutDir)
+    : resolve(projectRoot, DEFAULT_ASSET_OUT_REL);
+  const assetUrlPrefix = options.assetUrlPrefix ?? DEFAULT_ASSET_URL_PREFIX;
+
+  const vault = await parseVault(options.vault);
+  store.clear();
+  const home = vault.homePub;
+  if (!home) return { loaded: false, relPath: null };
+
+  const processed = await processBodyAssets(
+    home.body,
+    home.filePath,
+    vaultRoot,
+    assetOutDir,
+    assetUrlPrefix,
+    {
+      resolveSharpFrom: projectRoot,
+      ...(options.optimizeImages !== undefined
+        ? { optimize: options.optimizeImages }
+        : {}),
+      ...(options.imageWidths ? { widths: options.imageWidths } : {}),
+      ...(options.imageQuality !== undefined
+        ? { quality: options.imageQuality }
+        : {}),
+    },
+  );
+
+  const data: OakHomeData = {
+    title: home.titlePlain,
+    created: home.created,
+    modified: home.modified,
+  };
+  const digest = generateDigest({ data, body: home.body });
+  const rendered = renderMarkdown
+    ? await renderMarkdown(processed.body)
+    : undefined;
+  store.set({
+    id: HOME_ENTRY_ID,
+    data: data as unknown as Record<string, unknown>,
+    body: home.body,
+    filePath: relativeFilePath(home.filePath, projectRoot),
+    digest,
+    ...(rendered ? { rendered } : {}),
+  });
+  return { loaded: true, relPath: home.relPath };
+}
+
+// Astro Content Layer loader for the published site's homepage —
+// `<vault>/_home/pub.md`. Emits zero entries when the file is absent
+// (the template falls back to its built-in page list); emits exactly
+// one entry with id `pub` when present, mirroring the body asset
+// pipeline pages go through so embeds and images resolve consistently.
+//
+// ```ts
+// // src/content.config.ts
+// export const collections = {
+//   docs: defineCollection({ loader: oakLoader({ vault: "./vault" }) }),
+//   home: defineCollection({ loader: oakHomeLoader({ vault: "./vault" }) }),
+// };
+// ```
+export function oakHomeLoader(options: OakHomeLoaderOptions): Loader {
+  return {
+    name: "@oak/core/astro:oakHomeLoader",
+    load: async (ctx: LoaderContext): Promise<void> => {
+      const projectRoot = fileURLToPath(ctx.config.root);
+      const reload = async (): Promise<void> => {
+        const { loaded, relPath } = await loadOakHomeInto(
+          ctx.store,
+          ctx.generateDigest,
+          options,
+          projectRoot,
+          ctx.renderMarkdown,
+        );
+        ctx.logger.info(
+          loaded
+            ? `oak: loaded homepage from ${relPath}`
+            : "oak: no _home/pub.md (homepage)",
+        );
+      };
+
+      await reload();
+
+      if (ctx.watcher) {
+        const vaultAbs = isAbsolute(options.vault)
+          ? options.vault
+          : resolve(projectRoot, options.vault);
+        ctx.watcher.add(vaultAbs);
+        let pending: NodeJS.Timeout | null = null;
+        const onChange = (path: string): void => {
+          if (!path.endsWith(".md")) return;
+          if (pending) clearTimeout(pending);
+          pending = setTimeout(() => {
+            pending = null;
+            void reload().catch((e) =>
+              ctx.logger.error(`oak: reload failed: ${(e as Error).message}`),
+            );
+          }, 80);
+        };
+        ctx.watcher.on("add", onChange);
+        ctx.watcher.on("change", onChange);
+        ctx.watcher.on("unlink", onChange);
+      }
+    },
+  };
+}
+
 // Options for `oakRedlinkLoader`.
 export type OakRedlinkLoaderOptions = {
   // Vault path (same convention as oakLoader).
