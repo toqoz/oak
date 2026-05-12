@@ -6,8 +6,8 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, posix, resolve, sep } from "node:path";
 import yaml from "js-yaml";
-import { ulid } from "ulid";
 
+import { newId } from "./id.js";
 import { slugify } from "./slug.js";
 import { nowIsoSecond } from "./timestamps.js";
 import type { Visibility } from "./types.js";
@@ -125,7 +125,7 @@ export function composePage(options: CreatePageOptions): ComposedPage {
     relPath = `${safe}.md`;
   }
 
-  const id = options.generateId ? options.generateId() : ulid();
+  const id = options.generateId ? options.generateId() : newId();
   const slug = options.slug?.trim() || slugify(title);
 
   // Build frontmatter explicitly so the YAML is self-documenting:

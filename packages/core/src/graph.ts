@@ -18,7 +18,7 @@ const EXTERNAL_PREFIX = "_external/";
 // Synthetic node id for an unresolved (red) link target. The graph treats
 // real pages and red-link targets as the same kind of node — both have
 // inbound references — so they share one address space. The `redlink:`
-// prefix never collides with a page id (ULIDs don't contain `:`).
+// prefix never collides with a page id (page ids are Base32, no `:`).
 const REDLINK_PREFIX = "redlink:";
 
 export function redlinkTargetId(key: string): string {

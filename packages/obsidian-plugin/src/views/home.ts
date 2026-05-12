@@ -16,6 +16,7 @@ import {
   gitStatus,
   homeViewModel,
   listMountStatus,
+  newId,
   recentCommits,
   slugify,
   type CommitRecord,
@@ -25,7 +26,6 @@ import {
   type MountStatus,
   type UnmanagedEntry,
 } from "@oak/core";
-import { ulid } from "ulid";
 
 import type { VaultSnapshot, VaultState } from "../state.js";
 import type { OakOpenFile } from "../open-file.js";
@@ -235,7 +235,7 @@ export class OakHomeView extends ItemView {
       await this.app2.fileManager.processFrontMatter(file, (fm) => {
         const f = fm as Record<string, unknown>;
         if (typeof f["id"] !== "string" || (f["id"] as string).length === 0) {
-          f["id"] = ulid();
+          f["id"] = newId();
         }
         const titleStr =
           typeof f["title"] === "string" && (f["title"] as string).length > 0

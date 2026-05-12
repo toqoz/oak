@@ -33,7 +33,6 @@
   "dependencies": {
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.0",
-    "ulid": "^2.3.0",
     "unist-util-visit": "^5.0.0"
   },
   "peerDependencies": {
