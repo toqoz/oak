@@ -1,12 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  cp,
-  mkdtemp,
-  readFile,
-  rm,
-  utimes,
-  writeFile,
-} from "node:fs/promises";
+import { cp, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,8 +9,6 @@ import {
   excerptFrom,
   homeViewModel,
   parseVault,
-  publish,
-  validateVault,
 } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,18 +25,49 @@ afterEach(async () => {
 });
 
 describe("excerptFrom", () => {
-  it("strips wiki syntax, code, and headings; truncates", () => {
+  it("strips wiki syntax and code; preserves line breaks between paragraphs", () => {
     const body = [
-      "# Title",
+      "Intro paragraph.",
       "",
       "First paragraph with [[Wiki|alias]] and `code` reference.",
       "",
       "Second paragraph.",
     ].join("\n");
     expect(excerptFrom(body, 200)).toBe(
-      "First paragraph with alias and reference.",
+      [
+        "Intro paragraph.",
+        "First paragraph with alias and reference.",
+        "Second paragraph.",
+      ].join("\n"),
     );
     expect(excerptFrom("a".repeat(300), 100)).toMatch(/^a+…$/);
+  });
+
+  it("includes heading and list text on separate lines with markers stripped", () => {
+    const body = [
+      "# Top heading",
+      "",
+      "## Section A",
+      "",
+      "- item one",
+      "- [x] item two",
+      "1. ordered",
+      "",
+      "> quoted line",
+      "",
+      "Body prose.",
+    ].join("\n");
+    expect(excerptFrom(body, 200)).toBe(
+      [
+        "Top heading",
+        "Section A",
+        "item one",
+        "item two",
+        "ordered",
+        "quoted line",
+        "Body prose.",
+      ].join("\n"),
+    );
   });
 });
 
@@ -83,6 +105,35 @@ describe("homeViewModel", () => {
     ]);
   });
 
+  it("surfaces files without `id` frontmatter as unmanaged and excludes them from pages/recent", async () => {
+    const root = resolve(scratch, "vault");
+    await cp(fxRoot("publish-basic"), root, { recursive: true });
+    // Drop a file the way an external system would: no oak frontmatter
+    // at all. parseVault will synthesize an `unidentified:…` id and
+    // emit a `missing-id` parse issue, which homeViewModel reads to
+    // segregate it from the real pages.
+    await writeFile(
+      resolve(root, "dropped.md"),
+      "# Dropped from elsewhere\n\nbody body body\n",
+      "utf8",
+    );
+
+    const vault = await parseVault(root);
+    const graph = buildGraph(vault);
+    const home = await homeViewModel(vault, graph);
+
+    expect(home.unmanaged.map((u) => u.vaultRelPath)).toEqual(["dropped.md"]);
+    expect(home.unmanaged[0]!.basename).toBe("dropped");
+    expect(home.stats.unmanaged).toBe(1);
+    // Counted out of pages / visibility totals.
+    expect(home.pages.map((p) => p.title).sort()).toEqual([
+      "About",
+      "Diary",
+      "Hello",
+    ]);
+    expect(home.recent.find((r) => r.vaultRelPath === "dropped.md")).toBeUndefined();
+  });
+
   it("sorts recent by mtime descending", async () => {
     const root = resolve(scratch, "vault");
     await cp(fxRoot("twohop"), root, { recursive: true });
@@ -101,25 +152,3 @@ describe("homeViewModel", () => {
 
 });
 
-describe("publisher emits index.html", () => {
-  it("writes a static home page with publishable entries", async () => {
-    const root = resolve(scratch, "vault");
-    await cp(fxRoot("publish-basic"), root, { recursive: true });
-    const vault = await parseVault(root);
-    const graph = buildGraph(vault);
-    const issues = validateVault(vault, graph);
-    const stats = await publish(vault, graph, issues, { baseUrl: "/" });
-    const indexHtml = await readFile(
-      resolve(stats.outputDir, "index.html"),
-      "utf8",
-    );
-    expect(indexHtml).toContain("<title>Index</title>");
-    expect(indexHtml).toContain("Hello");
-    expect(indexHtml).toContain("About");
-    // Diary is private — must not appear.
-    expect(indexHtml).not.toContain("Diary");
-    // Page links resolve to slug URLs.
-    expect(indexHtml).toContain('href="/hello/"');
-    expect(indexHtml).toContain('href="/about/"');
-  });
-});

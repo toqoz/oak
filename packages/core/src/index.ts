@@ -13,17 +13,21 @@ export type {
   HomeViewOptions,
   HomeEntry,
   HomeStats,
+  UnmanagedEntry,
 } from "./home.js";
-export { searchVault } from "./search.js";
+export { searchVault, searchDocs } from "./search.js";
 export type {
+  SearchDoc,
   SearchHit,
   SearchSnippet,
   SearchMatchKind,
   SearchOptions,
+  Range,
 } from "./search.js";
 export {
   buildGraph,
   resolveLinks,
+  resolveTarget,
   getOutboundLinks,
   getBacklinks,
   getTwoHopLinks,
@@ -38,6 +42,32 @@ export {
   plainTextTitle,
   extractFirstH1,
 } from "./slug.js";
+export {
+  coerceTimestamp,
+  isOakManaged,
+  nowIsoSecond,
+  recoverCreatedTimestamp,
+  setCreatedAndModified,
+  setCreatedIfMissing,
+  setFrontmatterVersion,
+  setModified,
+  setModifiedIfMissing,
+  shouldBumpModified,
+  withTimestampUpdate,
+  withTimestampUpdateAndRecovery,
+} from "./timestamps.js";
+export {
+  LATEST_FRONTMATTER_VERSION,
+  getFrontmatterVersion,
+  migrateFrontmatter,
+  migratePageRaw,
+  type AddedFields,
+  type FrontmatterMigrationEntry,
+  type FrontmatterMigrationReport,
+  type MigrateFrontmatterOptions,
+  type MigrationContext,
+  type MigrationStep,
+} from "./frontmatter-migrate.js";
 export {
   writeIndex,
   readIndexMeta,
@@ -68,14 +98,19 @@ export {
   ASSET_EXTENSIONS,
 } from "./assets.js";
 export type { AssetRef } from "./assets.js";
-export { renderPage, renderPageDocument, rewriteBody } from "./render.js";
-export type { RenderContext } from "./render.js";
+export { processBodyAssets, resolveAssetSource } from "./asset-process.js";
+export type {
+  AssetWritten,
+  ProcessedAssets,
+} from "./asset-process.js";
 export {
   ensureGitRepo,
   ensureGitignore,
+  gitFirstAddedTime,
   isGitRepo,
   gitStatus,
   snapshot,
+  pullRebase,
   checkpoint,
   recentCommits,
   headCommit,
@@ -85,6 +120,8 @@ export {
   deleteBranch,
   diffBranch,
   mergeBranch,
+  branchExists,
+  createOrphanBranch,
   GitError,
 } from "./git.js";
 export type {
@@ -92,6 +129,7 @@ export type {
   GitStatusEntry,
   CommitRecord,
   SnapshotResult,
+  PullRebaseResult,
   EnsureRepoResult,
   WorktreeRecord,
   ChangedFile,
@@ -116,14 +154,43 @@ export type {
   AgentContextEntry,
   AgentContextOptions,
 } from "./agent.js";
-export { publish, PublishError } from "./publish.js";
+export {
+  collectPublishablePaths,
+  pubInit,
+  pubBuild,
+  pubStatus,
+  PubError,
+  DEFAULT_PUBLISH_BRANCH,
+  PUBLISH_WORKTREE_REL,
+} from "./publish-branch.js";
 export type {
-  PublishOptions,
-  PublishStats,
-  PublishedPage,
-  PublishedAsset,
-  PublishManifest,
-} from "./publish.js";
+  PubInitOptions,
+  PubInitResult,
+  PubBuildOptions,
+  PubBuildResult,
+} from "./publish-branch.js";
+export { syncPaths } from "./sync-tree.js";
+export type { SyncResult } from "./sync-tree.js";
+export { relatedView } from "./related.js";
+export type {
+  OutboundEntry,
+  InboundEntry,
+  PageRef,
+  RelatedOptions,
+  RelatedView,
+  TwoHopBridgeEntry,
+  TwoHopEntry,
+} from "./related.js";
+export {
+  collectRedlinks,
+  redlinkIdFor,
+  redlinkSlug,
+} from "./redlinks.js";
+export type {
+  RedlinkBridge,
+  RedlinkOptions,
+  RedlinkSummary,
+} from "./redlinks.js";
 export {
   DEFAULT_AGENDA_CONFIG,
   addUnits,

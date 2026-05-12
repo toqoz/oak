@@ -37,13 +37,15 @@ import {
   clearScratch,
   createNewPage,
   createPageFromRedlink,
+  deleteCurrentFile,
+  deleteFile,
   ensureScratchFile,
   extractSelectionToPage,
   openScratch,
   openScratchHistory,
   runCheckpoint,
+  runMigrateFrontmatter,
   runMount,
-  runPublish,
   runRefileFromEditor,
   runSnapshot,
   runValidate,
@@ -58,6 +60,12 @@ import {
   excerptFrom,
   loadAgendaConfig,
   loadRefileConfig,
+  nowIsoSecond,
+  pullRebase,
+  recoverCreatedTimestamp,
+  setCreatedIfMissing,
+  setModified,
+  shouldBumpModified,
   slugify,
   snapshot,
   type AgendaConfig,
@@ -78,7 +86,12 @@ export default class OakPlugin extends Plugin {
   settings: OakPluginSettings = DEFAULT_SETTINGS;
   state!: VaultState;
 
-  private autoSnapshotHandle: ReturnType<typeof setInterval> | null = null;
+  // Pending debounced snapshot. Set by `bumpAutoSnapshot` on each
+  // vault edit, fired once the editor has been quiet for
+  // `autoSnapshotIntervalMs`. While the user is actively typing,
+  // the timer keeps getting pushed forward so we never snapshot
+  // mid-edit.
+  private autoSnapshotHandle: ReturnType<typeof setTimeout> | null = null;
   private sidebarRef: OakSidebarView | null = null;
   private linksUnsubscribe: (() => void) | null = null;
   // Live copy of `.oak/agenda.yml`. Used by editor extensions (e.g. the
@@ -128,6 +141,15 @@ export default class OakPlugin extends Plugin {
   // own handler runs and shows the native menu. This flag tells our
   // capture-phase listener to wave that re-dispatch through.
   private oakContextmenuBypass = false;
+  // Per-path snapshot of the last content we observed (after our own
+  // modified-bump, when applicable). The vault.on("modify") handler
+  // diffs the live content against this baseline to decide whether a
+  // save warrants bumping `modified`. Without a baseline we can't tell
+  // a body edit apart from a metadata tweak — so the very first
+  // modify after plugin load just primes the entry and skips the
+  // bump. Memory cost grows only with the set of files actually
+  // edited in the session.
+  private lastSeenContent = new Map<string, string>();
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -153,6 +175,13 @@ export default class OakPlugin extends Plugin {
         this.app,
         openFile,
         () => this.toggleOakMode(),
+        {
+          get: () => this.settings.autoSnapshotIntervalMs,
+          set: async (ms) => {
+            this.settings.autoSnapshotIntervalMs = ms;
+            await this.saveSettings();
+          },
+        },
       );
     });
     this.registerView(VIEW_TYPE_OAK_GHOST, (leaf: WorkspaceLeaf) => {
@@ -200,6 +229,21 @@ export default class OakPlugin extends Plugin {
         this.state.scheduleRefresh();
         if (file instanceof TFile && file.extension === "md") {
           void this.normalizeFrontmatterSeparator(file);
+          void this.maybeBumpModified(file);
+        }
+      }),
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (file instanceof TFile) this.lastSeenContent.delete(file.path);
+      }),
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        const prev = this.lastSeenContent.get(oldPath);
+        this.lastSeenContent.delete(oldPath);
+        if (prev !== undefined && file instanceof TFile) {
+          this.lastSeenContent.set(file.path, prev);
         }
       }),
     );
@@ -211,6 +255,21 @@ export default class OakPlugin extends Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", () => this.state.scheduleRefresh()),
+    );
+    // Auto-snapshot is debounced on vault activity: each edit pushes
+    // the snapshot timer forward so it only fires once the editor
+    // has been quiet for `autoSnapshotIntervalMs`.
+    this.registerEvent(
+      this.app.vault.on("modify", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("create", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", () => this.bumpAutoSnapshot()),
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", () => this.bumpAutoSnapshot()),
     );
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", (newLeaf) => {
@@ -232,7 +291,7 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
-        this.applyScratchButton();
+        this.applyActionsMenu();
         this.applyCenteredViewTitle();
       }),
     );
@@ -244,7 +303,7 @@ export default class OakPlugin extends Plugin {
         this.applyHomeButton();
         this.applyAgendaButton();
         this.applySearchButton();
-        this.applyScratchButton();
+        this.applyActionsMenu();
         this.applyCenteredViewTitle();
       }),
     );
@@ -372,17 +431,23 @@ export default class OakPlugin extends Plugin {
       openOakCommandPalette(this.app);
       return false;
     });
+    // Same hijack pattern for Mod+N: Obsidian's "Create new note" runs
+    // off the same dispatcher chain, so a scope-level binding wins
+    // over it while oak mode is active. The oak version routes through
+    // `createNewPage` (frontmatter + slug + visibility-aware) instead
+    // of dropping a blank `Untitled.md` in the vault root.
+    oakKeyScope.register(["Mod"], "n", (ev) => {
+      if (!document.body.classList.contains("oak-mode-active")) return;
+      ev.preventDefault();
+      void createNewPage(this);
+      return false;
+    });
     this.app.keymap.pushScope(oakKeyScope);
     this.register(() => this.app.keymap.popScope(oakKeyScope));
     this.addCommand({
       id: "oak-validate",
       name: "Validate vault",
       callback: () => void runValidate(this),
-    });
-    this.addCommand({
-      id: "oak-publish",
-      name: "Publish",
-      callback: () => void runPublish(this),
     });
     this.addCommand({
       id: "oak-snapshot",
@@ -398,6 +463,11 @@ export default class OakPlugin extends Plugin {
       id: "oak-mount-external",
       name: "Mount external directory",
       callback: () => void runMount(this),
+    });
+    this.addCommand({
+      id: "oak-migrate-frontmatter",
+      name: "Migrate frontmatter…",
+      callback: () => void runMigrateFrontmatter(this),
     });
     this.addCommand({
       id: "oak-agenda",
@@ -417,12 +487,18 @@ export default class OakPlugin extends Plugin {
     this.addCommand({
       id: "oak-open-scratch",
       name: "Toggle scratch",
+      hotkeys: [{ modifiers: ["Alt"], key: "s" }],
       callback: () => void openScratch(this),
     });
     this.addCommand({
       id: "oak-clear-scratch",
       name: "Clear scratch",
       callback: () => void clearScratch(this),
+    });
+    this.addCommand({
+      id: "oak-delete-file",
+      name: "Delete current file…",
+      callback: () => void deleteCurrentFile(this),
     });
 
     // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.
@@ -476,13 +552,13 @@ export default class OakPlugin extends Plugin {
       this.applyHomeButton();
       this.applyAgendaButton();
       this.applySearchButton();
-      this.applyScratchButton();
+      this.applyActionsMenu();
       this.applyCenteredViewTitle();
     });
   }
 
   override onunload(): void {
-    if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
     this.linksUnsubscribe?.();
     this.linksUnsubscribe = null;
@@ -499,7 +575,7 @@ export default class OakPlugin extends Plugin {
     this.applyHomeButton();
     this.applyAgendaButton();
     this.applySearchButton();
-    this.applyScratchButton();
+    this.applyActionsMenu();
     this.applyCenteredViewTitle();
   }
 
@@ -513,16 +589,62 @@ export default class OakPlugin extends Plugin {
     this.applyAutoSnapshot();
   }
 
+  // Reset the debounced snapshot timer to match the current settings.
+  // Called on plugin load and whenever settings change. When enabled,
+  // arm the timer immediately so a snapshot fires after the configured
+  // idle period even without a subsequent vault edit — otherwise a
+  // user who toggles auto-snapshot on (e.g. from the home view) and
+  // then stays idle would never see a commit.
   applyAutoSnapshot(): void {
-    if (this.autoSnapshotHandle) clearInterval(this.autoSnapshotHandle);
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
     this.autoSnapshotHandle = null;
+    this.bumpAutoSnapshot();
+  }
+
+  // Called from every vault edit (modify / create / delete / rename).
+  // Resets the debounce window so the snapshot only fires once the
+  // editor has been quiet for the configured interval.
+  bumpAutoSnapshot(): void {
     const ms = this.settings.autoSnapshotIntervalMs;
     if (!ms || ms <= 0) return;
-    this.autoSnapshotHandle = setInterval(() => {
-      void snapshot(vaultRoot(this.app)).catch((err) =>
-        console.warn("oak auto-snapshot failed:", err),
-      );
+    if (this.autoSnapshotHandle) clearTimeout(this.autoSnapshotHandle);
+    this.autoSnapshotHandle = setTimeout(() => {
+      this.autoSnapshotHandle = null;
+      void this.runAutoSnapshot();
     }, ms);
+  }
+
+  // Auto-snapshot fire: commit any pending local edits, pull remote
+  // changes on top, then refresh any open home views so their Git
+  // inspector reflects the new HEAD. Pull runs unconditionally — even
+  // when nothing was committed — so a vault synced across machines
+  // picks up external commits during the same idle window.
+  private async runAutoSnapshot(): Promise<void> {
+    const root = vaultRoot(this.app);
+    try {
+      await snapshot(root);
+    } catch (err) {
+      console.warn("oak auto-snapshot failed:", err);
+    }
+    try {
+      const r = await pullRebase(root);
+      if (r.attempted && !r.ok) {
+        console.warn("oak auto-snapshot pull --rebase failed:", r.details);
+      }
+    } catch (err) {
+      console.warn("oak auto-snapshot pull --rebase failed:", err);
+    }
+    this.refreshHomeViews();
+  }
+
+  private refreshHomeViews(): void {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_HOME);
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof OakHomeView) {
+        void view.refreshGit();
+      }
+    }
   }
 
   private async refreshAgendaConfig(): Promise<void> {
@@ -785,6 +907,58 @@ export default class OakPlugin extends Plugin {
       await this.app.vault.modify(file, fixed);
     } catch (err) {
       console.warn("oak: normalizeFrontmatterSeparator failed", err);
+    }
+  }
+
+  // Bump frontmatter `modified` to "now" when the just-applied save
+  // changed body content or the title — but not when the change was
+  // pure metadata (visibility, alias, slug flip). The diff is
+  // computed against the in-memory baseline cached from the previous
+  // observation; a missing baseline means this is the first modify we
+  // see for the file, so we just prime the cache and skip the bump
+  // (better to occasionally miss one bump than to fabricate an edit
+  // out of thin air for files we have no history of).
+  //
+  // The early `shouldBumpModified` check also keeps our own writeback
+  // from looping: when we call `vault.modify` below, the modify event
+  // re-fires; the second pass sees `lastSeenContent[path]` already set
+  // to the bumped content and the diff is empty, so it short-circuits.
+  private async maybeBumpModified(file: TFile): Promise<void> {
+    try {
+      const current = await this.app.vault.read(file);
+      const previous = this.lastSeenContent.get(file.path);
+      if (previous === undefined) {
+        this.lastSeenContent.set(file.path, current);
+        return;
+      }
+      const bump = shouldBumpModified(previous, current);
+      // The recovery path also fires when `created` is missing — even
+      // if the bump rule itself decided to skip. That way a metadata-
+      // only edit on a legacy file still backfills `created` once.
+      const needCreated =
+        /^---\n[\s\S]*?\bid:/.test(current) &&
+        !/\bcreated:\s*\S/.test(current);
+      if (!bump && !needCreated) {
+        this.lastSeenContent.set(file.path, current);
+        return;
+      }
+      const now = nowIsoSecond();
+      let stamped = current;
+      if (needCreated) {
+        const recovered = await recoverCreatedTimestamp(
+          vaultRoot(this.app),
+          `${vaultRoot(this.app)}/${file.path}`,
+          now,
+        );
+        stamped = setCreatedIfMissing(stamped, recovered);
+      }
+      if (bump) stamped = setModified(stamped, now);
+      this.lastSeenContent.set(file.path, stamped);
+      if (stamped !== current) {
+        await this.app.vault.modify(file, stamped);
+      }
+    } catch (err) {
+      console.warn("oak: maybeBumpModified failed", err);
     }
   }
 
@@ -1304,7 +1478,7 @@ export default class OakPlugin extends Plugin {
     }
   }
 
-  // Per-page metadata (id / slug / llm / status), rendered as a
+  // Per-page metadata (id / slug / status), rendered as a
   // compact row of label-value pairs after the Related cards.
   private applyPageMeta(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
@@ -1363,14 +1537,6 @@ export default class OakPlugin extends Plugin {
     const file = view.file;
     this.metaRowReadonly(container, "ID", page.id);
     this.metaRowText(container, "Slug", "slug", page.slug, file);
-    this.metaRowSelect(
-      container,
-      "LLM",
-      "llm",
-      page.llm,
-      ["deny", "allow", "summary-only"],
-      file,
-    );
 
     const issues = snap.issues.filter((i) => i.pageId === page.id);
     const errCount = issues.filter((i) => i.severity === "error").length;
@@ -1437,38 +1603,6 @@ export default class OakPlugin extends Plugin {
         ev.preventDefault();
         input.blur();
       }
-    });
-  }
-
-  private metaRowSelect(
-    parent: HTMLElement,
-    label: string,
-    key: string,
-    value: string,
-    options: string[],
-    file: TFile,
-  ): void {
-    parent.createEl("span", {
-      cls: "oak-page-meta-label",
-      text: label,
-    });
-    const select = parent.createEl("select", {
-      cls: "oak-page-meta-select",
-    });
-    for (const opt of options) {
-      const o = select.createEl("option", { text: opt });
-      o.value = opt;
-      if (opt === value) o.selected = true;
-    }
-    select.addEventListener("change", () => {
-      const next = select.value;
-      void this.app.fileManager
-        .processFrontMatter(file, (fm) => {
-          (fm as Record<string, unknown>)[key] = next;
-        })
-        .catch((err) =>
-          new Notice(`oak: failed to update ${key} — ${(err as Error).message}`),
-        );
     });
   }
 
@@ -1707,62 +1841,96 @@ export default class OakPlugin extends Plugin {
     await this.navigateLeafToSearch(leaf);
   }
 
-  // Scratch lives at the right edge of every view-header as a
-  // `line-squiggle` icon button — same `clickable-icon` chrome as
-  // the back/forward + home/agenda/search nav buttons elsewhere in
-  // the bar, so it visually fits the header row. Clicking is a
-  // toggle: when scratch is closed it opens as a horizontal split
-  // below the trigger leaf (the "bottom pane" affordance) so the
-  // user keeps their main editing context visible; when scratch is
-  // already open it detaches the leaf (autosave keeps the buffer
-  // contents on disk so closing is non-destructive). The icon is
-  // accent-tinted while a scratch leaf is open anywhere in the
-  // workspace.
+  // Single dropdown affordance at the right edge of every view-header.
+  // Consolidates the per-pane oak actions (toggle scratch, new page,
+  // and — on a markdown leaf — delete-file…) behind one `…` button so
+  // the chrome stays terse regardless of which view the leaf shows.
+  // Same `clickable-icon` chrome as the back/forward + home/agenda/
+  // search cluster on the left, so the icon row reads as one bar.
+  // Accent-tinted while a scratch leaf is open elsewhere in the
+  // workspace — the menu is the only entry point for closing it, so
+  // the tint preserves the at-a-glance "scratch is up" cue the
+  // standalone link used to provide.
   //
-  // We also tag the scratch leaf's container with
-  // `oak-leaf-scratch` so the stylesheet can hide the per-pane tab
-  // strip — the scratch row inside the leaf's own view-header
-  // carries enough identity that the tab is redundant.
-  private applyScratchButton(): void {
+  // We also tag the scratch leaf's container with `oak-leaf-scratch`
+  // so the stylesheet can hide the per-pane tab strip — the scratch
+  // row inside the leaf's own view-header carries enough identity
+  // that the tab is redundant.
+  private applyActionsMenu(): void {
     const oakMode = document.body.classList.contains("oak-mode-active");
-    const isOpen = this.findScratchLeaf() !== null;
+    const isScratchOpen = this.findScratchLeaf() !== null;
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view as { containerEl?: HTMLElement };
       const root = view.containerEl;
       if (!root) return;
       const header = root.querySelector<HTMLElement>(".view-header");
-      if (header) this.applyScratchLinkForHeader(header, leaf, oakMode, isOpen);
+      if (header)
+        this.applyActionsMenuForHeader(header, leaf, oakMode, isScratchOpen);
       this.applyScratchLeafClass(leaf);
     });
   }
 
-  private applyScratchLinkForHeader(
+  private applyActionsMenuForHeader(
     header: HTMLElement,
     leaf: WorkspaceLeaf,
     oakMode: boolean,
-    isOpen: boolean,
+    isScratchOpen: boolean,
   ): void {
     const existing = header.querySelector<HTMLButtonElement>(
-      ".oak-scratch-link",
+      ".oak-actions-menu",
     );
     if (!oakMode) {
       existing?.remove();
       return;
     }
-    let link = existing;
-    if (!link) {
-      link = document.createElement("button");
-      link.classList.add("clickable-icon", "oak-scratch-link");
-      link.setAttribute("type", "button");
-      link.setAttribute("aria-label", "Oak Scratch");
-      setIcon(link, "line-squiggle");
-      link.addEventListener("click", (ev) => {
+    let btn = existing;
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.classList.add("clickable-icon", "oak-actions-menu");
+      btn.setAttribute("type", "button");
+      btn.setAttribute("aria-label", "Oak actions");
+      setIcon(btn, "ellipsis-vertical");
+      btn.addEventListener("click", (ev) => {
         ev.preventDefault();
-        void this.toggleScratch(leaf);
+        this.showActionsMenuForLeaf(leaf, ev);
       });
-      header.appendChild(link);
+      header.appendChild(btn);
     }
-    link.classList.toggle("is-active", isOpen);
+    btn.classList.toggle("is-active", isScratchOpen);
+  }
+
+  private showActionsMenuForLeaf(leaf: WorkspaceLeaf, ev: MouseEvent): void {
+    const menu = new Menu();
+    const isScratchOpen = this.findScratchLeaf() !== null;
+    menu.addItem((item) => {
+      item
+        .setTitle(isScratchOpen ? "Close scratch" : "Open scratch")
+        .setIcon("line-squiggle")
+        .onClick(() => void this.toggleScratch(leaf));
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle("New page")
+        .setIcon("file-plus")
+        .onClick(() => void createNewPage(this));
+    });
+    // File-pane extras: only when the leaf shows a real markdown
+    // file (skip oak-home / agenda / search / ghost / scratch).
+    const view = leaf.view;
+    if (view instanceof MarkdownView && view.file) {
+      const file = view.file;
+      const isScratchFile = file.path === SCRATCH_VAULT_REL_PATH;
+      if (!isScratchFile) {
+        menu.addSeparator();
+        menu.addItem((item) => {
+          item
+            .setTitle("Delete file…")
+            .setIcon("trash-2")
+            .onClick(() => void deleteFile(this, file));
+        });
+      }
+    }
+    menu.showAtMouseEvent(ev);
   }
 
   // Inject a static, centered title into each oak view's

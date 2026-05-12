@@ -165,6 +165,38 @@ describe("system root files", () => {
     await rm(scratchDir, { recursive: true, force: true });
   });
 
+  it("keeps unmanaged files (no `id`) out of lookup tables and the graph", async () => {
+    await writeFile(
+      resolve(scratchDir, "Real.md"),
+      "---\nid: 01HX0000000000000000REAL01\ntitle: Real\nvisibility: private\n---\n[[Orphan]]\n",
+      "utf8",
+    );
+    // No frontmatter at all — the kind of file an external sync tool
+    // might drop in. Note the basename matches the wikilink above.
+    await writeFile(
+      resolve(scratchDir, "Orphan.md"),
+      "# An orphan\n\njust prose\n",
+      "utf8",
+    );
+    const vault = await parseVault(scratchDir);
+    // The unmanaged file is still discoverable via vault.pages so the
+    // home view can offer to import it…
+    expect(vault.pages.size).toBe(2);
+    // …but it must not occupy any link-resolution slot. byBasename in
+    // particular would otherwise let `[[Orphan]]` resolve to a
+    // synthesised `unidentified:Orphan.md` id.
+    expect(vault.byBasename.has("orphan")).toBe(false);
+    expect(vault.byTitle.has("an orphan")).toBe(false);
+
+    const graph = buildGraph(vault);
+    const realId = findPageId(vault, "Real");
+    const outgoing = getOutboundLinks(graph, realId);
+    expect(outgoing).toHaveLength(1);
+    expect(outgoing[0]!.resolution.status).toBe("unresolved");
+    // No outgoing entry exists for the unmanaged file at all.
+    expect(graph.outgoing.has("unidentified:Orphan.md")).toBe(false);
+  });
+
   it("excludes vault-root scratch.md from the indexed surface", async () => {
     await writeFile(
       resolve(scratchDir, "real.md"),

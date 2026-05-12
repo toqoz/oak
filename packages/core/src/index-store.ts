@@ -15,6 +15,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 
+import { isManagedPage } from "./parse.js";
 import type { Graph, Issue, Vault } from "./types.js";
 
 // Vite's resolver mangles `node:sqlite` (strips the prefix) when it
@@ -52,7 +53,6 @@ CREATE TABLE pages (
   title TEXT NOT NULL,
   slug TEXT NOT NULL,
   visibility TEXT NOT NULL,
-  llm TEXT NOT NULL,
   file_path TEXT NOT NULL,
   rel_path TEXT NOT NULL,
   basename TEXT NOT NULL,
@@ -97,7 +97,6 @@ CREATE TABLE mounts (
   mode TEXT NOT NULL,
   publishable INTEGER NOT NULL,
   git_policy TEXT NOT NULL,
-  llm_policy TEXT NOT NULL,
   exists_flag INTEGER NOT NULL
 );
 
@@ -167,8 +166,8 @@ export async function writeIndex(
     );
     const insertPage = db.prepare(
       `INSERT INTO pages
-       (id, title, slug, visibility, llm, file_path, rel_path, basename, body_chars, link_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, title, slug, visibility, file_path, rel_path, basename, body_chars, link_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertAlias = db.prepare(
       "INSERT INTO aliases (page_id, alias) VALUES (?, ?)",
@@ -180,8 +179,8 @@ export async function writeIndex(
     );
     const insertMount = db.prepare(
       `INSERT INTO mounts
-       (id, target_path, link_path, mode, publishable, git_policy, llm_policy, exists_flag)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, target_path, link_path, mode, publishable, git_policy, exists_flag)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertExternal = db.prepare(
       `INSERT INTO externals
@@ -203,14 +202,20 @@ export async function writeIndex(
 
       let aliasCount = 0;
       let linkCount = 0;
+      let pageCount = 0;
 
       for (const page of vault.pages.values()) {
+        // Unmanaged pages are absent from the lookup tables and graph;
+        // mirror that here so the SQLite snapshot stays internally
+        // consistent. The `missing-id` parse issue is still recorded
+        // in the issues table so the file is discoverable.
+        if (!isManagedPage(page)) continue;
+        pageCount++;
         insertPage.run(
           page.id,
           page.titlePlain,
           page.slug,
           page.visibility,
-          page.llm,
           page.filePath,
           page.relPath,
           page.basename,
@@ -268,7 +273,6 @@ export async function writeIndex(
           mount.mode,
           mount.publishable ? 1 : 0,
           mount.gitPolicy,
-          mount.llmPolicy,
           mount.exists ? 1 : 0,
         );
       }
@@ -296,7 +300,7 @@ export async function writeIndex(
       db.exec("COMMIT");
 
       return {
-        pages: vault.pages.size,
+        pages: pageCount,
         aliases: aliasCount,
         links: linkCount,
         mounts: vault.mounts.size,

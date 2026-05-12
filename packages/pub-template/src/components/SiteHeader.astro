@@ -1,0 +1,44 @@
+---
+const path = Astro.url.pathname;
+function active(href: string): string {
+  if (href === "/") return path === "/" ? "is-active" : "";
+  return path.startsWith(href) ? "is-active" : "";
+}
+---
+<header>
+  <nav>
+    <a href="/" class={active("/")}>Index</a>
+    <a href="/search" class={active("/search")}>Search</a>
+  </nav>
+</header>
+
+<style>
+  header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    padding: 0.75rem 1rem;
+  }
+  nav {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    gap: 1.25rem;
+    font-size: 0.9rem;
+  }
+  nav a {
+    color: inherit;
+    opacity: 0.65;
+  }
+  nav a:hover,
+  nav a.is-active {
+    opacity: 1;
+  }
+  nav a.is-active {
+    font-weight: 500;
+  }
+  @media (prefers-color-scheme: dark) {
+    header {
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+  }
+</style>

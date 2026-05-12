@@ -5,14 +5,26 @@
 //   - File paths in `OakPage.filePath` are absolute; `relPath` is vault-relative.
 
 export type Visibility = "private" | "unlisted" | "public";
-export type LlmPolicy = "allow" | "deny" | "summary-only";
 
 export type PageFrontmatter = {
+  // Schema version of this page's frontmatter. Missing == 1 (the
+  // pre-timestamp era). Latest is `LATEST_FRONTMATTER_VERSION` in
+  // `./frontmatter-migrate.ts`; `oak migrate` upgrades older files
+  // to the latest.
+  version?: number;
   id?: string;
   aliases?: string[];
   visibility?: Visibility;
   slug?: string;
-  llm?: LlmPolicy;
+  // ISO 8601 UTC instants ("YYYY-MM-DDTHH:MM:SSZ"). Both are written by
+  // oak — `created` once on page composition, `modified` whenever a
+  // save changes the body or the title. Pure frontmatter edits that
+  // leave the title alone (visibility flip, alias add, …) intentionally
+  // skip the bump so a casual metadata tweak doesn't masquerade as a
+  // content edit in agendas/feeds. Older files without these fields
+  // round-trip untouched.
+  created?: string;
+  modified?: string;
 };
 
 export type LinkSyntax = "wiki" | "markdown";
@@ -51,12 +63,15 @@ export type OakPage = {
   aliases: string[];
   visibility: Visibility;
   slug: string;
-  llm: LlmPolicy;
   filePath: string;
   relPath: string;
   basename: string;
   body: string;
   rawFrontmatter: PageFrontmatter;
+  // null for files that pre-date the timestamp feature or that were
+  // authored outside oak's write paths.
+  created: string | null;
+  modified: string | null;
   links: RawLink[];
   // Issues encountered during parsing (e.g. invalid frontmatter values).
   parseIssues: Issue[];
@@ -82,7 +97,6 @@ export type Mount = {
   mode: MountMode;
   publishable: false;
   gitPolicy: GitPolicy;
-  llmPolicy: LlmPolicy;
   // Resolved status: whether the symlink/path exists at parse time.
   exists: boolean;
 };

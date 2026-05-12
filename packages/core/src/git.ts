@@ -328,6 +328,51 @@ export async function snapshot(
   return commit(vaultRoot, msg);
 }
 
+export type PullRebaseResult = {
+  // True if we actually invoked `git pull --rebase`.
+  attempted: boolean;
+  ok: boolean;
+  reason: "no-repo" | "no-upstream" | "ok" | "failed";
+  details?: string;
+};
+
+// Pull remote changes onto the current branch, rebasing local commits
+// on top. Used by auto-snapshot so a vault synced across machines picks
+// up external commits during the same idle window that snapshots local
+// edits. Skips silently when the branch has no upstream configured — a
+// fresh local-only vault must not surface noisy errors.
+export async function pullRebase(
+  vaultRoot: string,
+): Promise<PullRebaseResult> {
+  if (!(await isGitRepo(vaultRoot))) {
+    return { attempted: false, ok: false, reason: "no-repo" };
+  }
+  const upstreamR = await runGit(
+    vaultRoot,
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    { allowFailure: true },
+  );
+  if (upstreamR.code !== 0) {
+    return { attempted: false, ok: false, reason: "no-upstream" };
+  }
+  // `--autostash` keeps the rebase resilient when stray edits land
+  // between our snapshot and the pull (e.g. Obsidian saving mid-flight).
+  const r = await runGit(
+    vaultRoot,
+    ["pull", "--rebase", "--autostash"],
+    { allowFailure: true },
+  );
+  if (r.code !== 0) {
+    return {
+      attempted: true,
+      ok: false,
+      reason: "failed",
+      details: (r.stderr || r.stdout).trim(),
+    };
+  }
+  return { attempted: true, ok: true, reason: "ok" };
+}
+
 export async function checkpoint(
   vaultRoot: string,
   message: string,
@@ -511,3 +556,105 @@ export async function recentCommits(
   }
   return out;
 }
+
+// True iff the given branch ref exists locally.
+export async function branchExists(
+  vaultRoot: string,
+  branch: string,
+): Promise<boolean> {
+  const r = await runGit(
+    vaultRoot,
+    ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+    { allowFailure: true },
+  );
+  return r.code === 0;
+}
+
+// Git's well-known empty tree object. Every git repository "knows"
+// this hash even when no empty tree object is stored in its odb, and
+// commit-tree accepts it directly — sidestepping `mktree`, which reads
+// from stdin.
+const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+// Create a new branch pointing at a fresh empty-tree commit, without
+// touching the current worktree, index, or HEAD. Used to bootstrap
+// orphan branches like the publish branch.
+export async function createOrphanBranch(
+  vaultRoot: string,
+  branch: string,
+  message = `init: ${branch}`,
+): Promise<{ commit: string }> {
+  await ensureCommitterIdentity(vaultRoot);
+  const commit = await runGit(vaultRoot, [
+    "commit-tree",
+    EMPTY_TREE_SHA,
+    "-m",
+    message,
+  ]);
+  const commitHash = commit.stdout.trim();
+  await runGit(vaultRoot, [
+    "update-ref",
+    `refs/heads/${branch}`,
+    commitHash,
+  ]);
+  return { commit: commitHash };
+}
+
+// Author-date of the oldest commit that introduced `relPath`. Follows
+// renames so a file's git-history "creation" survives moves. Returns
+// null when the vault isn't a git repo, the file has no commits yet
+// (untracked, or staged but never committed), or git failed for any
+// reason — callers fall back to filesystem mtime in that case.
+//
+// Used by the timestamp-recovery path: when a save needs to write a
+// missing `created` field, this is the most reliable source we have
+// short of a manually-managed value.
+export async function gitFirstAddedTime(
+  vaultRoot: string,
+  relPath: string,
+): Promise<string | null> {
+  if (!(await isGitRepo(vaultRoot))) return null;
+  // `--diff-filter=A` selects add-introducing commits only; `--follow`
+  // walks renames. The list is newest-first, so the last line is the
+  // original add. `--reverse` would give it directly but interacts
+  // poorly with `--follow` on some git versions.
+  const r = await runGit(
+    vaultRoot,
+    [
+      "log",
+      "--diff-filter=A",
+      "--follow",
+      "--format=%aI",
+      "--",
+      relPath,
+    ],
+    { allowFailure: true },
+  );
+  if (r.code !== 0) return null;
+  const lines = r.stdout.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return null;
+  return lines[lines.length - 1]!.trim();
+}
+
+// Author-date of the most recent commit that touched `relPath`.
+// Follows renames so the value still tracks the same logical file
+// after moves. Returns null under the same conditions as
+// gitFirstAddedTime — callers fall back to mtime.
+//
+// Used by the migration path to backfill a missing `modified` from
+// the most reliable evidence of "when did the contents last change".
+export async function gitLastModifiedTime(
+  vaultRoot: string,
+  relPath: string,
+): Promise<string | null> {
+  if (!(await isGitRepo(vaultRoot))) return null;
+  const r = await runGit(
+    vaultRoot,
+    ["log", "-1", "--follow", "--format=%aI", "--", relPath],
+    { allowFailure: true },
+  );
+  if (r.code !== 0) return null;
+  const out = r.stdout.trim();
+  return out.length > 0 ? out : null;
+}
+

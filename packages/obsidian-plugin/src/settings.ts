@@ -5,7 +5,6 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import type OakPlugin from "./main.js";
 
 export type OakPluginSettings = {
-  baseUrl: string;
   autoSnapshotIntervalMs: number; // 0 = disabled
   showRedlinksInline: boolean;
   // Internal: id of the leaf currently acting as the refile peek pane.
@@ -20,8 +19,12 @@ export type OakPluginSettings = {
   refilePeekLeafId: string | null;
 };
 
+// Interval applied when auto-snapshot is enabled from the home view
+// without an explicit value. Power users can still tune the raw
+// number from the settings tab.
+export const DEFAULT_AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
 export const DEFAULT_SETTINGS: OakPluginSettings = {
-  baseUrl: "/",
   autoSnapshotIntervalMs: 0,
   showRedlinksInline: true,
   refilePeekLeafId: null,
@@ -38,24 +41,9 @@ export class OakSettingTab extends PluginSettingTab {
     containerEl.createEl("h2", { text: "Oak settings" });
 
     new Setting(containerEl)
-      .setName("Publish base URL")
+      .setName("Auto-snapshot quiet period (ms)")
       .setDesc(
-        "Used as the URL prefix for `oak publish`. Defaults to `/` (host-relative).",
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("/")
-          .setValue(this.plugin.settings.baseUrl)
-          .onChange(async (v) => {
-            this.plugin.settings.baseUrl = v.trim() || "/";
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Auto-snapshot interval (ms)")
-      .setDesc(
-        "Snapshot the vault automatically when the editor goes quiet. Set to 0 to disable.",
+        "Snapshot the vault automatically once edits stop for this many ms. Each edit pushes the timer forward; the snapshot only fires while you're idle. Set to 0 to disable.",
       )
       .addText((t) =>
         t

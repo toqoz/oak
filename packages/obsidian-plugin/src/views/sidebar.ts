@@ -1,8 +1,8 @@
 // Oak sidebar view — empty stub.
 //
-// Per-file metadata (title, visibility, id, slug, llm, status) is
+// Per-file metadata (title, visibility, id, slug, status) is
 // rendered inline in the main pane now: visibility next to the
-// title at the top, id/slug/llm/status as a meta block below the
+// title at the top, id/slug/status as a meta block below the
 // related-pages cards. The sidebar leaf is kept around for
 // workspace-state continuity (existing layouts may still reference
 // it) but it renders nothing in oak mode and is hidden via CSS.

@@ -19,12 +19,12 @@ import {
   composePage,
   findEnclosingHeading,
   frontmatterLineCount,
+  migrateFrontmatter,
   parseVault,
   partitionIssues,
-  publish,
-  PublishError,
   snapshot,
   validateVault,
+  type FrontmatterMigrationReport,
   type Visibility,
 } from "@oak/core";
 import { findHeadingsInEditorSelection } from "./refile-selection.js";
@@ -213,6 +213,72 @@ function findWikiTargetAtCursor(
   return findWikiTargetInLine(editor.getLine(pos.line), pos.ch);
 }
 
+// Confirm-then-trash dialog. Routed through `fileManager.trashFile`
+// so the user's "Deleted files" preference (system trash / vault
+// `.trash` / permanent) is honored — same behavior as Obsidian's
+// own delete affordance.
+class ConfirmDeleteModal extends Modal {
+  constructor(
+    app: App,
+    private file: TFile,
+    private resolve: (confirmed: boolean) => void,
+  ) {
+    super(app);
+  }
+  override onOpen(): void {
+    this.contentEl.createEl("h2", { text: "Delete file?" });
+    this.contentEl.createEl("p", {
+      text: `"${this.file.basename}" will be moved to the trash.`,
+    });
+    new Setting(this.contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Delete")
+          .setWarning()
+          .onClick(() => this.finish(true)),
+      )
+      .addButton((b) =>
+        b.setButtonText("Cancel").onClick(() => this.finish(false)),
+      );
+  }
+  private finish(confirmed: boolean): void {
+    this.resolve(confirmed);
+    this.resolve = () => undefined;
+    this.close();
+  }
+  override onClose(): void {
+    this.contentEl.empty();
+    this.resolve(false);
+    this.resolve = () => undefined;
+  }
+}
+
+export async function deleteFile(
+  plugin: OakPlugin,
+  file: TFile,
+): Promise<void> {
+  const ok = await new Promise<boolean>((resolve) => {
+    new ConfirmDeleteModal(plugin.app, file, resolve).open();
+  });
+  if (!ok) return;
+  try {
+    await plugin.app.fileManager.trashFile(file);
+  } catch (err) {
+    new Notice(`oak: delete failed — ${(err as Error).message}`);
+    return;
+  }
+  plugin.state.scheduleRefresh();
+}
+
+export async function deleteCurrentFile(plugin: OakPlugin): Promise<void> {
+  const file = plugin.app.workspace.getActiveFile();
+  if (!file || file.extension !== "md") {
+    new Notice("oak: open a markdown file first");
+    return;
+  }
+  await deleteFile(plugin, file);
+}
+
 class NewPageModal extends Modal {
   private titleValue: string;
   private visibilityValue: Visibility = "private";
@@ -385,31 +451,6 @@ export async function runValidate(plugin: OakPlugin): Promise<void> {
   new Notice(`oak: ${errors.length} error(s), ${warnings.length} warning(s)`);
   for (const e of errors.slice(0, 5)) {
     console.warn("oak validate:", e);
-  }
-}
-
-export async function runPublish(plugin: OakPlugin): Promise<void> {
-  const root = vaultRoot(plugin.app);
-  try {
-    const vault = await parseVault(root);
-    const graph = buildGraph(vault);
-    const issues = validateVault(vault, graph);
-    // Per directive: checkpoint before publish.
-    await checkpoint(root, "before publish");
-    const stats = await publish(vault, graph, issues, {
-      baseUrl: plugin.settings.baseUrl,
-    });
-    new Notice(
-      `oak: published ${stats.pages.length} page(s), ${stats.assets.length} asset(s)`,
-    );
-  } catch (err) {
-    if (err instanceof PublishError) {
-      new Notice(`oak: publish blocked (${err.issues.length} error(s))`);
-      for (const i of err.issues) console.warn("oak publish:", i);
-      return;
-    }
-    new Notice(`oak: publish failed — ${(err as Error).message}`);
-    console.error(err);
   }
 }
 
@@ -824,6 +865,104 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
     plugin.agendaConfig,
     { sourceLeaf, isPeekSource },
   );
+}
+
+// Confirmation dialog for the frontmatter migration. The plan is
+// computed up-front with a dry-run pass so the user sees exactly
+// which pages move and what fields will be added before any file is
+// rewritten. Apply re-runs the migration without dry-run; we don't
+// reuse the dry-run text because the second pass may pick up files
+// that landed between the two runs (a long-running session may sit
+// on this modal for a while).
+class MigrateFrontmatterModal extends Modal {
+  constructor(
+    app: App,
+    private plan: FrontmatterMigrationReport,
+    private resolve: (apply: boolean) => void,
+  ) {
+    super(app);
+  }
+  override onOpen(): void {
+    this.contentEl.createEl("h2", { text: "Migrate frontmatter" });
+    this.contentEl.createEl("p", {
+      text:
+        `${this.plan.changed} page(s) will be upgraded ` +
+        `(${this.plan.unchanged} already current, ${this.plan.scanned} scanned).`,
+    });
+    if (this.plan.entries.length > 0) {
+      const list = this.contentEl.createEl("ul");
+      list.style.maxHeight = "16em";
+      list.style.overflowY = "auto";
+      for (const entry of this.plan.entries.slice(0, 50)) {
+        const parts: string[] = [`v${entry.fromVersion}→v${entry.toVersion}`];
+        if (entry.added.created !== undefined) {
+          parts.push(`+created=${entry.added.created}`);
+        }
+        if (entry.added.modified !== undefined) {
+          parts.push(`+modified=${entry.added.modified}`);
+        }
+        list.createEl("li", {
+          text: `${entry.relPath}  ${parts.join(" ")}`,
+        });
+      }
+      if (this.plan.entries.length > 50) {
+        this.contentEl.createEl("p", {
+          text: `…and ${this.plan.entries.length - 50} more.`,
+        });
+      }
+    }
+    new Setting(this.contentEl)
+      .addButton((b) =>
+        b
+          .setButtonText("Apply")
+          .setCta()
+          .onClick(() => this.finish(true)),
+      )
+      .addButton((b) =>
+        b.setButtonText("Cancel").onClick(() => this.finish(false)),
+      );
+  }
+  private finish(apply: boolean): void {
+    this.resolve(apply);
+    this.resolve = () => undefined;
+    this.close();
+  }
+  override onClose(): void {
+    this.contentEl.empty();
+    this.resolve(false);
+    this.resolve = () => undefined;
+  }
+}
+
+export async function runMigrateFrontmatter(plugin: OakPlugin): Promise<void> {
+  const root = vaultRoot(plugin.app);
+  let plan: FrontmatterMigrationReport;
+  try {
+    plan = await migrateFrontmatter({ vaultRoot: root, dryRun: true });
+  } catch (err) {
+    new Notice(`oak: migrate plan failed — ${(err as Error).message}`);
+    return;
+  }
+  if (plan.changed === 0) {
+    new Notice(
+      `oak: migrate frontmatter — all ${plan.scanned} page(s) at latest version`,
+    );
+    return;
+  }
+  const apply = await new Promise<boolean>((resolve) => {
+    new MigrateFrontmatterModal(plugin.app, plan, resolve).open();
+  });
+  if (!apply) return;
+  try {
+    const report = await migrateFrontmatter({ vaultRoot: root });
+    new Notice(
+      `oak: migrated ${report.changed} page(s) ` +
+        `(${report.unchanged} unchanged, ${report.scanned} scanned)`,
+    );
+    plugin.state.scheduleRefresh();
+  } catch (err) {
+    new Notice(`oak: migrate failed — ${(err as Error).message}`);
+  }
 }
 
 export async function runMount(plugin: OakPlugin): Promise<void> {

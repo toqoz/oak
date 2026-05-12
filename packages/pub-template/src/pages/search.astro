@@ -1,0 +1,222 @@
+---
+import Base from "../layouts/Base.astro";
+---
+<Base title="Search">
+  <main>
+    <h1>Search</h1>
+    <input
+      id="q"
+      type="search"
+      placeholder="Type to search…"
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+    />
+    <p id="status" class="status">Loading index…</p>
+    <ul id="results" class="results" role="listbox"></ul>
+  </main>
+
+  <style>
+    h1 {
+      margin-bottom: 1rem;
+    }
+    #q {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      font-size: 1rem;
+      font-family: inherit;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+      background: white;
+      color: inherit;
+    }
+    #q:focus {
+      outline: 2px solid #1a4f8a;
+      outline-offset: 1px;
+    }
+    .status {
+      margin: 1rem 0 0.25rem;
+      font-size: 0.85rem;
+      color: rgba(0, 0, 0, 0.5);
+    }
+    .results {
+      list-style: none;
+      padding: 0;
+      margin: 1rem 0 0;
+    }
+    .results li {
+      padding: 0.6rem 0.75rem;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .results li.is-active {
+      background: rgba(0, 0, 0, 0.05);
+    }
+    .results .title {
+      font-size: 1rem;
+      font-weight: 500;
+    }
+    .results .slug {
+      font-size: 0.8rem;
+      color: rgba(0, 0, 0, 0.5);
+      margin-left: 0.5rem;
+    }
+    .results .line {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      color: rgba(0, 0, 0, 0.7);
+      margin: 0.2rem 0 0;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+    .results mark {
+      background: #ffd866;
+      color: inherit;
+      padding: 0 1px;
+      border-radius: 2px;
+    }
+    @media (prefers-color-scheme: dark) {
+      #q {
+        background: #2a2a2a;
+        border-color: rgba(255, 255, 255, 0.15);
+      }
+      .status,
+      .results .slug {
+        color: rgba(255, 255, 255, 0.5);
+      }
+      .results li.is-active {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .results .line {
+        color: rgba(255, 255, 255, 0.7);
+      }
+      .results mark {
+        background: #c89d20;
+      }
+    }
+  </style>
+
+  <script>
+    // Pull the scorer + types from @oak/core's search subpath. The
+    // editor's full-pane search uses the same function over its live
+    // vault, so the ranking + multi-term-AND + heading-boost rules
+    // here match the editor 1:1 without sharing UI code.
+    import {
+      searchDocs,
+      type SearchDoc,
+      type SearchHit,
+      type SearchSnippet,
+    } from "@oak/core/search";
+
+    const input = document.getElementById("q") as HTMLInputElement;
+    const status = document.getElementById("status") as HTMLParagraphElement;
+    const results = document.getElementById("results") as HTMLUListElement;
+
+    let corpus: SearchDoc[] = [];
+    let active = -1;
+    let lastHits: SearchHit[] = [];
+
+    async function loadCorpus(): Promise<void> {
+      const res = await fetch("/search.json");
+      corpus = (await res.json()) as SearchDoc[];
+      status.textContent = `${corpus.length} page${corpus.length === 1 ? "" : "s"} indexed.`;
+    }
+
+    function escapeHtml(s: string): string {
+      return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function highlight(snip: SearchSnippet): string {
+      let out = "";
+      let cursor = 0;
+      for (const r of snip.ranges) {
+        if (r.start > cursor) {
+          out += escapeHtml(snip.text.slice(cursor, r.start));
+        }
+        out += `<mark>${escapeHtml(snip.text.slice(r.start, r.end))}</mark>`;
+        cursor = r.end;
+      }
+      if (cursor < snip.text.length) out += escapeHtml(snip.text.slice(cursor));
+      return out;
+    }
+
+    function render(): void {
+      results.innerHTML = "";
+      lastHits.forEach((hit, i) => {
+        const li = document.createElement("li");
+        li.dataset["slug"] = hit.path;
+        if (i === active) li.classList.add("is-active");
+        li.setAttribute("role", "option");
+        const titleSnip = hit.snippets.find((s) => s.kind === "title");
+        const titleHtml = titleSnip
+          ? highlight(titleSnip)
+          : escapeHtml(hit.title);
+        const bodyLinesHtml = hit.snippets
+          .filter((s) => s.kind === "body")
+          .map((s) => `<p class="line">${highlight(s)}</p>`)
+          .join("");
+        li.innerHTML = `<span class="title">${titleHtml}</span><span class="slug">/${escapeHtml(hit.path)}/</span>${bodyLinesHtml}`;
+        li.addEventListener("click", () => navigate(hit.path));
+        results.appendChild(li);
+      });
+    }
+
+    function runSearch(query: string): void {
+      if (corpus.length === 0) return;
+      lastHits = searchDocs(corpus, query);
+      active = lastHits.length > 0 ? 0 : -1;
+      status.textContent =
+        query.trim() === ""
+          ? `${corpus.length} page${corpus.length === 1 ? "" : "s"} indexed.`
+          : `${lastHits.length} match${lastHits.length === 1 ? "" : "es"}.`;
+      render();
+    }
+
+    function navigate(slug: string): void {
+      window.location.href = `/${slug}/`;
+    }
+
+    function move(delta: number): void {
+      if (lastHits.length === 0) return;
+      active = (active + delta + lastHits.length) % lastHits.length;
+      render();
+      const el = results.children[active] as HTMLElement | undefined;
+      el?.scrollIntoView({ block: "nearest" });
+    }
+
+    input.addEventListener("input", () => runSearch(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        move(1);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        move(-1);
+      } else if (e.key === "Enter") {
+        const hit = lastHits[active];
+        if (hit) {
+          e.preventDefault();
+          navigate(hit.path);
+        }
+      } else if (e.key === "Escape") {
+        input.value = "";
+        runSearch("");
+      }
+    });
+
+    loadCorpus().then(() => {
+      input.focus();
+      // Allow `?q=foo` deep-link.
+      const initial = new URL(window.location.href).searchParams.get("q");
+      if (initial) {
+        input.value = initial;
+        runSearch(initial);
+      }
+    });
+  </script>
+</Base>
