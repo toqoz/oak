@@ -42,15 +42,20 @@ describe("shouldBumpModified", () => {
     ).toBe(true);
   });
 
-  it("returns true when only the title changed (frontmatter-only)", () => {
+  // The title now lives in the body's first `# ...` heading, so a
+  // genuine title rename surfaces as a body-changed save. Poking the
+  // legacy `title:` field on an unmigrated page is just another opaque
+  // frontmatter edit — oak no longer reads it, so we don't bump for
+  // it either. (Running `oak migrate` lifts the field into a body h1.)
+  it("returns false when only legacy frontmatter `title:` changed", () => {
     const before = `---\nid: 01HX0000000000000000000001\ntitle: Old\n---\n\nbody\n`;
     const after = `---\nid: 01HX0000000000000000000001\ntitle: New\n---\n\nbody\n`;
-    expect(shouldBumpModified(before, after)).toBe(true);
+    expect(shouldBumpModified(before, after)).toBe(false);
   });
 
-  it("returns false when only frontmatter (non-title) changed", () => {
-    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\nvisibility: private\n---\n\nbody\n`;
-    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\nvisibility: public\n---\n\nbody\n`;
+  it("returns false when only frontmatter (non-body) changed", () => {
+    const before = `---\nid: 01HX0000000000000000000001\nvisibility: private\n---\n\n# T\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\nvisibility: public\n---\n\n# T\n\nbody\n`;
     expect(shouldBumpModified(before, after)).toBe(false);
   });
 
@@ -136,9 +141,9 @@ describe("withTimestampUpdate", () => {
     expect(out).toContain("body changed");
   });
 
-  it("does not bump when only non-title frontmatter changes", () => {
-    const before = `---\nid: 01HX0000000000000000000001\ntitle: T\nvisibility: private\n---\n\nbody\n`;
-    const after = `---\nid: 01HX0000000000000000000001\ntitle: T\nvisibility: public\n---\n\nbody\n`;
+  it("does not bump on a pure-frontmatter edit (body unchanged)", () => {
+    const before = `---\nid: 01HX0000000000000000000001\nvisibility: private\n---\n\n# T\n\nbody\n`;
+    const after = `---\nid: 01HX0000000000000000000001\nvisibility: public\n---\n\n# T\n\nbody\n`;
     const out = withTimestampUpdate(before, after, "2026-05-10T00:00:00Z");
     expect(out).toBe(after);
   });
@@ -319,7 +324,7 @@ describe("withTimestampUpdateAndRecovery", () => {
       "2026-05-10T00:00:00Z",
     );
     expect(out).toContain("created:");
-    // Modified should NOT be added: pure-frontmatter, non-title edit.
+    // Modified should NOT be added: pure-frontmatter edit, body unchanged.
     expect(out).not.toContain("modified:");
   });
 

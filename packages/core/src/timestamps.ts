@@ -71,6 +71,11 @@ export function isOakManaged(raw: string): boolean {
 // on purpose — never overwrite it. The body-changed branch still
 // runs for the removal case so an accidental deletion gets a
 // reasonable value back.
+//
+// The title is stored as the body's first `# ...` heading, so a title
+// rename arrives as a body change and is handled by the body-changed
+// branch. Pure frontmatter edits — including poking a legacy `title:`
+// field on an unmigrated page — never bump; oak doesn't read those.
 export function shouldBumpModified(oldRaw: string, newRaw: string): boolean {
   if (oldRaw === newRaw) return false;
   if (!isOakManaged(newRaw)) return false;
@@ -90,15 +95,7 @@ export function shouldBumpModified(oldRaw: string, newRaw: string): boolean {
   // null while oldMod was set) falls through to the normal rules so
   // the next body edit refills it.
   if (newMod !== null && newMod !== oldMod) return false;
-  if (oldP.content !== newP.content) return true;
-  // Title-in-frontmatter is legacy: oak now sources the page title from
-  // the body's first `# ...` heading, so a title rename arrives as a
-  // body change and the rule-1 branch above handles it. Files that
-  // still carry a stale `title:` field round-trip the comparison so
-  // editing that legacy field continues to bump `modified`.
-  const oldTitle = (oldP.data as Record<string, unknown> | undefined)?.["title"];
-  const newTitle = (newP.data as Record<string, unknown> | undefined)?.["title"];
-  return oldTitle !== newTitle;
+  return oldP.content !== newP.content;
 }
 
 // Replace (or insert) the YAML frontmatter block of `raw` with one

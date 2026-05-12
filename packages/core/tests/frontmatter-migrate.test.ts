@@ -260,6 +260,86 @@ describe("migrateFrontmatter", () => {
     expect(raw).toBe(before);
   });
 
+  it("lifts a v2 page's `title:` into a body h1 and stamps version 3", async () => {
+    const fp = resolve(scratch, "a.md");
+    const before =
+      `---\nversion: 2\nid: 01HX0000000000000000000001\n` +
+      `title: My Page\nvisibility: private\n` +
+      `created: '2020-01-01T00:00:00Z'\nmodified: '2020-01-02T00:00:00Z'\n---\n\n` +
+      `body line\n`;
+    await writeFile(fp, before);
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
+    expect(report.changed).toBe(1);
+    expect(report.entries[0]!.fromVersion).toBe(2);
+    expect(report.entries[0]!.toVersion).toBe(LATEST_FRONTMATTER_VERSION);
+    expect(report.entries[0]!.added.titleMoved).toBe("My Page");
+    const raw = await readFile(fp, "utf8");
+    expect(raw).not.toMatch(/^title:/m);
+    expect(raw).toContain("# My Page\n");
+    expect(raw).toContain("body line");
+    expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
+    // The inserted heading lands directly after the fence, then a
+    // blank line, then the preserved body.
+    expect(raw).toMatch(/---\n\n# My Page\n\nbody line\n$/);
+  });
+
+  it("drops a v2 page's `title:` when the body already has an h1", async () => {
+    const fp = resolve(scratch, "a.md");
+    const before =
+      `---\nversion: 2\nid: 01HX0000000000000000000001\n` +
+      `title: Old Frontmatter Title\n` +
+      `created: '2020-01-01T00:00:00Z'\nmodified: '2020-01-02T00:00:00Z'\n---\n\n` +
+      `# Already In Body\n\nbody line\n`;
+    await writeFile(fp, before);
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
+    expect(report.changed).toBe(1);
+    expect(report.entries[0]!.added.titleMoved).toBeUndefined();
+    const raw = await readFile(fp, "utf8");
+    expect(raw).not.toMatch(/^title:/m);
+    expect(raw).toContain("# Already In Body");
+    expect(raw).not.toContain("# Old Frontmatter Title");
+    expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
+  });
+
+  it("stamps v3 without rewriting a v2 page that already has no `title:`", async () => {
+    const fp = resolve(scratch, "a.md");
+    const before =
+      `---\nversion: 2\nid: 01HX0000000000000000000001\n` +
+      `visibility: private\n` +
+      `created: '2020-01-01T00:00:00Z'\nmodified: '2020-01-02T00:00:00Z'\n---\n\n` +
+      `# Body Title\n\nbody line\n`;
+    await writeFile(fp, before);
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
+    expect(report.changed).toBe(1);
+    expect(report.entries[0]!.added.titleMoved).toBeUndefined();
+    const raw = await readFile(fp, "utf8");
+    expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
+    expect(raw).toContain("# Body Title");
+    // Body content preserved byte-for-byte after the fence.
+    expect(raw.split("---\n").slice(2).join("---\n")).toBe(
+      "\n# Body Title\n\nbody line\n",
+    );
+  });
+
+  it("walks a legacy v1 file end-to-end: title lifted + timestamps backfilled", async () => {
+    // A pre-version-era file: no `version:`, no timestamps, title in
+    // the frontmatter, no h1 in the body. The whole 1→3 cascade
+    // should run in a single migration pass.
+    const fp = resolve(scratch, "a.md");
+    await writeFile(fp, oakPage("01HX0000000000000000000099", "body\n"));
+    const report = await migrateFrontmatter({ vaultRoot: scratch });
+    expect(report.changed).toBe(1);
+    expect(report.entries[0]!.fromVersion).toBe(1);
+    expect(report.entries[0]!.toVersion).toBe(LATEST_FRONTMATTER_VERSION);
+    expect(report.entries[0]!.added.created).toBeDefined();
+    expect(report.entries[0]!.added.modified).toBeDefined();
+    expect(report.entries[0]!.added.titleMoved).toBe("T-99");
+    const raw = await readFile(fp, "utf8");
+    expect(raw).not.toMatch(/^title:/m);
+    expect(raw).toContain("# T-99\n");
+    expect(raw).toContain(`version: ${LATEST_FRONTMATTER_VERSION}`);
+  });
+
   it("walks nested directories", async () => {
     const dir = resolve(scratch, "sub", "deeper");
     await writeFile(
