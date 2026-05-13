@@ -89,6 +89,12 @@ export type AgendaConfig = {
   weekStartsOn: 0 | 1; // 0 = Sunday, 1 = Monday (org default)
   priorities: { highest: string; lowest: string; default: string };
   skipDeadlinePrewarningIfScheduled: SkipDeadlinePrewarningPolicy;
+  // `org-agenda-skip-scheduled-if-deadline-is-shown` analogue (boolean
+  // subset). When true, suppress the SCHEDULED marker for an entry on
+  // any day where a DEADLINE marker for the same entry is already
+  // being shown — avoids a "Sched" + "Due" duplicate pair on the same
+  // bucket. oak default: true.
+  skipScheduledIfDeadlineIsShown: boolean;
 };
 
 export type AgendaQuery =

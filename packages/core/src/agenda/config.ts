@@ -20,6 +20,7 @@ export const DEFAULT_AGENDA_CONFIG: AgendaConfig = {
   weekStartsOn: 1,
   priorities: { highest: "A", lowest: "C", default: "B" },
   skipDeadlinePrewarningIfScheduled: "pre-scheduled",
+  skipScheduledIfDeadlineIsShown: true,
 };
 
 function coerceStringArray(v: unknown): string[] | undefined {
@@ -60,6 +61,9 @@ export function mergeAgendaConfig(
     skipDeadlinePrewarningIfScheduled:
       partial.skipDeadlinePrewarningIfScheduled ??
       DEFAULT_AGENDA_CONFIG.skipDeadlinePrewarningIfScheduled,
+    skipScheduledIfDeadlineIsShown:
+      partial.skipScheduledIfDeadlineIsShown ??
+      DEFAULT_AGENDA_CONFIG.skipScheduledIfDeadlineIsShown,
   };
 }
 
@@ -103,6 +107,9 @@ export async function loadAgendaConfig(rootPath: string): Promise<AgendaConfig> 
   const skip = r["skipDeadlinePrewarningIfScheduled"];
   if (skip === false || skip === true || skip === "pre-scheduled") {
     partial.skipDeadlinePrewarningIfScheduled = skip;
+  }
+  if (typeof r["skipScheduledIfDeadlineIsShown"] === "boolean") {
+    partial.skipScheduledIfDeadlineIsShown = r["skipScheduledIfDeadlineIsShown"];
   }
   if (r["priorities"] && typeof r["priorities"] === "object") {
     const p = r["priorities"] as Record<string, unknown>;

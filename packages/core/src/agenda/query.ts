@@ -120,13 +120,15 @@ export function buildWeeklyAgenda(
 
     for (const entry of entries) {
       const open = isStillOpen(entry, doneSet);
+      const scheduledItems: AgendaItem[] = [];
+      const deadlineItems: AgendaItem[] = [];
 
       // SCHEDULED
       if (entry.scheduled && open) {
         const sIso = dateOnly(entry.scheduled.iso);
         const delta = daysBetween(sIso, dateIso); // positive = day-after-scheduled
         if (sIso === dateIso) {
-          items.push({
+          scheduledItems.push({
             entry,
             date: dateIso,
             marker: "scheduled",
@@ -139,7 +141,7 @@ export function buildWeeklyAgenda(
           delta > 0 &&
           dateIso === todayIsoDate
         ) {
-          items.push({
+          scheduledItems.push({
             entry,
             date: dateIso,
             marker: "scheduled-overdue",
@@ -159,7 +161,7 @@ export function buildWeeklyAgenda(
           config.defaultDeadlineWarningDays,
         );
         if (w.onDay) {
-          items.push({
+          deadlineItems.push({
             entry,
             date: dateIso,
             marker: "deadline",
@@ -173,7 +175,7 @@ export function buildWeeklyAgenda(
           !shouldSkipPrewarning(entry, dateIso, config)
         ) {
           // Show warning lookahead only on today's bucket.
-          items.push({
+          deadlineItems.push({
             entry,
             date: dateIso,
             marker: "deadline-warning",
@@ -183,7 +185,7 @@ export function buildWeeklyAgenda(
           });
         } else if (w.overdue !== null && dateIso === todayIsoDate) {
           // Overdue shows on today (and only today).
-          items.push({
+          deadlineItems.push({
             entry,
             date: dateIso,
             marker: "deadline-overdue",
@@ -200,7 +202,7 @@ export function buildWeeklyAgenda(
           w.overdue === null &&
           dIso === dateIso
         ) {
-          items.push({
+          deadlineItems.push({
             entry,
             date: dateIso,
             marker: "deadline",
@@ -210,6 +212,20 @@ export function buildWeeklyAgenda(
           });
         }
       }
+
+      // When both SCHEDULED and DEADLINE would surface on the same day
+      // for the same entry, suppress the SCHEDULED marker — the deadline
+      // is the more urgent piece of information and the duplicate row is
+      // just noise. Mirrors emacs
+      // `org-agenda-skip-scheduled-if-deadline-is-shown = t`.
+      if (
+        config.skipScheduledIfDeadlineIsShown &&
+        scheduledItems.length > 0 &&
+        deadlineItems.length > 0
+      ) {
+        scheduledItems.length = 0;
+      }
+      items.push(...scheduledItems, ...deadlineItems);
 
       // Body active timestamps (any state).
       for (const ts of entry.bodyTimestamps) {

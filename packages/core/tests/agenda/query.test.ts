@@ -259,6 +259,138 @@ DEADLINE: <2026-05-11 Mon>
   });
 });
 
+describe("runAgenda — skipScheduledIfDeadlineIsShown", () => {
+  // Default (true) — when SCHEDULED and DEADLINE both surface on the
+  // same day for the same entry, only the deadline-side marker remains.
+
+  it("drops SCHEDULED today when DEADLINE warning fires on today", () => {
+    // scheduled = today, deadline = tomorrow → warning emits on today.
+    const TODAY = "2026-05-13";
+    const page = makePage(
+      "tasks.md",
+      `## TODO Campaign draw
+SCHEDULED: <2026-05-13 Wed> DEADLINE: <2026-05-14 Thu>
+`,
+    );
+    const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      DEFAULT_AGENDA_CONFIG,
+      new Date(`${TODAY}T08:00:00Z`),
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const ours = today.items.filter(
+      (it) => it.entry.title === "Campaign draw",
+    );
+    expect(ours).toHaveLength(1);
+    expect(ours[0]!.marker).toBe("deadline-warning");
+  });
+
+  it("drops overdue SCHEDULED when DEADLINE is also overdue on today", () => {
+    // scheduled and deadline both -4d → both bubble onto today.
+    const TODAY = "2026-05-13";
+    const page = makePage(
+      "tasks.md",
+      `## TODO Confirm multi-order support
+SCHEDULED: <2026-05-09 Sat> DEADLINE: <2026-05-09 Sat>
+`,
+    );
+    const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      DEFAULT_AGENDA_CONFIG,
+      new Date(`${TODAY}T08:00:00Z`),
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const ours = today.items.filter(
+      (it) => it.entry.title === "Confirm multi-order support",
+    );
+    expect(ours).toHaveLength(1);
+    expect(ours[0]!.marker).toBe("deadline-overdue");
+    expect(ours[0]!.daysDelta).toBe(4);
+  });
+
+  it("drops on-day SCHEDULED when DEADLINE is also on the same day", () => {
+    const TODAY = "2026-05-13";
+    const page = makePage(
+      "tasks.md",
+      `## TODO Same-day both
+SCHEDULED: <2026-05-13 Wed> DEADLINE: <2026-05-13 Wed>
+`,
+    );
+    const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      DEFAULT_AGENDA_CONFIG,
+      new Date(`${TODAY}T08:00:00Z`),
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const ours = today.items.filter(
+      (it) => it.entry.title === "Same-day both",
+    );
+    expect(ours).toHaveLength(1);
+    expect(ours[0]!.marker).toBe("deadline");
+  });
+
+  it("keeps SCHEDULED on its own day when DEADLINE is on a different day", () => {
+    // scheduled today, deadline far away (outside warning) → today
+    // shows Sched only, deadline day shows Due only — no collision.
+    const TODAY = "2026-05-13";
+    const page = makePage(
+      "tasks.md",
+      `## TODO Separate days
+SCHEDULED: <2026-05-13 Wed> DEADLINE: <2026-06-30 Tue>
+`,
+    );
+    const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      DEFAULT_AGENDA_CONFIG,
+      new Date(`${TODAY}T08:00:00Z`),
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const ours = today.items.filter(
+      (it) => it.entry.title === "Separate days",
+    );
+    expect(ours).toHaveLength(1);
+    expect(ours[0]!.marker).toBe("scheduled");
+  });
+
+  it("policy=false preserves both markers (emacs default behavior)", () => {
+    const TODAY = "2026-05-13";
+    const page = makePage(
+      "tasks.md",
+      `## TODO Campaign draw
+SCHEDULED: <2026-05-13 Wed> DEADLINE: <2026-05-14 Thu>
+`,
+    );
+    const entries = parseAgendaPage(page, DEFAULT_AGENDA_CONFIG);
+    const view = runAgenda(
+      entries,
+      { kind: "weekly", from: TODAY, days: 1 },
+      {
+        ...DEFAULT_AGENDA_CONFIG,
+        skipScheduledIfDeadlineIsShown: false,
+        // Disable the prewarning gate so the deadline-warning actually
+        // fires on today even though SCHEDULED is set.
+        skipDeadlinePrewarningIfScheduled: false,
+      },
+      new Date(`${TODAY}T08:00:00Z`),
+    );
+    const today = view.buckets.find((b) => b.key === TODAY)!;
+    const ours = today.items.filter(
+      (it) => it.entry.title === "Campaign draw",
+    );
+    expect(ours).toHaveLength(2);
+    const markers = ours.map((it) => it.marker).sort();
+    expect(markers).toEqual(["deadline-warning", "scheduled"]);
+  });
+});
+
 describe("runAgenda — todo", () => {
   it("flat-lists open TODOs by priority", () => {
     const page = makePage(
