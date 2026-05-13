@@ -10,10 +10,11 @@
 //      lost.
 //
 // Heading levels in the moved subtree are shifted so the source heading
-// becomes a direct child of the target heading. For "top of file"
-// targets — where there is no parent heading — the resulting level is
-// taken from `RefileConfig.topOfFileLevel`. We refuse a shift that
-// would push any heading past level 6.
+// becomes a direct child of the target heading. We refuse a shift that
+// would push any heading past level 6. Every refile lands under some
+// heading — oak pages always carry an h1 title, so the picker can
+// default to a file's first heading without needing a "top of file"
+// fallback.
 //
 // Refile lives in its own module rather than under `agenda/` because
 // it is a generic heading-manipulation feature, not an agenda-specific
@@ -44,8 +45,6 @@ import {
   withTimestampUpdateAndRecovery,
 } from "../timestamps.js";
 import type { OakPage, Vault } from "../types.js";
-
-import type { RefileConfig } from "./config.js";
 
 // Split `raw` into the YAML-frontmatter prefix (including its trailing
 // `---\n`) and the body. Mirrors `frontmatterLineCount`'s regex so the
@@ -95,13 +94,12 @@ export type RefileTarget = {
   // Absolute path of the destination file.
   filePath: string;
   // Display path: file basename (without `.md`) followed by the heading
-  // chain titles. Empty array means "top of file".
+  // chain titles.
   headingPath: string[];
   // Body line (1-based, frontmatter excluded) of the destination
-  // heading. null = file root (append after frontmatter, at level 0).
-  line: number | null;
-  // Heading level of the destination heading. 0 when refiling to file
-  // root (so children start at level 1).
+  // heading.
+  line: number;
+  // Heading level (1..6) of the destination heading.
   level: number;
 };
 
@@ -113,19 +111,18 @@ export type RefileResult = {
   // derivable entryId from this code path).
   sourceEntryId: string | null;
   targetRelPath: string;
-  targetLine: number | null;
+  targetLine: number;
   // 1-based body line of the target heading *after* the write — useful
   // to multi-refile callers that loop over several sources hitting the
   // same destination, since cutting a same-file source above the
   // target shifts the target's line up. Equal to `targetLine` when no
   // shift applies (cross-file, or same-file with target above all
-  // sources). Null mirrors `targetLine` for top-of-file refiles.
-  targetLineAfter: number | null;
+  // sources).
+  targetLineAfter: number;
   // 1-based body line of the moved heading in the target file, *after*
   // the write. Lets the UI scroll a peek pane to the actual landing
   // spot instead of just the destination heading (which can be far
-  // above the new content for large subtrees) or the file root (which
-  // would be wrong for top-of-file refiles that append at EOF).
+  // above the new content for large subtrees).
   insertedBodyLine: number;
   // Number of lines in the moved subtree.
   movedLines: number;
@@ -256,21 +253,14 @@ export function findHeadingsInRange(
   return result;
 }
 
-// Build the full list of refile targets across `vault`. For every page
-// we emit a "top of file" sentinel plus one entry per heading. Headings
-// are returned with their full ancestor chain (titles only) so the UI
-// can render `file ▸ Parent ▸ Heading`.
+// Build the full list of refile targets across `vault`: one entry per
+// heading, with its full ancestor chain (titles only) so the UI can
+// render `file ▸ Parent ▸ Heading`. Pages without any heading produce
+// no targets — refile always lands under some heading.
 export function collectRefileTargets(vault: Vault): RefileTarget[] {
   const out: RefileTarget[] = [];
   for (const page of vault.pages.values()) {
     const fileLabel = basenameNoExt(page.relPath);
-    out.push({
-      relPath: page.relPath,
-      filePath: page.filePath,
-      headingPath: [fileLabel],
-      line: null,
-      level: 0,
-    });
     const headings = scanHeadings(page.body);
     const stack: { level: number; title: string }[] = [];
     for (const h of headings) {
@@ -362,16 +352,12 @@ function subtreeRange(
 // Find where a new child of the heading at `targetBodyLine` (with
 // level `targetLevel`) should be inserted: the line after the
 // heading's own subtree (i.e. where the next sibling/uncle would
-// start). For top-of-file targets (line=null, level=0), this is the
-// end of the body.
+// start).
 function insertionRangeForTarget(
   body: string,
-  targetBodyLine: number | null,
+  targetBodyLine: number,
   targetLevel: number,
 ): number {
-  if (targetBodyLine === null) {
-    return body.split("\n").length;
-  }
   const r = subtreeRange(body, targetBodyLine, targetLevel);
   return r.end;
 }
@@ -411,9 +397,9 @@ function shiftHeadingLevels(lines: string[], delta: number): boolean {
 // keeps a trailing blank in the source as a sibling separator) leaves
 // behind:
 //
-//   - Top-of-file cuts (range.start === 0) have no "previous heading"
-//     to separate from, so the kept blank becomes an orphan leading
-//     blank in the new body.
+//   - Cuts starting at the first body line (range.start === 0) have no
+//     "previous heading" to separate from, so the kept blank becomes
+//     an orphan leading blank in the new body.
 //
 //   - Mid-file cuts can leave the boundary with two consecutive
 //     blanks: the separator that *preceded* the cut subtree and the
@@ -476,10 +462,7 @@ function spliceWithSeparator(
   // Trim trailing blanks from `head` (the body up to `insertAt`). They
   // would otherwise sit between the prior content and the inserted
   // subtree, producing more blank lines than the single separator we
-  // add below. This collapses three edge cases at once:
-  //   - Empty body (split → `[""]`): head becomes `[]` and we skip
-  //     the separator entirely, so a top-of-file refile into an empty
-  //     file lands at column 1, not after a leading blank.
+  // add below. This collapses two edge cases at once:
   //   - Trailing-newline body (`"text\n"` → `["text", ""]`): the
   //     stray empty trailing slot is folded away, so we emit exactly
   //     one separator instead of two consecutive blanks.
@@ -577,8 +560,7 @@ async function atomicWrite(
 export type RefileLocation = {
   filePath: string;
   relPath: string;
-  // null = top of file; level 0 in that case.
-  line: number | null;
+  line: number;
   level: number;
 };
 
@@ -586,7 +568,6 @@ export async function refile(
   sourceFilePath: string,
   source: RefileSource,
   target: RefileLocation,
-  config: RefileConfig,
   agendaConfig: AgendaConfig,
   sourceRelPath?: string,
   vaultRoot?: string,
@@ -638,7 +619,7 @@ export async function refile(
   const subtree = sourceBodyLines.slice(range.start, range.end);
 
   // Refuse refiling onto self or into own descendant.
-  if (sameFile && target.line !== null) {
+  if (sameFile) {
     if (target.line >= sourceBodyLine && target.line < range.end + 1) {
       throw new RefileError(
         target.line === sourceBodyLine
@@ -650,9 +631,8 @@ export async function refile(
   }
 
   // Verify the target heading still exists where we expect it (the
-  // caller may have collected targets from an older snapshot). For
-  // top-of-file we only require the file exists.
-  if (target.line !== null) {
+  // caller may have collected targets from an older snapshot).
+  {
     const tgtRaw = sameFile
       ? src.raw
       : (await readWithStat(target.filePath)).raw;
@@ -669,14 +649,8 @@ export async function refile(
     }
   }
 
-  // Compute level shift. For an in-file target the source becomes a
-  // direct child of the target heading (target.level + 1). For a
-  // "top of file" target there *is* no parent, so we fall back to the
-  // configured root level — defaults to `2` (oak's body convention
-  // starts at `##`); users on the emacs org-refile clamp-to-level-1
-  // convention can set `topOfFileLevel: 1` in `.oak/refile.yml`.
-  const newSourceLevel =
-    target.line === null ? config.topOfFileLevel : target.level + 1;
+  // The source becomes a direct child of the target heading.
+  const newSourceLevel = target.level + 1;
   const delta = newSourceLevel - sourceLevel;
   const shifted = subtree.slice();
   if (!shiftHeadingLevels(shifted, delta)) {
@@ -693,22 +667,21 @@ export async function refile(
     const cutBodyLines = cut.lines;
     const leadingStripped = cut.leadingStripped;
     const boundaryStripped = cut.boundaryStripped;
-    let insertBodyLine: number;
-    if (target.line === null) {
-      insertBodyLine = cutBodyLines.length;
-    } else {
-      // Translate target body line through the cut. Since we refused
-      // descendant targets, target.line never falls inside [start,end).
-      const adjusted =
-        target.line > range.end
-          ? target.line -
-            (range.end - range.start) -
-            leadingStripped -
-            boundaryStripped
-          : target.line;
-      const cutBody = cutBodyLines.join("\n");
-      insertBodyLine = insertionRangeForTarget(cutBody, adjusted, target.level);
-    }
+    // Translate target body line through the cut. Since we refused
+    // descendant targets, target.line never falls inside [start,end).
+    const adjusted =
+      target.line > range.end
+        ? target.line -
+          (range.end - range.start) -
+          leadingStripped -
+          boundaryStripped
+        : target.line;
+    const cutBody = cutBodyLines.join("\n");
+    const insertBodyLine = insertionRangeForTarget(
+      cutBody,
+      adjusted,
+      target.level,
+    );
     const merged = spliceWithSeparator(cutBodyLines, insertBodyLine, shifted);
     const updatedBody = merged.lines.join("\n");
     const updated = replaceBody(src.raw, updatedBody);
@@ -728,8 +701,8 @@ export async function refile(
     // target heading, so the target line itself moves only when it
     // sat below the cut. The orphan-blank strip and boundary collapse
     // each apply the same kind of shift whenever they ran.
-    let targetLineAfter: number | null = target.line;
-    if (target.line !== null && target.line - 1 >= range.end) {
+    let targetLineAfter = target.line;
+    if (target.line - 1 >= range.end) {
       targetLineAfter =
         target.line -
         (range.end - range.start) -

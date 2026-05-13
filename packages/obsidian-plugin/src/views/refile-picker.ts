@@ -16,7 +16,8 @@
 //   ↓ / Ctrl-n   move selection down
 //   ↑ / Ctrl-p   move selection up
 //   Enter        commit
-//                  • in file mode  → top-of-file refile
+//                  • in file mode  → refile under the file's first
+//                    heading (the page title)
 //                  • in section mode → refile under that heading
 //   Shift+Enter  in file mode → drill into the file's heading tree
 //   Esc          in section mode → back to file mode
@@ -41,14 +42,13 @@ import type OakPlugin from "../main.js";
 
 export const VIEW_TYPE_OAK_REFILE_PICKER = "oak-refile-picker";
 
-// One file's targets, keyed by relPath. `rootTarget` is always set to
-// the "(top of file)" sentinel collectRefileTargets emits per page;
-// `headings` is the file's heading list (already filtered by the
-// caller's exclude set).
+// One file's targets, keyed by relPath. `headings` is the file's
+// heading list (already filtered by the caller's exclude set); the
+// first entry is the page's h1 title and serves as the default
+// destination when the user commits in file mode without drilling.
 type FileEntry = {
   relPath: string;
   filePath: string;
-  rootTarget: RefileTarget;
   headings: RefileTarget[];
 };
 
@@ -125,26 +125,22 @@ export class OakRefilePickerView extends ItemView {
 
     const grouped = new Map<string, FileEntry>();
     for (const t of collectRefileTargets(snap.vault)) {
-      if (t.line !== null && opts.excludeKeys.has(`${t.relPath}:${t.line}`)) {
-        continue;
-      }
+      if (opts.excludeKeys.has(`${t.relPath}:${t.line}`)) continue;
       const existing = grouped.get(t.relPath);
       if (existing) {
-        if (t.line === null) existing.rootTarget = t;
-        else existing.headings.push(t);
+        existing.headings.push(t);
       } else {
         grouped.set(t.relPath, {
           relPath: t.relPath,
           filePath: t.filePath,
-          rootTarget: t.line === null ? t : (null as unknown as RefileTarget),
-          headings: t.line === null ? [] : [t],
+          headings: [t],
         });
       }
     }
-    // Drop files that somehow have no rootTarget (shouldn't happen —
-    // collectRefileTargets always emits the sentinel — but defensive).
+    // A file with no headings has no refile target — drop it from
+    // the picker.
     this.allFiles = [...grouped.values()]
-      .filter((f) => f.rootTarget !== null)
+      .filter((f) => f.headings.length > 0)
       .sort((a, b) => a.relPath.localeCompare(b.relPath));
 
     this.applyFilter();
@@ -272,7 +268,10 @@ export class OakRefilePickerView extends ItemView {
         if (idx === this.selectedIdx) row.addClass("is-selected");
         row.dataset.idx = String(idx);
         row.createSpan({ cls: "oak-refile-picker-row-path", text: fe.relPath });
-        const sectionCount = fe.headings.length;
+        // Sections excluding the title heading the file mode Enter
+        // already targets — gives a sense of how much there is to
+        // drill into.
+        const sectionCount = Math.max(0, fe.headings.length - 1);
         if (sectionCount > 0) {
           row.createSpan({
             cls: "oak-refile-picker-row-count",
@@ -336,7 +335,7 @@ export class OakRefilePickerView extends ItemView {
     this.hintEl.empty();
     if (this.mode.kind === "files") {
       this.hintEl.setText(
-        "↵ top of file · ⇧↵ pick section · ↑↓ navigate · esc cancel",
+        "↵ under page title · ⇧↵ pick section · ↑↓ navigate · esc cancel",
       );
     } else {
       this.hintEl.setText(
@@ -453,13 +452,9 @@ export class OakRefilePickerView extends ItemView {
     if (this.mode.kind === "files") {
       const fe = this.filteredFiles[this.selectedIdx];
       if (!fe) return;
-      if (drillIntoSections) {
-        if (fe.headings.length === 0) {
-          // Nothing to drill into; treat Shift-Enter the same as
-          // Enter so the user isn't stuck.
-          this.resolveAndClose(fe.rootTarget);
-          return;
-        }
+      const defaultTarget = fe.headings[0];
+      if (!defaultTarget) return;
+      if (drillIntoSections && fe.headings.length > 1) {
         this.mode = { kind: "sections", file: fe };
         this.filter = "";
         this.selectedIdx = 0;
@@ -473,7 +468,9 @@ export class OakRefilePickerView extends ItemView {
         this.renderPreview();
         return;
       }
-      this.resolveAndClose(fe.rootTarget);
+      // Either Enter, or Shift-Enter on a file with only its title
+      // heading (nothing useful to drill into) — commit to the title.
+      this.resolveAndClose(defaultTarget);
     } else {
       const h = this.filteredHeadings[this.selectedIdx];
       if (!h) return;
