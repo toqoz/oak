@@ -19,6 +19,11 @@ import { buildGraph } from "../graph.js";
 import { processBodyAssets } from "../asset-process.js";
 import { relatedView } from "../related.js";
 import { collectRedlinks } from "../redlinks.js";
+import {
+  FEED_DATES_FILENAME,
+  readFeedDates,
+  type FeedDates,
+} from "../feed-dates.js";
 import type {
   InboundEntry,
   OutboundEntry,
@@ -54,6 +59,12 @@ export type OakLoaderOptions = {
   imageWidths?: number[];
   // WebP quality 1–100. Defaults to 80.
   imageQuality?: number;
+  // Where to read first-publish dates from. `oak pub build` writes
+  // them to `<projectRoot>/feed-dates.json` (relative to the astro
+  // project root, alongside `vault/`); override here if the layout
+  // differs. Pass `null` to disable lookup entirely (entries will
+  // still carry `feed` but `published` will be null).
+  feedDatesPath?: string | null;
 };
 
 // What ends up in `entry.data`. The shape mirrors `RelatedView` from
@@ -68,6 +79,12 @@ export type OakEntryData = {
   outbound: OutboundEntry[];
   inbound: InboundEntry[];
   twoHop: TwoHopEntry[];
+  // True when the page opted into the published feed via
+  // `feed: true` in frontmatter. The matching first-publish instant
+  // is in `published` (null when the loader has no sidecar to
+  // consult, e.g. dev runs before `oak pub build`).
+  feed: boolean;
+  published: string | null;
 };
 
 function defaultIdFor(page: OakPage): string {
@@ -118,6 +135,20 @@ export async function loadOakPagesInto(
     : resolve(projectRoot, DEFAULT_ASSET_OUT_REL);
   const assetUrlPrefix = options.assetUrlPrefix ?? DEFAULT_ASSET_URL_PREFIX;
 
+  // Load the feed-dates sidecar produced by `oak pub build`. Missing
+  // file is the normal dev case (the sidecar only lands in the
+  // publish worktree), so default to empty.
+  let feedDates: FeedDates = {};
+  if (options.feedDatesPath !== null) {
+    const feedPath =
+      options.feedDatesPath !== undefined
+        ? isAbsolute(options.feedDatesPath)
+          ? options.feedDatesPath
+          : resolve(projectRoot, options.feedDatesPath)
+        : resolve(projectRoot, FEED_DATES_FILENAME);
+    feedDates = await readFeedDates(feedPath);
+  }
+
   const vault = await parseVault(options.vault);
   const graph = buildGraph(vault);
 
@@ -139,6 +170,8 @@ export async function loadOakPagesInto(
       outbound: related.outbound,
       inbound: related.inbound,
       twoHop: related.twoHop,
+      feed: page.feed,
+      published: page.feed ? feedDates[page.id] ?? null : null,
     };
 
     const processed = await processBodyAssets(

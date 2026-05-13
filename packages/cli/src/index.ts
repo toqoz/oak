@@ -643,6 +643,9 @@ async function cmdPubBuild(
     `  sync:         +${result.syncCopied} =${result.syncUnchanged} -${result.syncDeleted}\n`,
   );
   process.stdout.write(
+    `  feed:         ${result.feed.eligible} eligible (+${result.feed.added} =${result.feed.reused})\n`,
+  );
+  process.stdout.write(
     `  pushed:       ${result.pushed ? `${result.pushedRemote}/${result.branch}` : "no"}\n`,
   );
   return 0;

@@ -170,6 +170,13 @@ export type {
   PubBuildOptions,
   PubBuildResult,
 } from "./publish-branch.js";
+export {
+  FEED_DATES_FILENAME,
+  readFeedDates,
+  syncFeedDates,
+  writeFeedDates,
+} from "./feed-dates.js";
+export type { FeedDates, SyncFeedDatesResult } from "./feed-dates.js";
 export { syncPaths } from "./sync-tree.js";
 export type { SyncResult } from "./sync-tree.js";
 export { relatedView } from "./related.js";

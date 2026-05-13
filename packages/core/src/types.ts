@@ -25,6 +25,12 @@ export type PageFrontmatter = {
   // round-trip untouched.
   created?: string;
   modified?: string;
+  // Opt-in flag for inclusion in the published RSS/Atom feed. Only
+  // honoured for pages whose visibility is in {public, unlisted}; the
+  // first-publish timestamp itself lives in the publish branch's
+  // `feed-dates.json` sidecar (see `feed-dates.ts`) so the source
+  // vault stays free of build-time-derived metadata.
+  feed?: boolean;
 };
 
 export type LinkSyntax = "wiki" | "markdown";
@@ -72,6 +78,9 @@ export type OakPage = {
   // authored outside oak's write paths.
   created: string | null;
   modified: string | null;
+  // True when the page opts into the published feed. Always false
+  // when frontmatter omits the field or sets a non-boolean value.
+  feed: boolean;
   links: RawLink[];
   // Issues encountered during parsing (e.g. invalid frontmatter values).
   parseIssues: Issue[];
