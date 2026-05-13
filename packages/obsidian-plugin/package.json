@@ -2,7 +2,7 @@
   "name": "@oak/obsidian-plugin",
   "version": "0.0.0",
   "private": true,
-  "description": "Oak: local-file-first knowledge graph for Obsidian",
+  "description": "oak: local-file-first wiki for Obsidian",
   "type": "module",
   "scripts": {
     "build": "node esbuild.config.mjs",

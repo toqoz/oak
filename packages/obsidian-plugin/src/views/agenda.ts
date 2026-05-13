@@ -1,4 +1,4 @@
-// Oak agenda view — port of emacs `org-agenda` adapted for the
+// oak agenda view — port of emacs `org-agenda` adapted for the
 // Obsidian editor surface.
 //
 // Default surface is Upcoming (today + N days, weekly bucket layout).
@@ -132,7 +132,7 @@ export class OakAgendaView extends ItemView {
   }
 
   override getDisplayText(): string {
-    return "Oak — Agenda";
+    return "oak — Agenda";
   }
 
   override getIcon(): string {

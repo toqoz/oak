@@ -119,7 +119,7 @@ With no subcommand: prints help.
 ## The `_home/` directory
 
 The vault may contain a `_home/` directory for "site furniture" —
-hand-authored content that doesn't belong in the knowledge graph:
+hand-authored content that doesn't belong in the wiki:
 
 ```
 <vault>/
@@ -138,7 +138,7 @@ search, related cards, or validation as a result.
   page list. Asset references (`![[diagram.png]]`, etc.) resolve
   through the same rules pages use.
 - `_home/editor.md` is rendered as a prelude above the auto-generated
-  stats/recent/pages sections of the Obsidian "Oak — Home" view. Use
+  stats/recent/pages sections of the Obsidian "oak — Home" view. Use
   it for a personal welcome message, today's TODO, pinned links — any
   hand-authored introduction.
 

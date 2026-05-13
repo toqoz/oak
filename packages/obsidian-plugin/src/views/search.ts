@@ -53,7 +53,7 @@ export class OakSearchView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Oak — Search";
+    return "oak — Search";
   }
 
   override getIcon(): string {

@@ -5,7 +5,7 @@ TODO headings and timestamps and surfaces them in a single view.
 
 ## Opening
 
-Run `Oak: Open agenda` from the command palette, or click the calendar
+Run `oak: Open agenda` from the command palette, or click the calendar
 icon in any view's header.
 
 ## Keyboard shortcuts

@@ -2,7 +2,7 @@
   "name": "oak",
   "version": "0.0.0",
   "private": true,
-  "description": "Local-file-first knowledge graph",
+  "description": "Local-file-first wiki",
   "type": "module",
   "engines": {
     "node": ">=22.5"

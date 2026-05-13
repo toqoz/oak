@@ -38,7 +38,7 @@ export class OakSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Oak settings" });
+    containerEl.createEl("h2", { text: "oak settings" });
 
     new Setting(containerEl)
       .setName("Auto-snapshot quiet period (ms)")

@@ -1,4 +1,4 @@
-// Oak sidebar view — empty stub.
+// oak sidebar view — empty stub.
 //
 // Per-file metadata (title, visibility, id, slug, status) is
 // rendered inline in the main pane now: visibility next to the
@@ -29,7 +29,7 @@ export class OakSidebarView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Oak";
+    return "oak";
   }
 
   override getIcon(): string {

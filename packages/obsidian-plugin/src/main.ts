@@ -1700,7 +1700,7 @@ export default class OakPlugin extends Plugin {
     const button = document.createElement("button");
     button.classList.add("clickable-icon", "oak-home-button");
     button.setAttribute("type", "button");
-    button.setAttribute("aria-label", "Oak Home");
+    button.setAttribute("aria-label", "oak Home");
     setIcon(button, "house");
     button.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -1783,7 +1783,7 @@ export default class OakPlugin extends Plugin {
     const button = document.createElement("button");
     button.classList.add("clickable-icon", "oak-agenda-button");
     button.setAttribute("type", "button");
-    button.setAttribute("aria-label", "Oak Agenda");
+    button.setAttribute("aria-label", "oak Agenda");
     setIcon(button, "calendar-days");
     button.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -1850,7 +1850,7 @@ export default class OakPlugin extends Plugin {
     const button = document.createElement("button");
     button.classList.add("clickable-icon", "oak-search-button");
     button.setAttribute("type", "button");
-    button.setAttribute("aria-label", "Oak Search");
+    button.setAttribute("aria-label", "oak Search");
     setIcon(button, "search");
     button.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -1935,7 +1935,7 @@ export default class OakPlugin extends Plugin {
       btn = document.createElement("button");
       btn.classList.add("clickable-icon", "oak-actions-menu");
       btn.setAttribute("type", "button");
-      btn.setAttribute("aria-label", "Oak actions");
+      btn.setAttribute("aria-label", "oak actions");
       setIcon(btn, "ellipsis-vertical");
       btn.addEventListener("click", (ev) => {
         ev.preventDefault();

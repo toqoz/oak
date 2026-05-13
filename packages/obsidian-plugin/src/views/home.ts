@@ -1,4 +1,4 @@
-// Oak home view — a "vault index" surface that opens in the main pane.
+// oak home view — a "vault index" surface that opens in the main pane.
 //
 // Sources its data from @oak/core/homeViewModel so the on-screen
 // layout stays structurally consistent with the static index.html the
@@ -87,7 +87,7 @@ export class OakHomeView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Oak — Home";
+    return "oak — Home";
   }
 
   override getIcon(): string {
@@ -210,7 +210,7 @@ export class OakHomeView extends ItemView {
 
     // Header
     const header = root.createDiv({ cls: "oak-home-header" });
-    header.createEl("h1", { text: "Oak — Home" });
+    header.createEl("h1", { text: "oak — Home" });
     header.createEl("p", {
       cls: "oak-home-stats",
       text: `${m.stats.pages} pages · ${m.stats.public} public · ${m.stats.unlisted} unlisted · ${m.stats.private} private · ${m.stats.redLinks} red links`,

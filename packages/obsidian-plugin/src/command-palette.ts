@@ -105,11 +105,11 @@ function listOakCommands(app: App): PaletteItem[] {
   return out;
 }
 
-// Obsidian renders palette entries as `Oak: <name>`. The plugin name
-// is implicit here, so strip a leading `Oak: ` if Obsidian (or a
+// Obsidian renders palette entries as `oak: <name>`. The plugin name
+// is implicit here, so strip a leading `oak: ` if Obsidian (or a
 // future rename) ever bakes it into `command.name`.
 function stripOakLabelPrefix(name: string): string {
-  return name.replace(/^Oak:\s*/i, "");
+  return name.replace(/^oak:\s*/i, "");
 }
 
 export function openOakCommandPalette(app: App): void {

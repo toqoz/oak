@@ -72,7 +72,7 @@ import {
 import { getBool, getString, parseArgs } from "./args.js";
 import { lookupPage } from "./lookup.js";
 
-const HELP = `oak — local-file-first knowledge graph (v1, phase 1)
+const HELP = `oak — local-file-first wiki (v1, phase 1)
 
 Usage:
   oak <command> [options]

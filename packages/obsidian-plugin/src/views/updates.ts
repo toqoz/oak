@@ -1,4 +1,4 @@
-// Oak updates view — paginated "all pages by recency" surface reached
+// oak updates view — paginated "all pages by recency" surface reached
 // from the home view's `ALL (N)` Read More link. The home view caps the
 // recent list to keep the index scannable; this view shows the same
 // stream without the cap, sliced into fixed-size pages.
@@ -40,7 +40,7 @@ export class OakUpdatesView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Oak — Updates";
+    return "oak — Updates";
   }
 
   override getIcon(): string {

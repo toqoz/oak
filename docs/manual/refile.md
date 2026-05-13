@@ -16,7 +16,7 @@ heading has been identified:
 - From the editor: place the cursor inside any heading's subtree (the
   heading does not need to be a TODO, scheduled, or otherwise
   agenda-worthy heading — plain prose headings are refilable too) and
-  run `Oak: Refile heading at cursor` from the command palette.
+  run `oak: Refile heading at cursor` from the command palette.
 - From the editor with a selection: select across two or more headings
   (the selection only has to brush each subtree — clipping a body
   line of a section is enough to count it) and run the same command.

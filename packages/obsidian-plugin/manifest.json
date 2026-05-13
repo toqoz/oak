@@ -1,9 +1,9 @@
 {
   "id": "oak",
-  "name": "Oak",
+  "name": "oak",
   "version": "0.0.1",
   "minAppVersion": "1.5.0",
-  "description": "Local-file-first knowledge graph: visibility, backlinks, 2-hop, publish, checkpoint.",
+  "description": "Local-file-first wiki: visibility, backlinks, 2-hop, publish, checkpoint.",
   "author": "oak",
   "isDesktopOnly": true
 }

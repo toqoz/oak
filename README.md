@@ -1,6 +1,6 @@
 # oak
 
-A local-file-first knowledge graph.
+A local-file-first wiki.
 
 The only source of truth is plain local Markdown files. Everything
 else is derived, disposable, and rebuildable.
