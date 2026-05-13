@@ -79,6 +79,7 @@ function makeOakPage(
     rawFrontmatter: parsed.data ?? {},
     created: null,
     modified: null,
+    feed: false,
     links: [],
     parseIssues: [],
   };

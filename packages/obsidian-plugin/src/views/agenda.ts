@@ -694,7 +694,6 @@ export class OakAgendaView extends ItemView {
         title: target.entry.title,
         entryId: target.entry.entryId,
       },
-      this.plugin.refileConfig,
       this.config,
     );
   }

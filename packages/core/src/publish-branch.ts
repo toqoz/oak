@@ -51,6 +51,11 @@ import { extractAssetRefs } from "./assets.js";
 import { resolveAssetSource } from "./asset-process.js";
 import type { Visibility } from "./types.js";
 import { syncPaths } from "./sync-tree.js";
+import {
+  FEED_DATES_FILENAME,
+  syncFeedDates,
+  type SyncFeedDatesResult,
+} from "./feed-dates.js";
 import { spawn } from "node:child_process";
 
 export const DEFAULT_PUBLISH_BRANCH = "oak/pub";
@@ -426,6 +431,7 @@ export type PubBuildResult = {
   committed: boolean; // false if snapshot was already up-to-date
   pushed: boolean;
   pushedRemote: string | null;
+  feed: SyncFeedDatesResult;
 };
 
 const DEFAULT_VISIBILITY: Visibility[] = ["public", "unlisted"];
@@ -528,6 +534,15 @@ export async function pubBuild(
   const destDir = resolve(wt, VAULT_SNAPSHOT_REL);
   const syncResult = await syncPaths(vaultRoot, destDir, paths);
 
+  // Reconcile feed publication dates. Runs after the snapshot lands
+  // (the sidecar lives alongside it under the worktree root) and
+  // before the staging+commit step so any new dates are included in
+  // the same commit as the page that triggered them.
+  const feedResult = await syncFeedDates(
+    vaultRoot,
+    resolve(wt, FEED_DATES_FILENAME),
+  );
+
   // Stage everything and check for changes.
   await runGit(wt, ["add", "-A"]);
   const diff = await runGit(
@@ -586,6 +601,7 @@ export async function pubBuild(
     committed,
     pushed,
     pushedRemote: pushed ? remote : null,
+    feed: feedResult,
   };
 }
 

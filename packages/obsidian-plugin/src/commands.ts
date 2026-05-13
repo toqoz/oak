@@ -838,7 +838,6 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
           level: h.level,
           title: h.title,
         })),
-        plugin.refileConfig,
         plugin.agendaConfig,
         { sourceLeaf, isPeekSource },
       );
@@ -861,7 +860,6 @@ export async function runRefileFromEditor(plugin: OakPlugin): Promise<void> {
       level: heading.level,
       title: heading.title,
     },
-    plugin.refileConfig,
     plugin.agendaConfig,
     { sourceLeaf, isPeekSource },
   );

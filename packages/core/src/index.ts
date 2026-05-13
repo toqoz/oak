@@ -175,6 +175,13 @@ export type {
   PubBuildOptions,
   PubBuildResult,
 } from "./publish-branch.js";
+export {
+  FEED_DATES_FILENAME,
+  readFeedDates,
+  syncFeedDates,
+  writeFeedDates,
+} from "./feed-dates.js";
+export type { FeedDates, SyncFeedDatesResult } from "./feed-dates.js";
 export { syncPaths } from "./sync-tree.js";
 export type { SyncResult } from "./sync-tree.js";
 export { relatedView } from "./related.js";
@@ -249,17 +256,13 @@ export type {
 } from "./agenda/index.js";
 
 export {
-  DEFAULT_REFILE_CONFIG,
   collectRefileTargets,
   findEnclosingHeading,
   findHeadingsInRange,
-  loadRefileConfig,
-  mergeRefileConfig,
   refile,
   RefileError,
 } from "./refile/index.js";
 export type {
-  RefileConfig,
   RefileLocation,
   RefileResult,
   RefileSource,

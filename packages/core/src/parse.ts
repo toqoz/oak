@@ -184,6 +184,22 @@ export async function parsePage(
     (fm as Record<string, unknown>)["modified"],
   );
 
+  const feed = (fm as Record<string, unknown>)["feed"] === true;
+  // `feed: true` only makes sense on `public` pages — the RSS feed is
+  // the prototypical advertise channel, so a page that's `private`
+  // (never published at all) or `unlisted` (published but explicitly
+  // not advertised) opting into the feed is a contradiction. Surface
+  // it as an error so `oak validate` and the publish gate refuse the
+  // build until the user picks one side.
+  if (feed && visibility !== "public") {
+    issues.push({
+      severity: "error",
+      code: "feed-non-public",
+      message: `\`feed: true\` requires visibility: public (got \`${visibility}\`)`,
+      filePath,
+    });
+  }
+
   return {
     type: "page",
     id,
@@ -199,6 +215,7 @@ export async function parsePage(
     rawFrontmatter: fm,
     created,
     modified,
+    feed,
     links,
     parseIssues: issues,
   };

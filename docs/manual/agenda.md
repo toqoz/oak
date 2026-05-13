@@ -112,8 +112,8 @@ heading with the desired tags instead.
 
 `Shift-R` on the focused entry refiles the heading + subtree to a
 user-picked destination. Refile is a separate feature with its own
-docs and config — see [Refile](refile.md) for the full picker, peek
-pane, multi-section selection, and `.oak/refile.yml` semantics.
+docs — see [Refile](refile.md) for the full picker, peek pane, and
+multi-section selection.
 
 ## DONE behavior (`d`)
 
@@ -187,5 +187,3 @@ entry has no explicit `[#X]` — set it to the same letter you reach
 for most often so unprioritized items rank with their natural cohort.
 
 Edits to this file are picked up on the next vault refresh (`r`).
-Refile-specific knobs (e.g. the heading level for top-of-file refile)
-live in `.oak/refile.yml`; see [Refile](refile.md).

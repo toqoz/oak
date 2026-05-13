@@ -18,7 +18,6 @@ import {
   refile,
   RefileError,
   type AgendaConfig,
-  type RefileConfig,
 } from "@oak/core";
 
 import type OakPlugin from "./main.js";
@@ -61,13 +60,12 @@ export type RefileSourceDescriptor = {
 export async function refileHeadings(
   plugin: OakPlugin,
   sources: RefileSourceDescriptor[],
-  refileConfig: RefileConfig,
   agendaConfig: AgendaConfig,
   opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
 ): Promise<void> {
   if (sources.length === 0) return;
   if (sources.length === 1) {
-    await refileHeading(plugin, sources[0]!, refileConfig, agendaConfig, opts);
+    await refileHeading(plugin, sources[0]!, agendaConfig, opts);
     return;
   }
   // Exclude every selected source heading from the picker so the
@@ -126,7 +124,6 @@ export async function refileHeadings(
           line: currentTargetLine,
           level: target.level,
         },
-        refileConfig,
         agendaConfig,
         source.relPath,
         vaultRoot(plugin.app),
@@ -191,7 +188,6 @@ export async function refileHeadings(
 export async function refileHeading(
   plugin: OakPlugin,
   source: RefileSourceDescriptor,
-  refileConfig: RefileConfig,
   agendaConfig: AgendaConfig,
   opts: { sourceLeaf?: WorkspaceLeaf; isPeekSource?: boolean } = {},
 ): Promise<void> {
@@ -228,7 +224,6 @@ export async function refileHeading(
         line: target.line,
         level: target.level,
       },
-      refileConfig,
       agendaConfig,
       source.relPath,
       vaultRoot(plugin.app),
