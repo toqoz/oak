@@ -1,14 +1,31 @@
 ---
-import { getCollection } from "astro:content";
+import { getEntry, getCollection, render } from "astro:content";
 import Base from "../layouts/Base.astro";
 import PageList from "../components/PageList.astro";
 
-const docs = await getCollection("docs");
+// When `<vault>/_home/pub.md` exists the homepage collection holds a
+// single entry; render its body at `/`. Otherwise fall back to an
+// alphabetised index of every publishable page so the site root is
+// never empty.
+const home = await getEntry("home", "pub");
+const HomeContent = home ? (await render(home)).Content : null;
+
+const docs = home ? [] : await getCollection("docs");
 ---
-<Base title="Index">
-  <main>
-    <h1>Index</h1>
-    <p>{docs.length} page{docs.length === 1 ? "" : "s"}.</p>
-    <PageList entries={docs} />
-  </main>
-</Base>
+{home && HomeContent ? (
+  <Base title={home.data.title || "Home"}>
+    <main>
+      <article>
+        <HomeContent />
+      </article>
+    </main>
+  </Base>
+) : (
+  <Base title="Index">
+    <main>
+      <h1>Index</h1>
+      <p>{docs.length} page{docs.length === 1 ? "" : "s"}.</p>
+      <PageList entries={docs} />
+    </main>
+  </Base>
+)}

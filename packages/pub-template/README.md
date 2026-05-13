@@ -16,14 +16,14 @@ src/
     PageList.astro            alphabetised page list w/ backlink count
     Related.astro             backlinks + 2-hop card grid
   pages/
-    index.astro               page list
+    index.astro               homepage (from _home/pub.md) or page list
     [...slug].astro           rendered page + related cards
     redlink/[slug].astro      placeholder page per unresolved [[target]]
     search.astro              client-side editor-style search UI
     search.json.ts            corpus dump consumed by search.astro
   lib/
     search.ts                 search algorithm (pure functions)
-  content.config.ts           wires oakLoader for the docs collection
+  content.config.ts           wires oakLoader / oakHomeLoader / oakRedlinkLoader
   styles/global.css           reset + typography + light/dark
 vault/                        publishable vault snapshot (managed by oak pub build)
 astro.config.mjs              wires remarkOakLinks + the vault path

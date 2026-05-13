@@ -46,7 +46,7 @@ import {
   headCommit,
   isGitRepo,
 } from "./git.js";
-import { parseVault } from "./parse.js";
+import { parseVault, scaffoldHomeFile } from "./parse.js";
 import { extractAssetRefs } from "./assets.js";
 import { resolveAssetSource } from "./asset-process.js";
 import type { Visibility } from "./types.js";
@@ -90,6 +90,10 @@ export type PubInitResult = {
   // package.json files copied from the template. Empty in published
   // installs because pnpm/npm strips workspace specs on publish.
   rewrittenDevDeps: Array<{ file: string; name: string; resolvedTo: string }>;
+  // Vault-relative paths of `_home/*.md` files that were created
+  // (i.e. they were missing and got a minimal scaffold). Existing
+  // files are never overwritten.
+  homeScaffolded: string[];
 };
 
 export class PubError extends Error {
@@ -382,6 +386,16 @@ export async function pubInit(
     }
   }
 
+  // Scaffold `_home/pub.md` into the source vault so the user has a
+  // starting point for the published site's `/`. Idempotent: an
+  // existing file is kept. The editor-side counterpart
+  // (`_home/editor.md`) is scaffolded by `oak init` — it isn't
+  // pub-specific, so this command stays focused on the publish flow.
+  // The file lands uncommitted on the source branch — the user
+  // reviews and commits.
+  const homePub = await scaffoldHomeFile(vaultRoot, "pub");
+  const homeScaffolded = homePub ? [homePub] : [];
+
   return {
     branch,
     worktreePath: wt,
@@ -391,6 +405,7 @@ export async function pubInit(
     scaffoldCommit,
     scaffolded,
     rewrittenDevDeps,
+    homeScaffolded,
   };
 }
 
@@ -437,14 +452,13 @@ export async function collectPublishablePaths(
   const visible = new Set(visibilityFilter);
   const vault = await parseVault(vaultRoot);
   const paths = new Set<string>();
-  for (const page of vault.pages.values()) {
-    if (!visible.has(page.visibility)) continue;
-    const rel = relative(vaultRoot, page.filePath);
-    if (rel.startsWith("..") || isAbsolute(rel)) continue;
-    paths.add(rel);
 
-    for (const ref of extractAssetRefs(page.body)) {
-      const sourceAbs = resolveAssetSource(page.filePath, ref.target, vaultRoot);
+  async function addAssetsFrom(
+    body: string,
+    sourceFilePath: string,
+  ): Promise<void> {
+    for (const ref of extractAssetRefs(body)) {
+      const sourceAbs = resolveAssetSource(sourceFilePath, ref.target, vaultRoot);
       if (!sourceAbs) continue;
       const assetRel = relative(vaultRoot, sourceAbs);
       if (assetRel.startsWith("..") || isAbsolute(assetRel)) continue;
@@ -456,6 +470,24 @@ export async function collectPublishablePaths(
       }
     }
   }
+
+  for (const page of vault.pages.values()) {
+    if (!visible.has(page.visibility)) continue;
+    const rel = relative(vaultRoot, page.filePath);
+    if (rel.startsWith("..") || isAbsolute(rel)) continue;
+    paths.add(rel);
+    await addAssetsFrom(page.body, page.filePath);
+  }
+
+  // `_home/pub.md` is the published site's `/` content. It is a
+  // pub-only artifact (no id, no visibility) so we always include it
+  // when present, plus any assets it references via the same asset
+  // resolution rules pages use.
+  if (vault.homePub) {
+    paths.add(vault.homePub.relPath);
+    await addAssetsFrom(vault.homePub.body, vault.homePub.filePath);
+  }
+
   return paths;
 }
 

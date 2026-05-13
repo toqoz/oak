@@ -140,6 +140,34 @@ export type TwoHop = {
   score: number;
 };
 
+// User-authored content placed under `_home/` in the vault. Distinct
+// from `OakPage`: home content is a site/editor furniture artifact,
+// not a knowledge-graph node. No id, slug, visibility, or aliases —
+// nothing references it via wikilinks, and it lives at a fixed
+// location (the editor home pane or the publish site's `/`).
+//
+// `kind` discriminates the two consumers: `editor` (rendered by the
+// Obsidian home view above the auto-generated sections) and `pub`
+// (rendered by the publish template at the site root). Both live in
+// `_home/` so the user has one place to look.
+export type HomeContent = {
+  type: "home-content";
+  kind: "editor" | "pub";
+  filePath: string;
+  relPath: string; // e.g. "_home/pub.md"
+  title: string; // raw first H1; "" when the file has no heading
+  titlePlain: string;
+  body: string;
+  // Optional timestamps from frontmatter; null when absent. The file
+  // is otherwise frontmatter-free by convention.
+  created: string | null;
+  modified: string | null;
+  // Links extracted from the body so embeds/wikilinks render via the
+  // same remark pipeline pages go through. The home content itself is
+  // never a wikilink target, so there is no inbound side.
+  links: RawLink[];
+};
+
 export type Vault = {
   rootPath: string;
   pages: Map<string, OakPage>;
@@ -157,6 +185,12 @@ export type Vault = {
   aliasConflicts: Map<string, string[]>;
   slugConflicts: Map<string, string[]>;
   basenameConflicts: Map<string, string[]>;
+  // Optional user-authored home content from `_home/`. Either field
+  // is null when the corresponding file is missing. These are file
+  // artifacts, not pages — they don't appear in `pages` and don't
+  // participate in graph traversal.
+  homePub: HomeContent | null;
+  homeEditor: HomeContent | null;
   // Top-level issues (mount problems, parse failures).
   issues: Issue[];
 };

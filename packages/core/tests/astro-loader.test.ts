@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 
-import { loadOakPagesInto } from "../src/astro/index.js";
-import type { OakEntryData } from "../src/astro/index.js";
+import { loadOakHomeInto, loadOakPagesInto } from "../src/astro/index.js";
+import type { OakEntryData, OakHomeData } from "../src/astro/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fxRoot = (name: string) => resolve(__dirname, "fixtures", name);
@@ -141,5 +141,61 @@ describe("oakLoader / loadOakPagesInto", () => {
     for (const k of store.keys()) {
       expect(k.startsWith("page:")).toBe(true);
     }
+  });
+});
+
+describe("oakHomeLoader / loadOakHomeInto", () => {
+  let vaultDir: string;
+  beforeEach(async () => {
+    vaultDir = await mkdtemp(resolve(tmpdir(), "oak-home-load-"));
+  });
+  afterEach(async () => {
+    await rm(vaultDir, { recursive: true, force: true });
+  });
+
+  it("emits a single `pub` entry when `_home/pub.md` exists", async () => {
+    await mkdir(resolve(vaultDir, "_home"), { recursive: true });
+    await writeFile(
+      resolve(vaultDir, "_home/pub.md"),
+      "# Welcome\n\nHomepage body.\n",
+      "utf8",
+    );
+    const store = makeStore();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await loadOakHomeInto(store as any, digest, {
+      vault: vaultDir,
+      assetOutDir,
+    });
+    expect(r.loaded).toBe(true);
+    expect(store.keys()).toEqual(["pub"]);
+    const entry = store.get("pub")!;
+    const data = entry.data as unknown as OakHomeData;
+    expect(data.title).toBe("Welcome");
+    expect(entry.body).toContain("Homepage body.");
+  });
+
+  it("emits zero entries when `_home/pub.md` is missing", async () => {
+    const store = makeStore();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await loadOakHomeInto(store as any, digest, {
+      vault: vaultDir,
+      assetOutDir,
+    });
+    expect(r.loaded).toBe(false);
+    expect(store.size()).toBe(0);
+  });
+
+  it("clears the store before re-populating", async () => {
+    await mkdir(resolve(vaultDir, "_home"), { recursive: true });
+    await writeFile(resolve(vaultDir, "_home/pub.md"), "# Home\n", "utf8");
+    const store = makeStore();
+    store.set({ id: "stale", data: { title: "old" } });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await loadOakHomeInto(store as any, digest, {
+      vault: vaultDir,
+      assetOutDir,
+    });
+    expect(store.get("stale")).toBeUndefined();
+    expect(store.get("pub")).toBeDefined();
   });
 });

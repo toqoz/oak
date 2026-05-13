@@ -1,6 +1,12 @@
 export * from "./types.js";
 export { extractLinks } from "./links.js";
-export { parsePage, parseVault } from "./parse.js";
+export {
+  homeFileSpec,
+  parseHomeContent,
+  parsePage,
+  parseVault,
+  scaffoldHomeFile,
+} from "./parse.js";
 export { composePage, createPage, pathSafeFilename } from "./create.js";
 export { newId } from "./id.js";
 export type {

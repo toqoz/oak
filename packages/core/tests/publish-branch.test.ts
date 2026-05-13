@@ -211,6 +211,36 @@ describe("pubInit", () => {
     ).rejects.toMatchObject({ code: "worktree-exists" });
   });
 
+  it("scaffolds `_home/pub.md` (only) into the vault when missing", async () => {
+    const vault = await makeVault();
+    const template = await makeTemplate();
+    const r = await pubInit({ vaultRoot: vault, templateDir: template });
+
+    expect(r.homeScaffolded).toEqual(["_home/pub.md"]);
+    const pub = await readFile(resolve(vault, "_home/pub.md"), "utf8");
+    expect(pub).toBe("# Home\n");
+    // `_home/editor.md` is scaffolded by `oak init`, not by `pub init`.
+    await expect(
+      stat(resolve(vault, "_home/editor.md")),
+    ).rejects.toThrow();
+  });
+
+  it("does not overwrite an existing `_home/pub.md`", async () => {
+    const vault = await makeVault();
+    const template = await makeTemplate();
+    await mkdir(resolve(vault, "_home"), { recursive: true });
+    await writeFile(
+      resolve(vault, "_home/pub.md"),
+      "# Already authored\n",
+      "utf8",
+    );
+    const r = await pubInit({ vaultRoot: vault, templateDir: template });
+
+    expect(r.homeScaffolded).toEqual([]);
+    const pub = await readFile(resolve(vault, "_home/pub.md"), "utf8");
+    expect(pub).toBe("# Already authored\n");
+  });
+
   it("does not move HEAD off the source branch", async () => {
     const vault = await makeVault();
     const template = await makeTemplate();
@@ -277,6 +307,32 @@ describe("collectPublishablePaths", () => {
 
     const paths = await collectPublishablePaths(vault);
     expect(paths.size).toBe(0);
+  });
+
+  it("includes `_home/pub.md` and its referenced assets", async () => {
+    const vault = await makeVault();
+    await mkdir(resolve(vault, "_assets"), { recursive: true });
+    await mkdir(resolve(vault, "_home"), { recursive: true });
+    await writeFile(resolve(vault, "_assets/hero.png"), "fakepng", "utf8");
+    await writeFile(
+      resolve(vault, "_home/pub.md"),
+      "# Home\n\n![[hero.png]]\n",
+      "utf8",
+    );
+    const paths = await collectPublishablePaths(vault);
+    expect([...paths].sort()).toEqual(["_assets/hero.png", "_home/pub.md"]);
+  });
+
+  it("does not include `_home/editor.md` (editor-only artifact)", async () => {
+    const vault = await makeVault();
+    await mkdir(resolve(vault, "_home"), { recursive: true });
+    await writeFile(
+      resolve(vault, "_home/editor.md"),
+      "# Editor home\n",
+      "utf8",
+    );
+    const paths = await collectPublishablePaths(vault);
+    expect(paths.has("_home/editor.md")).toBe(false);
   });
 });
 

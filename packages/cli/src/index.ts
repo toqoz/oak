@@ -55,6 +55,7 @@ import {
   rejectAgentTask,
   reviewAgentTask,
   runAgenda,
+  scaffoldHomeFile,
   snapshot,
   startAgentTask,
   startOfWeek,
@@ -196,6 +197,10 @@ async function cmdInit(vaultPath: string): Promise<number> {
     await writeFile(mountsPath, "mounts: {}\n", "utf8");
   }
   const repo = await ensureGitRepo(vaultPath);
+  // `_home/editor.md` is the prelude rendered above the Obsidian Home
+  // pane. Scaffold an empty placeholder here so the file shows up on
+  // first launch — pub-side homepage scaffolding lives in `pub init`.
+  const editorHome = await scaffoldHomeFile(vaultPath, "editor");
   process.stdout.write(`Initialized oak vault at ${vaultPath}\n`);
   if (repo.initialized) {
     process.stdout.write(`  git: initialized fresh repo\n`);
@@ -204,6 +209,9 @@ async function cmdInit(vaultPath: string): Promise<number> {
   }
   if (repo.gitignoreUpdated) {
     process.stdout.write(`  git: .gitignore updated\n`);
+  }
+  if (editorHome) {
+    process.stdout.write(`  home: scaffolded ${editorHome}\n`);
   }
   return 0;
 }
@@ -589,6 +597,14 @@ async function cmdPubInit(
     }
   } else {
     process.stdout.write(`Scaffold skipped (branch already populated)\n`);
+  }
+  if (result.homeScaffolded.length > 0) {
+    process.stdout.write(
+      `Wrote ${result.homeScaffolded.length} _home file(s) into the vault (review and commit when ready):\n`,
+    );
+    for (const f of result.homeScaffolded) {
+      process.stdout.write(`  + ${f}\n`);
+    }
   }
   if (result.rewrittenDevDeps.length > 0) {
     process.stdout.write(

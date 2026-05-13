@@ -50,6 +50,8 @@ function makeVault(pages: OakPage[]): Vault {
     aliasConflicts: new Map(),
     slugConflicts: new Map(),
     basenameConflicts: new Map(),
+    homePub: null,
+    homeEditor: null,
     issues: [],
   };
 }

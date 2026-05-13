@@ -39,6 +39,7 @@ import {
   createPageFromRedlink,
   deleteCurrentFile,
   deleteFile,
+  editHomeFile,
   ensureScratchFile,
   extractSelectionToPage,
   openScratch,
@@ -188,6 +189,7 @@ export default class OakPlugin extends Plugin {
             await this.saveSettings();
           },
         },
+        () => editHomeFile(this, "editor"),
       );
     });
     this.registerView(VIEW_TYPE_OAK_GHOST, (leaf: WorkspaceLeaf) => {
@@ -526,6 +528,16 @@ export default class OakPlugin extends Plugin {
       id: "oak-delete-file",
       name: "Delete current file…",
       callback: () => void deleteCurrentFile(this),
+    });
+    this.addCommand({
+      id: "oak-edit-home-editor",
+      name: "Edit home for editor",
+      callback: () => void editHomeFile(this, "editor"),
+    });
+    this.addCommand({
+      id: "oak-edit-home-pub",
+      name: "Edit home for pub",
+      callback: () => void editHomeFile(this, "pub"),
     });
 
     // Editor surface: SCHEDULED/DEADLINE tooltip on TODO heading lines.

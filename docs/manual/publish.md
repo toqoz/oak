@@ -116,6 +116,44 @@ Reports whether the publish branch and worktree exist locally.
 
 With no subcommand: prints help.
 
+## The `_home/` directory
+
+The vault may contain a `_home/` directory for "site furniture" —
+hand-authored content that doesn't belong in the knowledge graph:
+
+```
+<vault>/
+└── _home/
+    ├── pub.md         the published site's `/` (homepage)
+    └── editor.md      prepended above the editor's Home pane
+```
+
+These files are **not** oak pages: they have no `id`, no
+`visibility`, no `slug`, and no aliases — nothing wikilinks to them.
+The parser keeps them off the page walk so they never appear in
+search, related cards, or validation as a result.
+
+- `_home/pub.md` is rendered at `/` by the publish template's
+  `index.astro`. When it is absent, `/` falls back to the alphabetised
+  page list. Asset references (`![[diagram.png]]`, etc.) resolve
+  through the same rules pages use.
+- `_home/editor.md` is rendered as a prelude above the auto-generated
+  stats/recent/pages sections of the Obsidian "Oak — Home" view. Use
+  it for a personal welcome message, today's TODO, pinned links — any
+  hand-authored introduction.
+
+Each file is scaffolded by the command that owns its concern, so you
+get the right file without having to run the unrelated half:
+
+| Command | Scaffolds | Default body |
+|---|---|---|
+| `oak init` | `_home/editor.md` | (empty) |
+| `oak pub init` | `_home/pub.md` | `# Home\n` |
+
+Both writes are idempotent — existing files are never overwritten —
+and land **uncommitted** so you can review and commit them with
+your normal flow.
+
 ## Visibility filter
 
 `oak pub build` only writes a page into `vault/` if its frontmatter
@@ -143,7 +181,7 @@ After `oak pub init`, the publish worktree contains:
 ├── package.json
 ├── tsconfig.json
 ├── src/
-│   ├── content.config.ts          wires oakLoader for the docs collection
+│   ├── content.config.ts          wires oakLoader, oakHomeLoader, oakRedlinkLoader
 │   ├── layouts/Base.astro         page shell (head, header, footer)
 │   ├── components/
 │   │   ├── SiteHeader.astro       top nav (Index / Search)
@@ -151,7 +189,7 @@ After `oak pub init`, the publish worktree contains:
 │   │   ├── PageList.astro         alphabetised page list w/ backlink count
 │   │   └── Related.astro          backlinks + 2-hop card grid
 │   ├── pages/
-│   │   ├── index.astro            page list
+│   │   ├── index.astro            homepage (from _home/pub.md) or page list
 │   │   ├── [...slug].astro        rendered page + related cards
 │   │   ├── redlink/[slug].astro   placeholder page per unresolved [[target]]
 │   │   ├── search.astro           client-side search UI
