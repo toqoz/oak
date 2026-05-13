@@ -1425,6 +1425,24 @@ body.oak-mode-active .cm-formatting-header {
   margin: 0 0 0.6em;
 }
 
+/* Section header row: h2 on the left, optional escape-hatch link (e.g.
+ * "Read more →") aligned to the right edge on the same baseline. The
+ * wrapper carries the header's bottom margin so the h2's own margin can
+ * collapse to zero inside the flex row. */
+.oak-home-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1em;
+  margin-bottom: 0.6em;
+}
+.oak-home-section-head > h2 {
+  margin-bottom: 0;
+}
+.oak-home-section-head > .oak-home-more {
+  margin-top: 0;
+}
+
 .oak-home-list {
   list-style: none;
   margin: 0;
@@ -1486,72 +1504,16 @@ button.oak-home-auto-snapshot-toggle:disabled {
   white-space: pre-line;
 }
 
-/* Agenda summary — DAY (N) · WEEK (N) · MONTH (N) · ALL (N) row that
- * sits between the home header and the recent stream. Each chip is a
- * link-styled button: zero counts dim so the row still reads as
- * scannable even on a quiet day. */
-.oak-home-agenda-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.4em 1.2em;
-  margin: 0 0 1.8em;
-}
-
-.oak-home-agenda-summary-label {
-  font-size: 0.78em;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 600;
-  opacity: 0.5;
-  margin-right: -0.4em; /* tighten gap against the first chip */
-}
-.oak-home-agenda-summary-label::after {
-  content: ":";
-}
-
-button.oak-home-agenda-link {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.35em;
-  padding: 0;
-  background: none;
-  border: 0;
-  box-shadow: none;
-  height: auto;
-  cursor: pointer;
-  color: var(--text-normal);
-}
-button.oak-home-agenda-link:hover {
-  color: var(--text-accent);
-}
-.oak-home-agenda-link-label {
-  font-size: 0.78em;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 600;
-}
-.oak-home-agenda-link-count {
-  font-size: 0.85em;
-  opacity: 0.65;
-  font-variant-numeric: tabular-nums;
-}
-button.oak-home-agenda-link.is-empty {
-  opacity: 0.45;
-}
-button.oak-home-agenda-link.is-empty:hover {
-  opacity: 0.85;
-}
-
-/* Title-only list used by the PUBLIC section. Inline-wrap so the page
- * roster reads as a compact roll-call rather than a long column. */
+/* Title-only list used by the PUBLIC / FEED columns. Vertical stack so
+ * each entry stays on its own line — the row container above puts the
+ * two columns side-by-side. */
 ul.oak-home-titles {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.3em 1.1em;
+  flex-direction: column;
+  gap: 0.3em;
 }
 ul.oak-home-titles li {
   margin: 0;
@@ -1560,17 +1522,26 @@ ul.oak-home-titles .oak-home-link {
   font-size: 0.95em;
 }
 
-/* Feed cards — same primitive as .oak-card-grid but locked to two
- * columns so the curated feed reads as a dedicated channel. Falls back
- * to a single column on narrow panes (e.g. split with the sidebar). */
-.oak-home-feed-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1em;
+/* Two-column row hosting PUBLIC + FEED. Each column flexes to share
+ * width when both are present; the surviving column expands when one
+ * is missing. Collapses to a single column on narrow panes. */
+.oak-home-row {
+  display: flex;
+  gap: 2em;
+  margin-bottom: 2em;
+}
+.oak-home-row > .oak-home-col {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-bottom: 0;
 }
 @media (max-width: 520px) {
-  .oak-home-feed-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .oak-home-row {
+    flex-direction: column;
+    gap: 0;
+  }
+  .oak-home-row > .oak-home-col {
+    margin-bottom: 2em;
   }
 }
 

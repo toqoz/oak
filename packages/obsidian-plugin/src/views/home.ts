@@ -14,9 +14,9 @@ import {
   type ViewStateResult,
 } from "obsidian";
 import {
-  buildTodoView,
   buildWeeklyAgenda,
   extractVaultAgendaEntries,
+  frontmatterLineCount,
   gitStatus,
   homeViewModel,
   listMountStatus,
@@ -26,7 +26,7 @@ import {
   slugify,
   todayIso,
   type AgendaConfig,
-  type AgendaEntry,
+  type AgendaItem,
   type CommitRecord,
   type GitStatus,
   type HomeContent,
@@ -55,27 +55,13 @@ export type AgendaSummaryNavigator = (
   target: AgendaSummaryTarget,
 ) => Promise<void> | void;
 
-const SUMMARY_TARGETS: AgendaSummaryTarget[] = [
-  "today",
-  "week",
-  "month",
-  "all",
-];
-
-const SUMMARY_LABELS: Record<AgendaSummaryTarget, string> = {
-  today: "DAY",
-  week: "WEEK",
-  month: "MONTH",
-  all: "ALL",
-};
-
 export class OakHomeView extends ItemView {
   private unsubscribe: (() => void) | null = null;
   private model: HomeViewModel | null = null;
   private editorHome: HomeContent | null = null;
   private gitInfo: { status: GitStatus; recent: CommitRecord[] } | null = null;
   private mounts: MountStatus[] = [];
-  private agendaSummary: Record<AgendaSummaryTarget, number> | null = null;
+  private agendaToday: AgendaItem[] | null = null;
   private rendering = false;
 
   constructor(
@@ -140,7 +126,7 @@ export class OakHomeView extends ItemView {
       this.editorHome = null;
       this.gitInfo = null;
       this.mounts = [];
-      this.agendaSummary = null;
+      this.agendaToday = null;
       this.render();
       return;
     }
@@ -152,7 +138,7 @@ export class OakHomeView extends ItemView {
         this.refreshGitAndMounts(),
       ]);
       this.model = model;
-      this.agendaSummary = this.computeAgendaSummary(snap);
+      this.agendaToday = this.computeAgendaToday(snap);
       // `snap.vault.homeEditor` is populated by parseVault from
       // `_home/editor.md`. We render the body as a prelude above the
       // auto-generated sections so the user can hand-author an intro
@@ -164,24 +150,15 @@ export class OakHomeView extends ItemView {
     }
   }
 
-  private computeAgendaSummary(
-    snap: VaultSnapshot,
-  ): Record<AgendaSummaryTarget, number> | null {
+  private computeAgendaToday(snap: VaultSnapshot): AgendaItem[] | null {
     try {
       const config = this.getAgendaConfig();
       const entries = extractVaultAgendaEntries(snap.vault, config);
       const today = todayIso(new Date());
-      return {
-        today: countAgendaItems(entries, config, today, "today"),
-        week: countAgendaItems(entries, config, today, "week"),
-        month: countAgendaItems(entries, config, today, "month"),
-        all: buildTodoView(entries, config, {}).buckets.reduce(
-          (n, b) => n + b.items.length,
-          0,
-        ),
-      };
+      const view = buildWeeklyAgenda(entries, config, today, 1, today);
+      return view.buckets[0]?.items ?? [];
     } catch (err) {
-      console.warn("oak home: agenda summary failed", err);
+      console.warn("oak home: agenda today failed", err);
       return null;
     }
   }
@@ -239,36 +216,24 @@ export class OakHomeView extends ItemView {
       text: `${m.stats.pages} pages · ${m.stats.public} public · ${m.stats.unlisted} unlisted · ${m.stats.private} private · ${m.stats.redLinks} red links`,
     });
 
-    // Agenda summary — DAY (N) · WEEK (N) · MONTH (N) · ALL (N) with
-    // each label routing to the corresponding agenda lens. Rendered
-    // even when every count is zero so the affordance is discoverable.
-    this.renderAgendaSummary(root);
+    // AGENDA — today's items rendered inline with an "Open agenda" link
+    // for the full surface. Rendered even when empty so the affordance is
+    // discoverable.
+    this.renderAgendaSection(root);
 
     // ALL (N) — pages by recency. Cards for the top slice with a
     // "Read More" link to the paginated updates view for the tail.
     if (m.recentTotal > 0) {
       const sec = root.createDiv({ cls: "oak-home-section" });
-      sec.createEl("h2", { text: `ALL (${m.recentTotal})` });
+      const more =
+        m.recentTotal > m.recent.length
+          ? {
+              text: `Read more (${m.recentTotal - m.recent.length} more) →`,
+              onClick: () => void this.openUpdates(),
+            }
+          : undefined;
+      this.renderSectionHead(sec, `ALL (${m.recentTotal})`, more);
       this.renderEntryCards(sec, m.recent);
-      if (m.recentTotal > m.recent.length) {
-        const more = sec.createEl("a", {
-          cls: "oak-home-more",
-          text: `Read more (${m.recentTotal - m.recent.length} more) →`,
-          href: "#",
-        });
-        more.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          void this.openUpdates();
-        });
-      }
-    }
-
-    // FEED — pages with `feed: true`. Two-column card grid so the
-    // richer presentation matches the channel's curated nature.
-    if (m.feed.length > 0) {
-      const sec = root.createDiv({ cls: "oak-home-section" });
-      sec.createEl("h2", { text: `FEED (${m.feed.length})` });
-      this.renderFeedGrid(sec, m.feed);
     }
 
     // Visibility groups (private hidden — the home view is a working
@@ -282,18 +247,22 @@ export class OakHomeView extends ItemView {
         grouped[p.visibility].push(p);
       }
     }
-    for (const v of ["public", "unlisted"] as const) {
-      const list = grouped[v];
-      if (list.length === 0) continue;
+    // PUBLIC + FEED side-by-side. Both are vertical title-only lists so
+    // they read as parallel roll-calls; the row collapses to stacked
+    // columns on narrow panes via CSS. Both columns render even when
+    // empty so the parallel layout stays balanced and the FEED channel
+    // remains discoverable on vaults that haven't opted any page in yet.
+    if (grouped.public.length > 0 || m.feed.length > 0) {
+      const row = root.createDiv({ cls: "oak-home-row" });
+      this.renderPublicFeedColumn(row, "PUBLIC", grouped.public);
+      this.renderPublicFeedColumn(row, "FEED", m.feed);
+    }
+    // Unlisted keeps the expanded entry layout so backlinks/excerpts
+    // stay visible on those drafts.
+    if (grouped.unlisted.length > 0) {
       const sec = root.createDiv({ cls: "oak-home-section" });
-      sec.createEl("h2", {
-        text: `${v[0]!.toUpperCase()}${v.slice(1)} (${list.length})`,
-      });
-      // Public is a flat title-only roll-call; unlisted keeps the
-      // expanded entry layout so backlinks/excerpts stay visible on
-      // those drafts.
-      if (v === "public") this.renderTitleList(sec, list);
-      else this.renderEntryList(sec, list);
+      sec.createEl("h2", { text: `Unlisted (${grouped.unlisted.length})` });
+      this.renderEntryList(sec, grouped.unlisted);
     }
 
     this.renderUnmanagedSection(root, m.unmanaged);
@@ -302,29 +271,125 @@ export class OakHomeView extends ItemView {
     this.renderExitFooter(root);
   }
 
-  private renderAgendaSummary(parent: HTMLElement): void {
-    const counts = this.agendaSummary;
-    if (!counts) return;
-    const sec = parent.createDiv({ cls: "oak-home-agenda-summary" });
-    sec.createEl("span", {
-      cls: "oak-home-agenda-summary-label",
-      text: "Agenda",
+  private renderAgendaSection(parent: HTMLElement): void {
+    const items = this.agendaToday;
+    if (!items) return;
+    const sec = parent.createDiv({ cls: "oak-home-section" });
+    this.renderSectionHead(sec, `AGENDA (${items.length})`, {
+      text: "Open agenda →",
+      onClick: () => void this.openAgendaWith("today"),
     });
-    for (const t of SUMMARY_TARGETS) {
-      const btn = sec.createEl("button", { cls: "oak-home-agenda-link" });
-      btn.createEl("span", {
-        cls: "oak-home-agenda-link-label",
-        text: SUMMARY_LABELS[t],
+    if (items.length === 0) {
+      sec.createEl("p", {
+        cls: "oak-home-meta",
+        text: "Nothing on today.",
       });
-      btn.createEl("span", {
-        cls: "oak-home-agenda-link-count",
-        text: `(${counts[t]})`,
+      return;
+    }
+    const list = sec.createDiv({ cls: "oak-agenda-list" });
+    for (const item of items) {
+      this.renderAgendaTodayItem(list, item);
+    }
+  }
+
+  // Section header with optional right-aligned action link (e.g.
+  // "Read more →" / "Open agenda →"). Action sits on the same baseline
+  // as the h2 so the section title and its escape hatch read as one row.
+  private renderSectionHead(
+    sec: HTMLElement,
+    title: string,
+    action?: { text: string; onClick: () => void },
+  ): void {
+    const head = sec.createDiv({ cls: "oak-home-section-head" });
+    head.createEl("h2", { text: title });
+    if (action) {
+      const link = head.createEl("a", {
+        cls: "oak-home-more",
+        text: action.text,
+        href: "#",
       });
-      if (counts[t] === 0) btn.addClass("is-empty");
-      btn.addEventListener("click", () => {
-        void this.openAgendaWith(t);
+      link.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        action.onClick();
       });
     }
+  }
+
+  private renderAgendaTodayItem(parent: HTMLElement, item: AgendaItem): void {
+    const row = parent.createDiv({ cls: "oak-agenda-item" });
+    row.createEl("span", {
+      cls: "oak-agenda-cat",
+      text: item.entry.category,
+    });
+    if (item.time) {
+      row.createEl("span", {
+        cls: "oak-agenda-time",
+        text: item.endTime ? `${item.time}–${item.endTime}` : item.time,
+      });
+    }
+    if (item.marker) {
+      const label = agendaMarkerLabel(item);
+      if (label.length > 0) {
+        row.createEl("span", {
+          cls: `oak-agenda-marker oak-marker-${item.marker}`,
+          text: label,
+        });
+      }
+    }
+    if (item.entry.todoState) {
+      row.createEl("span", {
+        cls: `oak-agenda-keyword oak-keyword-${item.entry.todoState.toLowerCase()}`,
+        text: item.entry.todoState,
+      });
+    }
+    if (item.entry.priority) {
+      row.createEl("span", {
+        cls: `oak-agenda-priority oak-priority-${item.entry.priority.toLowerCase()}`,
+        text: `#${item.entry.priority}`,
+      });
+    }
+    row.createEl("span", {
+      cls: "oak-agenda-item-title",
+      text: item.entry.title,
+    });
+    if (item.entry.tags.length > 0) {
+      const tagWrap = row.createEl("span", { cls: "oak-agenda-tag-wrap" });
+      for (const tag of item.entry.tags) {
+        tagWrap.createEl("span", { cls: "oak-agenda-tag", text: tag });
+      }
+    }
+    row.addEventListener("click", () => {
+      void this.openAgendaEntry(item);
+    });
+  }
+
+  private async openAgendaEntry(item: AgendaItem): Promise<void> {
+    const file = this.app2.vault.getAbstractFileByPath(item.entry.relPath);
+    if (!(file instanceof TFile)) {
+      new Notice(`oak: ${item.entry.relPath} not found`);
+      return;
+    }
+    // `entry.line` is body-relative (1-based, post-frontmatter). Translate
+    // into a 0-based file-relative line so `openFile` can scroll the
+    // viewport to the heading rather than the file top — matches what
+    // OakAgendaView does when opening an item.
+    const raw = await this.app2.vault.cachedRead(file);
+    const fileLine = Math.max(0, item.entry.line - 1 + frontmatterLineCount(raw));
+    await this.openFile(file, { newTab: false, line: fileLine });
+  }
+
+  private renderPublicFeedColumn(
+    parent: HTMLElement,
+    label: string,
+    entries: HomeEntry[],
+  ): void {
+    const sec = parent.createDiv({ cls: "oak-home-section oak-home-col" });
+    sec.createEl("h2", { text: `${label} (${entries.length})` });
+    if (entries.length === 0) {
+      sec.createEl("p", { cls: "oak-home-meta", text: "—" });
+      return;
+    }
+    this.renderTitleList(sec, entries);
   }
 
   private renderTitleList(parent: HTMLElement, entries: HomeEntry[]): void {
@@ -339,39 +404,6 @@ export class OakHomeView extends ItemView {
       link.addEventListener("click", (ev) => {
         ev.preventDefault();
         this.openByRelPath(e.vaultRelPath, ev.metaKey || ev.ctrlKey);
-      });
-    }
-  }
-
-  private renderFeedGrid(parent: HTMLElement, entries: HomeEntry[]): void {
-    const grid = parent.createDiv({ cls: "oak-home-feed-grid" });
-    for (const e of entries) {
-      const card = grid.createDiv({ cls: "oak-card oak-home-feed-card" });
-      card.setAttr("role", "link");
-      card.setAttr("tabindex", "0");
-      card.createEl("div", { cls: "oak-card-title", text: e.title });
-      if (e.excerpt.length > 0) {
-        card.createEl("p", { cls: "oak-card-excerpt", text: e.excerpt });
-      }
-      const metaParts: string[] = [];
-      if (e.updatedAt) metaParts.push(`updated ${e.updatedAt.slice(0, 10)}`);
-      if (e.inboundCount > 0) metaParts.push(`${e.inboundCount} backlinks`);
-      if (metaParts.length > 0) {
-        card.createEl("div", {
-          cls: "oak-card-meta",
-          text: metaParts.join(" · "),
-        });
-      }
-      const open = (newTab: boolean) =>
-        this.openByRelPath(e.vaultRelPath, newTab);
-      card.addEventListener("click", (ev) => {
-        open(ev.metaKey || ev.ctrlKey);
-      });
-      card.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter") {
-          ev.preventDefault();
-          open(ev.metaKey || ev.ctrlKey);
-        }
       });
     }
   }
@@ -677,38 +709,23 @@ export class OakHomeView extends ItemView {
   }
 }
 
-// Total item count across every weekly-agenda bucket for the given span.
-// Mirrors the count the user sees after clicking the corresponding label
-// in the agenda view — same query, same items.
-function countAgendaItems(
-  entries: AgendaEntry[],
-  config: AgendaConfig,
-  today: string,
-  span: "today" | "week" | "month",
-): number {
-  const days = spanDays(span, today, config.weekStartsOn);
-  const view = buildWeeklyAgenda(entries, config, today, days, today);
-  return view.buckets.reduce((n, b) => n + b.items.length, 0);
-}
-
-// Duplicated from the agenda view (kept tiny so the home view doesn't
-// pull the whole agenda module surface). DAY = 1 day; WEEK / MONTH snap
-// to the calendar boundary so the summary shrinks as the period
-// progresses ("what's left this week").
-function spanDays(
-  span: "today" | "week" | "month",
-  todayIso: string,
-  weekStartsOn: 0 | 1,
-): number {
-  if (span === "today") return 1;
-  const y = parseInt(todayIso.slice(0, 4), 10);
-  const m = parseInt(todayIso.slice(5, 7), 10);
-  const d = parseInt(todayIso.slice(8, 10), 10);
-  if (span === "week") {
-    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-    const offsetFromStart = (dow - weekStartsOn + 7) % 7;
-    return 7 - offsetFromStart;
+// Inline-friendly marker label. Mirrors OakAgendaView.markerLabel so the
+// home agenda section reads the same as the dedicated agenda view.
+function agendaMarkerLabel(item: AgendaItem): string {
+  switch (item.marker) {
+    case "scheduled":
+      return "Sched";
+    case "scheduled-overdue":
+      return `Sched +${item.daysDelta}d`;
+    case "deadline":
+      return "Due";
+    case "deadline-warning":
+      return `Due +${item.daysDelta}d`;
+    case "deadline-overdue":
+      return `Due −${item.daysDelta}d`;
+    case "timestamp":
+      return "";
+    default:
+      return "";
   }
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return lastDay - d + 1;
 }
