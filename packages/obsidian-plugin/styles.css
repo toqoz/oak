@@ -1388,6 +1388,31 @@ body.oak-mode-active .cm-formatting-header {
   font-size: 0.9em;
 }
 
+.oak-home-editor {
+  position: relative;
+  margin-bottom: 1.5em;
+}
+
+.oak-home-editor.is-empty {
+  /* Reserve just enough room so the floating "Customize" link doesn't
+     collapse into the header or push it on hover. */
+  min-height: 1.5em;
+}
+
+.oak-home-customize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 0.8em;
+  opacity: 0.4;
+  text-decoration: none;
+  color: var(--text-muted);
+}
+.oak-home-customize:hover {
+  opacity: 0.9;
+  text-decoration: underline;
+}
+
 .oak-home-section {
   margin-bottom: 2em;
 }

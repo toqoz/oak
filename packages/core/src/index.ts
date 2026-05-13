@@ -1,6 +1,7 @@
 export * from "./types.js";
 export { extractLinks } from "./links.js";
 export {
+  homeFileSpec,
   parseHomeContent,
   parsePage,
   parseVault,

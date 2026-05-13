@@ -19,6 +19,7 @@ import {
   composePage,
   findEnclosingHeading,
   frontmatterLineCount,
+  homeFileSpec,
   migrateFrontmatter,
   parseVault,
   partitionIssues,
@@ -440,6 +441,35 @@ export async function createPageFromRedlink(plugin: OakPlugin): Promise<void> {
   const ans = await askNewPage(plugin.app, initial);
   if (!ans) return;
   await writeNewPage(plugin, ans);
+}
+
+// Open `_home/<kind>.md` for editing, scaffolding the file (and the
+// `_home/` folder) on first use so the user never has to discover the
+// path themselves. Goes through the indexed `vault.create` so the
+// metadata cache picks the file up immediately and the home view's
+// prelude refreshes on the next vault snapshot.
+export async function editHomeFile(
+  plugin: OakPlugin,
+  kind: "pub" | "editor",
+): Promise<void> {
+  const spec = homeFileSpec(kind);
+  let file = plugin.app.vault.getAbstractFileByPath(spec.relPath);
+  if (!(file instanceof TFile)) {
+    try {
+      const dir = spec.relPath.split("/").slice(0, -1).join("/");
+      if (dir && !plugin.app.vault.getAbstractFileByPath(dir)) {
+        await plugin.app.vault.createFolder(dir);
+      }
+      file = await plugin.app.vault.create(spec.relPath, spec.scaffoldBody);
+    } catch (err) {
+      new Notice(`oak: edit home failed — ${(err as Error).message}`);
+      return;
+    }
+  }
+  if (file instanceof TFile) {
+    await plugin.app.workspace.getLeaf(false).openFile(file);
+    plugin.state.scheduleRefresh();
+  }
 }
 
 export async function runValidate(plugin: OakPlugin): Promise<void> {

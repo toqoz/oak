@@ -441,6 +441,21 @@ const HOME_SCAFFOLD_BODIES: Record<"pub" | "editor", string> = {
   editor: "",
 };
 
+// Public spec for a `_home/*.md` file: vault-relative path plus the
+// scaffold body to write when the file is missing. Lets callers that
+// can't go through `scaffoldHomeFile` (e.g. the Obsidian plugin, which
+// must create files through the indexed vault API to keep the metadata
+// cache in sync) reuse the same path + body without duplicating the
+// constants.
+export function homeFileSpec(
+  kind: "pub" | "editor",
+): { relPath: string; scaffoldBody: string } {
+  return {
+    relPath: `${HOME_DIR}/${HOME_FILES[kind]}`,
+    scaffoldBody: HOME_SCAFFOLD_BODIES[kind],
+  };
+}
+
 // Write `_home/<kind>.md` with its minimal scaffold body if the file
 // does not already exist. Idempotent: returns the vault-relative path
 // when a file was created, null when one was already present.

@@ -57,6 +57,7 @@ export class OakHomeView extends ItemView {
       get: () => number;
       set: (ms: number) => Promise<void>;
     },
+    private editEditorHome: () => Promise<void> | void,
   ) {
     super(leaf);
   }
@@ -215,18 +216,39 @@ export class OakHomeView extends ItemView {
 
   private renderEditorHome(parent: HTMLElement): void {
     const home = this.editorHome;
-    if (!home || home.body.trim().length === 0) return;
+    const hasBody = !!home && home.body.trim().length > 0;
+    // Always render the section so the floating "Customize" affordance
+    // sits in a consistent spot — top-right of the prelude — whether or
+    // not the user has filled in `_home/editor.md` yet.
     const sec = parent.createDiv({ cls: "oak-home-editor" });
-    // sourcePath drives how relative links and embeds resolve. Passing
-    // `_home/editor.md` lets `[[wiki]]` and `![[image]]` references
-    // resolve against the vault's normal lookup.
-    void MarkdownRenderer.render(
-      this.app2,
-      home.body,
-      sec,
-      home.relPath,
-      this,
+    if (!hasBody) sec.addClass("is-empty");
+
+    const link = sec.createEl("a", {
+      cls: "oak-home-customize",
+      text: "Customize",
+      href: "#",
+    });
+    link.setAttr(
+      "aria-label",
+      "Edit _home/editor.md (the prelude shown above this view)",
     );
+    link.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void this.editEditorHome();
+    });
+
+    if (hasBody && home) {
+      // sourcePath drives how relative links and embeds resolve.
+      // Passing `_home/editor.md` lets `[[wiki]]` and `![[image]]`
+      // references resolve against the vault's normal lookup.
+      void MarkdownRenderer.render(
+        this.app2,
+        home.body,
+        sec,
+        home.relPath,
+        this,
+      );
+    }
   }
 
   private renderUnmanagedSection(

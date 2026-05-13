@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-import { parseVault, scaffoldHomeFile } from "../src/parse.js";
+import { homeFileSpec, parseVault, scaffoldHomeFile } from "../src/parse.js";
 import {
   buildGraph,
   getBacklinks,
@@ -244,6 +244,17 @@ describe("_home content", () => {
     expect(first).toBe("_home/editor.md");
     const second = await scaffoldHomeFile(scratchDir, "editor");
     expect(second).toBeNull();
+  });
+
+  it("homeFileSpec returns the vault-relative path and scaffold body for each kind", () => {
+    expect(homeFileSpec("editor")).toEqual({
+      relPath: "_home/editor.md",
+      scaffoldBody: "",
+    });
+    expect(homeFileSpec("pub")).toEqual({
+      relPath: "_home/pub.md",
+      scaffoldBody: "# Home\n",
+    });
   });
 });
 
