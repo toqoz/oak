@@ -24,10 +24,15 @@ import {
 } from "./settings.js";
 import { VaultState, type VaultSnapshot } from "./state.js";
 import { OakSidebarView, VIEW_TYPE_OAK } from "./views/sidebar.js";
-import { OakHomeView, VIEW_TYPE_OAK_HOME } from "./views/home.js";
+import {
+  OakHomeView,
+  VIEW_TYPE_OAK_HOME,
+  type AgendaSummaryTarget,
+} from "./views/home.js";
 import { OakGhostView, VIEW_TYPE_OAK_GHOST } from "./views/ghost.js";
 import { OakAgendaView, VIEW_TYPE_OAK_AGENDA } from "./views/agenda.js";
 import { OakSearchView, VIEW_TYPE_OAK_SEARCH } from "./views/search.js";
+import { OakUpdatesView, VIEW_TYPE_OAK_UPDATES } from "./views/updates.js";
 import {
   OakRefilePickerView,
   VIEW_TYPE_OAK_REFILE_PICKER,
@@ -190,6 +195,9 @@ export default class OakPlugin extends Plugin {
           },
         },
         () => editHomeFile(this, "editor"),
+        () => this.agendaConfig,
+        (target) => this.openAgendaWith(target),
+        () => this.openUpdates(),
       );
     });
     this.registerView(VIEW_TYPE_OAK_GHOST, (leaf: WorkspaceLeaf) => {
@@ -208,6 +216,9 @@ export default class OakPlugin extends Plugin {
     });
     this.registerView(VIEW_TYPE_OAK_AGENDA, (leaf: WorkspaceLeaf) => {
       return new OakAgendaView(leaf, this.state, this.app, openFile, this);
+    });
+    this.registerView(VIEW_TYPE_OAK_UPDATES, (leaf: WorkspaceLeaf) => {
+      return new OakUpdatesView(leaf, this.state, this.app, openFile);
     });
     this.registerView(VIEW_TYPE_OAK_SEARCH, (leaf: WorkspaceLeaf) => {
       return new OakSearchView(
@@ -2407,6 +2418,33 @@ export default class OakPlugin extends Plugin {
     const leaf =
       this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
     await this.navigateLeafToAgenda(leaf);
+  }
+
+  // Navigate to the agenda view and pre-select a specific lens. Used by
+  // the home view's agenda summary so clicking DAY (N) lands on the
+  // matching span without an extra interaction.
+  async openAgendaWith(target: AgendaSummaryTarget): Promise<void> {
+    await this.openAgenda();
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OAK_AGENDA);
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (!(view instanceof OakAgendaView)) continue;
+      if (target === "all") view.showAllTodos();
+      else view.setUpcomingSpan(target);
+    }
+  }
+
+  async openUpdates(): Promise<void> {
+    const leaf =
+      this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf("tab");
+    if (!this.isLeafAlive(leaf)) return;
+    if (leaf.view.getViewType() === VIEW_TYPE_OAK_UPDATES) {
+      this.app.workspace.revealLeaf(leaf);
+      return;
+    }
+    await leaf.setViewState({ type: VIEW_TYPE_OAK_UPDATES, active: true });
+    this.app.workspace.revealLeaf(leaf);
+    void this.state.refresh();
   }
 }
 

@@ -14,6 +14,9 @@ import {
   type ViewStateResult,
 } from "obsidian";
 import {
+  buildTodoView,
+  buildWeeklyAgenda,
+  extractVaultAgendaEntries,
   gitStatus,
   homeViewModel,
   listMountStatus,
@@ -21,6 +24,9 @@ import {
   plainTextTitle,
   recentCommits,
   slugify,
+  todayIso,
+  type AgendaConfig,
+  type AgendaEntry,
   type CommitRecord,
   type GitStatus,
   type HomeContent,
@@ -39,12 +45,37 @@ import { DEFAULT_AUTO_SNAPSHOT_INTERVAL_MS } from "../settings.js";
 
 export const VIEW_TYPE_OAK_HOME = "oak-home";
 
+export type AgendaSummaryTarget = "today" | "week" | "month" | "all";
+
+// Mirrors the public surface of OakAgendaView's setUpcomingSpan /
+// showAllTodos pair plus the navigation step. Returned as an unawaitable
+// callback so the home view doesn't need a direct dependency on the
+// agenda view module.
+export type AgendaSummaryNavigator = (
+  target: AgendaSummaryTarget,
+) => Promise<void> | void;
+
+const SUMMARY_TARGETS: AgendaSummaryTarget[] = [
+  "today",
+  "week",
+  "month",
+  "all",
+];
+
+const SUMMARY_LABELS: Record<AgendaSummaryTarget, string> = {
+  today: "DAY",
+  week: "WEEK",
+  month: "MONTH",
+  all: "ALL",
+};
+
 export class OakHomeView extends ItemView {
   private unsubscribe: (() => void) | null = null;
   private model: HomeViewModel | null = null;
   private editorHome: HomeContent | null = null;
   private gitInfo: { status: GitStatus; recent: CommitRecord[] } | null = null;
   private mounts: MountStatus[] = [];
+  private agendaSummary: Record<AgendaSummaryTarget, number> | null = null;
   private rendering = false;
 
   constructor(
@@ -58,6 +89,9 @@ export class OakHomeView extends ItemView {
       set: (ms: number) => Promise<void>;
     },
     private editEditorHome: () => Promise<void> | void,
+    private getAgendaConfig: () => AgendaConfig,
+    private openAgendaWith: AgendaSummaryNavigator,
+    private openUpdates: () => Promise<void> | void,
   ) {
     super(leaf);
   }
@@ -106,6 +140,7 @@ export class OakHomeView extends ItemView {
       this.editorHome = null;
       this.gitInfo = null;
       this.mounts = [];
+      this.agendaSummary = null;
       this.render();
       return;
     }
@@ -117,6 +152,7 @@ export class OakHomeView extends ItemView {
         this.refreshGitAndMounts(),
       ]);
       this.model = model;
+      this.agendaSummary = this.computeAgendaSummary(snap);
       // `snap.vault.homeEditor` is populated by parseVault from
       // `_home/editor.md`. We render the body as a prelude above the
       // auto-generated sections so the user can hand-author an intro
@@ -125,6 +161,28 @@ export class OakHomeView extends ItemView {
       this.render();
     } finally {
       this.rendering = false;
+    }
+  }
+
+  private computeAgendaSummary(
+    snap: VaultSnapshot,
+  ): Record<AgendaSummaryTarget, number> | null {
+    try {
+      const config = this.getAgendaConfig();
+      const entries = extractVaultAgendaEntries(snap.vault, config);
+      const today = todayIso(new Date());
+      return {
+        today: countAgendaItems(entries, config, today, "today"),
+        week: countAgendaItems(entries, config, today, "week"),
+        month: countAgendaItems(entries, config, today, "month"),
+        all: buildTodoView(entries, config, {}).buckets.reduce(
+          (n, b) => n + b.items.length,
+          0,
+        ),
+      };
+    } catch (err) {
+      console.warn("oak home: agenda summary failed", err);
+      return null;
     }
   }
 
@@ -181,12 +239,36 @@ export class OakHomeView extends ItemView {
       text: `${m.stats.pages} pages · ${m.stats.public} public · ${m.stats.unlisted} unlisted · ${m.stats.private} private · ${m.stats.redLinks} red links`,
     });
 
-    // Recent — rendered as cards, sharing the same look as the
-    // per-page "Related" cards (.oak-card / .oak-card-grid).
-    if (m.recent.length > 0) {
+    // Agenda summary — DAY (N) · WEEK (N) · MONTH (N) · ALL (N) with
+    // each label routing to the corresponding agenda lens. Rendered
+    // even when every count is zero so the affordance is discoverable.
+    this.renderAgendaSummary(root);
+
+    // ALL (N) — pages by recency. Cards for the top slice with a
+    // "Read More" link to the paginated updates view for the tail.
+    if (m.recentTotal > 0) {
       const sec = root.createDiv({ cls: "oak-home-section" });
-      sec.createEl("h2", { text: "Recent updates" });
+      sec.createEl("h2", { text: `ALL (${m.recentTotal})` });
       this.renderEntryCards(sec, m.recent);
+      if (m.recentTotal > m.recent.length) {
+        const more = sec.createEl("a", {
+          cls: "oak-home-more",
+          text: `Read more (${m.recentTotal - m.recent.length} more) →`,
+          href: "#",
+        });
+        more.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          void this.openUpdates();
+        });
+      }
+    }
+
+    // FEED — pages with `feed: true`. Two-column card grid so the
+    // richer presentation matches the channel's curated nature.
+    if (m.feed.length > 0) {
+      const sec = root.createDiv({ cls: "oak-home-section" });
+      sec.createEl("h2", { text: `FEED (${m.feed.length})` });
+      this.renderFeedGrid(sec, m.feed);
     }
 
     // Visibility groups (private hidden — the home view is a working
@@ -204,14 +286,94 @@ export class OakHomeView extends ItemView {
       const list = grouped[v];
       if (list.length === 0) continue;
       const sec = root.createDiv({ cls: "oak-home-section" });
-      sec.createEl("h2", { text: `${v[0]!.toUpperCase()}${v.slice(1)} (${list.length})` });
-      this.renderEntryList(sec, list);
+      sec.createEl("h2", {
+        text: `${v[0]!.toUpperCase()}${v.slice(1)} (${list.length})`,
+      });
+      // Public is a flat title-only roll-call; unlisted keeps the
+      // expanded entry layout so backlinks/excerpts stay visible on
+      // those drafts.
+      if (v === "public") this.renderTitleList(sec, list);
+      else this.renderEntryList(sec, list);
     }
 
     this.renderUnmanagedSection(root, m.unmanaged);
     this.renderGitSection(root);
     this.renderExternalSection(root);
     this.renderExitFooter(root);
+  }
+
+  private renderAgendaSummary(parent: HTMLElement): void {
+    const counts = this.agendaSummary;
+    if (!counts) return;
+    const sec = parent.createDiv({ cls: "oak-home-agenda-summary" });
+    sec.createEl("span", {
+      cls: "oak-home-agenda-summary-label",
+      text: "Agenda",
+    });
+    for (const t of SUMMARY_TARGETS) {
+      const btn = sec.createEl("button", { cls: "oak-home-agenda-link" });
+      btn.createEl("span", {
+        cls: "oak-home-agenda-link-label",
+        text: SUMMARY_LABELS[t],
+      });
+      btn.createEl("span", {
+        cls: "oak-home-agenda-link-count",
+        text: `(${counts[t]})`,
+      });
+      if (counts[t] === 0) btn.addClass("is-empty");
+      btn.addEventListener("click", () => {
+        void this.openAgendaWith(t);
+      });
+    }
+  }
+
+  private renderTitleList(parent: HTMLElement, entries: HomeEntry[]): void {
+    const ul = parent.createEl("ul", { cls: "oak-home-titles" });
+    for (const e of entries) {
+      const li = ul.createEl("li");
+      const link = li.createEl("a", {
+        cls: "oak-home-link",
+        text: e.title,
+        href: "#",
+      });
+      link.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        this.openByRelPath(e.vaultRelPath, ev.metaKey || ev.ctrlKey);
+      });
+    }
+  }
+
+  private renderFeedGrid(parent: HTMLElement, entries: HomeEntry[]): void {
+    const grid = parent.createDiv({ cls: "oak-home-feed-grid" });
+    for (const e of entries) {
+      const card = grid.createDiv({ cls: "oak-card oak-home-feed-card" });
+      card.setAttr("role", "link");
+      card.setAttr("tabindex", "0");
+      card.createEl("div", { cls: "oak-card-title", text: e.title });
+      if (e.excerpt.length > 0) {
+        card.createEl("p", { cls: "oak-card-excerpt", text: e.excerpt });
+      }
+      const metaParts: string[] = [];
+      if (e.updatedAt) metaParts.push(`updated ${e.updatedAt.slice(0, 10)}`);
+      if (e.inboundCount > 0) metaParts.push(`${e.inboundCount} backlinks`);
+      if (metaParts.length > 0) {
+        card.createEl("div", {
+          cls: "oak-card-meta",
+          text: metaParts.join(" · "),
+        });
+      }
+      const open = (newTab: boolean) =>
+        this.openByRelPath(e.vaultRelPath, newTab);
+      card.addEventListener("click", (ev) => {
+        open(ev.metaKey || ev.ctrlKey);
+      });
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          open(ev.metaKey || ev.ctrlKey);
+        }
+      });
+    }
   }
 
   private renderEditorHome(parent: HTMLElement): void {
@@ -513,4 +675,40 @@ export class OakHomeView extends ItemView {
       void this.openFile(file, { newTab });
     }
   }
+}
+
+// Total item count across every weekly-agenda bucket for the given span.
+// Mirrors the count the user sees after clicking the corresponding label
+// in the agenda view — same query, same items.
+function countAgendaItems(
+  entries: AgendaEntry[],
+  config: AgendaConfig,
+  today: string,
+  span: "today" | "week" | "month",
+): number {
+  const days = spanDays(span, today, config.weekStartsOn);
+  const view = buildWeeklyAgenda(entries, config, today, days, today);
+  return view.buckets.reduce((n, b) => n + b.items.length, 0);
+}
+
+// Duplicated from the agenda view (kept tiny so the home view doesn't
+// pull the whole agenda module surface). DAY = 1 day; WEEK / MONTH snap
+// to the calendar boundary so the summary shrinks as the period
+// progresses ("what's left this week").
+function spanDays(
+  span: "today" | "week" | "month",
+  todayIso: string,
+  weekStartsOn: 0 | 1,
+): number {
+  if (span === "today") return 1;
+  const y = parseInt(todayIso.slice(0, 4), 10);
+  const m = parseInt(todayIso.slice(5, 7), 10);
+  const d = parseInt(todayIso.slice(8, 10), 10);
+  if (span === "week") {
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    const offsetFromStart = (dow - weekStartsOn + 7) % 7;
+    return 7 - offsetFromStart;
+  }
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return lastDay - d + 1;
 }

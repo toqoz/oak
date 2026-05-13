@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cp, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -148,6 +148,61 @@ describe("homeViewModel", () => {
     const graph = buildGraph(vault);
     const home = await homeViewModel(vault, graph, { recentLimit: 3 });
     expect(home.recent.map((e) => e.title)).toEqual(["E", "D", "C"]);
+    // `recentTotal` reports the full count regardless of `recentLimit`.
+    expect(home.recentTotal).toBe(order.length);
+  });
+
+  it("collects feed-eligible public pages into `feed`", async () => {
+    const root = resolve(scratch, "vault");
+    await mkdir(root, { recursive: true });
+    const fmFeed = [
+      "---",
+      "id: AAAA-BBBB-CCCC",
+      "visibility: public",
+      "slug: feed-page",
+      "feed: true",
+      "---",
+      "",
+      "# Feed page",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    const fmNoFeed = [
+      "---",
+      "id: DDDD-EEEE-FFFF",
+      "visibility: public",
+      "slug: plain-public",
+      "---",
+      "",
+      "# Plain public",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    const fmUnlistedFeed = [
+      "---",
+      "id: GGGG-HHHH-IIII",
+      "visibility: unlisted",
+      "slug: unlisted-feed",
+      // feed: true on an unlisted page violates parse validation but
+      // we still want the home model to defensively exclude it.
+      "feed: true",
+      "---",
+      "",
+      "# Unlisted feed",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(resolve(root, "feed-page.md"), fmFeed, "utf8");
+    await writeFile(resolve(root, "plain-public.md"), fmNoFeed, "utf8");
+    await writeFile(resolve(root, "unlisted-feed.md"), fmUnlistedFeed, "utf8");
+
+    const vault = await parseVault(root);
+    const graph = buildGraph(vault);
+    const home = await homeViewModel(vault, graph);
+    expect(home.feed.map((e) => e.title)).toEqual(["Feed page"]);
   });
 
 });

@@ -52,6 +52,15 @@ export type HomeViewModel = {
   stats: HomeStats;
   pages: HomeEntry[]; // sorted by title (case-insensitive); excludes unmanaged
   recent: HomeEntry[]; // sorted by updatedAt desc, capped to recentLimit; excludes unmanaged
+  // Count of all entries with an updatedAt that would be eligible for
+  // `recent` if `recentLimit` were unbounded. Surfaced so callers can
+  // show "ALL (N)" without re-running the model with a higher cap.
+  recentTotal: number;
+  // Pages opted into the published feed (frontmatter `feed: true`).
+  // Restricted to `public` visibility — that's the only visibility the
+  // RSS feed builder emits — and sorted by updatedAt desc with nulls
+  // last. Independent of `recentLimit`.
+  feed: HomeEntry[];
   unmanaged: UnmanagedEntry[]; // sorted by vaultRelPath
 };
 
@@ -143,6 +152,7 @@ export async function homeViewModel(
   };
 
   const all: HomeEntry[] = [];
+  const feedIds = new Set<string>();
   const unmanaged: UnmanagedEntry[] = [];
   for (const page of vault.pages.values()) {
     if (!isManagedPage(page)) {
@@ -181,6 +191,10 @@ export async function homeViewModel(
       outboundCount: countResolvedOutgoing(outgoing),
       inboundCount: countInbound(graph.incoming.get(page.id) ?? []),
     });
+    // Feed eligibility mirrors `syncFeedDates`: opt-in via frontmatter
+    // and restricted to public visibility. `unlisted` is intentionally
+    // excluded — "do not advertise" semantics conflict with the feed.
+    if (page.feed && page.visibility === "public") feedIds.add(page.id);
   }
 
   unmanaged.sort((a, b) => a.vaultRelPath.localeCompare(b.vaultRelPath));
@@ -188,16 +202,27 @@ export async function homeViewModel(
   const pages = [...all].sort((a, b) =>
     a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
   );
-  const recent = [...all]
+  const byRecent = [...all]
     .filter((e): e is HomeEntry & { updatedAt: string } => e.updatedAt !== null)
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-    .slice(0, recentLimit);
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  const recent = byRecent.slice(0, recentLimit);
+  const feed = [...all]
+    .filter((e) => feedIds.has(e.id))
+    .sort((a, b) => {
+      // Recent first; entries without mtime sink to the bottom.
+      const au = a.updatedAt ?? "";
+      const bu = b.updatedAt ?? "";
+      if (au === bu) return 0;
+      return au < bu ? 1 : -1;
+    });
 
   return {
     generatedAt: new Date().toISOString(),
     stats,
     pages,
     recent,
+    recentTotal: byRecent.length,
+    feed,
     unmanaged,
   };
 }

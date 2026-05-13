@@ -21,6 +21,7 @@ import {
   WorkspaceLeaf,
   setIcon,
   type App,
+  type ViewStateResult,
 } from "obsidian";
 
 import {
@@ -138,6 +139,20 @@ export class OakAgendaView extends ItemView {
     return "calendar-days";
   }
 
+  // Browser-tab semantics — without this, `leaf.setViewState({ type:
+  // VIEW_TYPE_OAK_AGENDA })` replaces the current state in-place
+  // instead of pushing onto leaf history, so pressing ← skips the
+  // agenda and lands on whatever was before the previous view.
+  override navigation = true;
+
+  override async setState(
+    state: unknown,
+    result: ViewStateResult,
+  ): Promise<void> {
+    await super.setState(state, result);
+    result.history = true;
+  }
+
   override async onOpen(): Promise<void> {
     this.config = await loadAgendaConfig(vaultRoot(this.app2));
     this.installKeybindings();
@@ -183,6 +198,16 @@ export class OakAgendaView extends ItemView {
   private setFilter(filter: Filter): void {
     this.filter = filter;
     this.recompute();
+  }
+
+  // External entry points for callers that route a user from elsewhere
+  // (e.g. the home view's agenda summary) into a specific agenda lens.
+  setUpcomingSpan(span: UpcomingSpan): void {
+    this.setFilter({ view: "upcoming", span });
+  }
+
+  showAllTodos(): void {
+    this.setFilter({ view: "todo", keyword: null });
   }
 
   private switchView(view: ViewKind): void {
